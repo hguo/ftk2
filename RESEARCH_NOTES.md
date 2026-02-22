@@ -28,10 +28,10 @@ This document summarizes the research insights and technical discoveries that ha
 *   **FTK2 Implementation**: Implemented via the `DeformedExtrudedSimplicialMesh` decorator. This mesh type decouples the topology (which remains simplicial) from the geometry (which evolves per layer), allowing for complex tracking scenarios like XGC blob filaments.
 
 ## 6. Recursive Extrusion & Codimension
-*   **Insight**: Tracking is a transformation: **Spacetime Mesh ($M$) $ightarrow$ Feature Complex ($C$)**.
+*   **Insight**: Tracking is a transformation: **Spacetime Mesh ($M$) $\rightarrow$ Feature Complex ($C$)**.
 *   **Implementation**: FTK2 uses the concept of **Codimension ($m$)** to unify all features.
     *   $m=1$: Isosurfaces (3D volume tracks in 4D).
-    *   $m=2$: Magnetic Flux Vortices, 3D Parallel Vectors (2D surface tracks in 4D).
+    *   $m=2$: Magnetic Flux Vortices, 3D Parallel Vectors, **Isosurface Intersections** (2D surface tracks in 4D).
     *   $m=3$: 3D Critical Points (1D curve tracks in 4D).
 *   **Recursive Extrusion**: A 2D XGC mesh can be extruded into a 3D toroidal volume and then into 4D spacetime, with the engine tracking features through the entire chain.
 

@@ -32,6 +32,7 @@ Features are defined by a set of $m$ equations. The engine searches for these fe
 | **2D Parallel Vectors** | 1 | 3 ($2D+T$) | 2 | **2D Surface (Sheet)** |
 | **3D Parallel Vectors** | 2 | 4 ($3D+T$) | 2 | **2D Surface (Sheet)** |
 | **Magnetic Flux Vortex** | 2 | 4 ($3D+T$) | 2 | **2D Surface (Sheet)** |
+| **Isosurface Intersection** | 2 | 4 ($3D+T$) | 2 | **2D Surface (Sheet)** |
 | **3D Isosurface** | 1 | 4 ($3D+T$) | 3 | **3D Volume** |
 
 ### 2.2 Connecting Features Across Spacetime

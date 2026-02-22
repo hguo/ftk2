@@ -5,8 +5,7 @@ This document outlines the planned milestones and future features for the FTK2 p
 ## Milestone 1: Core Simplicial Engine (Current Focus)
 *   [ ] Implementation of `Mesh` abstractions (Regular, Extruded).
 *   [ ] Unified `SimplicialEngine` for extraction and tracking.
-*   [ ] `ZeroCrossingSolver` for basic feature types.
-*   [ ] Basic `ExactPV` predicate integration.
+*   [ ] **Zero-Crossing Solver (Universal)**: Handle Critical Points, Isosurfaces, Magnetic Flux Vortices, and **Isosurface Intersections** ($m=1, 2, 3$).
 
 ## Milestone 2: GPU Acceleration
 *   [ ] CUDA/HIP kernels for mesh traversal.
@@ -17,13 +16,11 @@ This document outlines the planned milestones and future features for the FTK2 p
 Integrate the distributed-parallel CCL algorithm from arXiv:2003.02351.
 *   [ ] Implement the asynchronous label propagation and merging logic.
 *   [ ] Integrate with MPI for cross-node tracking.
-*   [ ] Ensure scalability for extreme-scale spacetime meshes.
-*   *Note: This algorithm will allow for seamless tracking across domain boundaries in large-scale simulations.*
 
 ## Milestone 4: Advanced Mesh & Feature Types
-*   [ ] **Deforming Spacetime Mesh**: Implement the non-linear extrusion logic from arXiv:2309.02677 to support evolving vertex positions.
-*   [ ] **Isosurface Intersections**: Add a zero-crossing predicate for finding the intersection of two 3D scalar fields ($m=2$).
-*   [ ] **Support for Higher-Order Elements**: Extend simplicial elements to support quadratic and higher-order interpolation.
+*   [ ] **ExactPV Predicate**: Analytical cubic rational solver (arXiv:2107.02708).
+*   [ ] **Stable Feature Flow Fields (Stable FFF)**: High-precision tracking via stable streamline integration (IEEE TVCG 2010).
+*   [ ] **Deforming Spacetime Mesh**: Non-linear extrusion (arXiv:2309.02677).
 
 ## Milestone 5: ParaView & Ecosystem
 *   [ ] **ParaView Plugins (High Priority)**: Integration with ParaView/VTK for interactive analysis.
