@@ -38,3 +38,20 @@ This document summarizes the research insights and technical discoveries that ha
 ## 7. Unified Data IO (`ndarray`)
 *   **Insight**: Leveraging a standalone, high-performance library (`hguo/ndarray`) for all scientific IO.
 *   **Implementation**: FTK2's `Source` layer wraps `ftk::ndarray_stream`, ensuring zero-copy data flow and native support for NetCDF, HDF5, and ADIOS2.
+
+## 8. Lagrangian Particle Tracing & Feature Flow Fields
+*   **Insight**: Lagrangian particle tracers (as implemented for MPAS-Ocean) and Feature Flow Fields (FFF) share a common integration-based foundation.
+*   **Implementation**: FTK2 will extend its simplicial engine to support **Simplicial Pathline Integration**. This allows for tracking not just zero-crossings, but also features that follow a flow field. This unified integration engine will support various data formats and mesh types, including MPAS and deforming grids.
+
+## 9. Magnetic Flux Vortices in Simplicial Settings
+*   **Insight**: Magnetic flux vortices (as described in the 2017/2015 papers) are extracted based on phase angles winding around 2-simplices, rather than simple zero-crossings.
+*   **Implementation**: Planned for Milestone 4. FTK2 will extend the predicate system to handle periodic/phase data and winding number calculations.
+
+## 10. Robustness via Quantization (SoS)
+*   **Insight**: Floating-point noise near zero can cause inconsistent topological decisions, leading to "junk" triangles and holes.
+*   **Implementation**: Currently using quantized `__int128` arithmetic with a $10^6$ factor for `det2` and `det3`. This ensures definitive tie-breaking in degenerate cases.
+*   **Future Plan**: Transition to a formal `ftk2::FixedPoint` data type that provides unified, efficient robust predicates across CPU and GPU architectures.
+
+## 11. The Orientation Challenge in High-D Manifolds
+*   **Insight**: Inconsistent vertex ordering during the subdivision of high-dimensional prisms (e.g., in Marching Pentatopes) leads to "messy" normals in ParaView when slicing spacetime volumes.
+*   **Future Fix**: Implement a global orientation invariant based on vertex ID parity or specific combinatorial rules to ensure every simplex in the feature complex has a consistent winding order relative to the manifold's normal.

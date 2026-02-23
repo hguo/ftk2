@@ -1,42 +1,49 @@
 #pragma once
 
+#include <ftk2/core/mesh.hpp>
 #include <vector>
-#include <string>
+#include <array>
+#include <ndarray/ndarray.hh>
 
 namespace ftk2 {
 
 /**
- * @brief Represents a generic feature (e.g., a critical point, a vortex core).
+ * @brief Represents a geometric primitive within a simplex.
  */
-struct Feature {
-    int id;
-    int timestep;
-    std::vector<double> position;
-    double scalar_value; // e.g., velocity magnitude at this point
+enum class FeatureGeometryType {
+    Point,      // k=0 manifold (e.g., Critical Point)
+    Segment,    // k=1 manifold (e.g., PV segment, Isosurface edge)
+    Polygon     // k=2 manifold (e.g., Isosurface face)
+};
 
-    Feature() : id(-1), timestep(-1), scalar_value(0.0) {}
+/**
+ * @brief A unified, POD-compatible feature element.
+ */
+struct FeatureElement {
+    Simplex simplex; 
+    FeatureGeometryType geometry_type;
+
+    float barycentric_coords[3][16] = {0}; 
+
+    uint64_t track_id = 0; // The identifier for the connected component (track)
+    uint32_t type = 0;     // Categorical type (e.g. source, sink, saddle)
+    float scalar = 0.0f;   // Continuous scalar attribute
+    
+    float attributes[16] = {0}; 
 };
 
 /**
  * @brief Represents a manifold trajectory across spacetime.
- * 
- * A track is a collection of simplices (of dimension k) that 
- * form a connected manifold in the spacetime mesh.
  */
 struct Track {
     int id;
     int dimension; // k = (d+1) - m
-    std::vector<Simplex> simplices;
+    std::vector<FeatureElement> elements;
 
     /**
      * @brief Intersect the track manifold with a specific time step.
-     * 
-     * @param t The time step to slice at.
-     * @return A collection of (k-1)-dimensional features at that time step.
      */
-    std::vector<Feature> slice(double t) const {
-        // Find all simplices in the track that span across time step t.
-        // For each simplex, calculate the intersection point/segment/polygon.
+    std::vector<FeatureElement> slice(double t, const Mesh& mesh) const {
         return {};
     }
 };

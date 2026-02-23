@@ -8,12 +8,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ndarray REQUIRED)
 
 # FTK2 library
-add_library(ftk2 INTERFACE)
-target_include_directories(ftk2 INTERFACE 
+add_library(ftk2 STATIC 
+    src/core/mesh.cpp
+)
+target_include_directories(ftk2 PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(ftk2 INTERFACE ndarray::ndarray)
+target_link_libraries(ftk2 PUBLIC ndarray::ndarray)
 
 # Tests
 enable_testing()

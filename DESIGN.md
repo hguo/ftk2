@@ -20,60 +20,41 @@ For unstructured meshes, we "extrude" the spatial mesh into spacetime.
 
 ## 2. The Unified Simplicial Engine
 
-The engine unifies extraction and tracking into a single **Graph-based Connected Component Labeling (CCL)** pass.
+The engine unifies extraction and tracking into a single pass that transforms a **Spacetime Mesh ($M$)** into a **Feature Simplicial Complex ($C$)**.
 
 ### 2.1 Tracing Intersections in Any Dimension
-Features are defined by a set of $m$ equations. The engine searches for these features in all $m$-dimensional simplices. This covers zero-crossing features as well as manifold types like **Parallel Vectors**.
+Features are defined by a set of $m$ equations. The engine searches for these features in all $m$-dimensional simplices.
 
-| Feature Type | Equations ($m$) | Spacetime Dim ($d+1$) | Manifold Dim ($k = d+1-m$) | Resulting Track |
-| :--- | :---: | :---: | :---: | :--- |
-| **2D Critical Point** | 2 | 3 ($2D+T$) | 1 | **1D Curve (Line)** |
-| **3D Critical Point** | 3 | 4 ($3D+T$) | 1 | **1D Curve (Line)** |
-| **2D Parallel Vectors** | 1 | 3 ($2D+T$) | 2 | **2D Surface (Sheet)** |
-| **3D Parallel Vectors** | 2 | 4 ($3D+T$) | 2 | **2D Surface (Sheet)** |
-| **Magnetic Flux Vortex** | 2 | 4 ($3D+T$) | 2 | **2D Surface (Sheet)** |
-| **Isosurface Intersection** | 2 | 4 ($3D+T$) | 2 | **2D Surface (Sheet)** |
-| **3D Isosurface** | 1 | 4 ($3D+T$) | 3 | **3D Volume** |
+| Feature Type | Plain Language | Equations ($m$) | Spacetime Dim ($d+1$) | Manifold Dim ($k = d+1-m$) | Resulting Track |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **Critical Point** | Zeros of a vector field | $d$ | $d+1$ | 1 | **1D Curve (Line)** |
+| **Levelset** | Points where field = constant | 1 | $d+1$ | $d$ | **$d$-D Manifold** |
+| **Fiber** | Intersection of two levelsets | 2 | $d+1$ | $d-1$ | **$(d-1)$-D Manifold** |
+
+**Specific Examples:**
+*   **2D Levelset Track**: A moving curve in 2D space traces a **2D Surface** in 3D spacetime.
+*   **3D Levelset Track**: A moving surface in 3D space traces a **3D Volume** in 4D spacetime.
+*   **3D Fiber Track**: The intersection of two moving surfaces in 3D (a moving curve) traces a **2D Surface** in 4D spacetime.
 
 ### 2.2 Connecting Features Across Spacetime
-Tracking is the transformation of a **Spacetime Mesh ($M$)** into a **Feature Simplicial Complex ($C$)**.
-*   **Discovery**: Identifying $m$-simplices that contain features (these become the vertices of $C$).
-*   **Connecting**: Linking $m$-simplices through their shared $(m+1)$-dimensional cofaces (these become the connectivity of $C$).
+*   **Extraction ($m$):** Nodes are extracted from all $m$-dimensional simplices of the mesh.
+*   **Manifold Construction ($m+1, m+2, ...$):** Feature nodes are connected to form edges, triangles, and higher-order simplices based strictly on the topology of the mesh.
 *   **Distributed Parallelism**: Future integration of asynchronous label propagation for extreme-scale tracking (arXiv:2003.02351).
 
 ## 3. Predicate Layer (Mathematical Kernels)
 
-Predicates are stateless, `__host__ __device__` functors that perform the local math.
-
 ### 3.1 Universal Zero-Crossing Solver
-Solves $f(x)=0$ on a $k$-simplex.
-1.  **Input**: $k+1$ values at vertices, each of dimension $k$.
-2.  **Logic**: Solve the $(k+1) \times (k+1)$ linear system for barycentric coordinates $\lambda_i$.
-3.  **Output**: If $0 \le \lambda_i \le 1$ for all $i$, a feature exists at $x = \sum \lambda_i v_i$.
+Solves $f(x)=0$ on a $k$-simplex using linear interpolation and robust **Simulation of Simplicity (SoS)** tie-breaking.
 
 ### 3.2 Exact Analytical Parallel Vectors (ExactPV)
-Implements the cubic rational solver from arXiv:2107.02708.
-*   **Input**: Two vector fields $V_1, V_2$ on a $3$-simplex.
-*   **Logic**: Finds intersections of $V_1 \times V_2 = 0$ using the **ExactPV** analytical formulation.
-*   **Multi-Crossing**: Can return multiple line segments per simplex, each tracked independently by the engine.
+Analytical cubic rational solver for exact parallel vector tracking (arXiv:2107.02708).
 
 ## 4. Data Abstraction Layer (`ndarray`)
-
-FTK2 is built around the `ftk::ndarray` library for high-performance IO.
-
-*   **`ftk::ndarray_stream<T>`**: Manages a sliding window of time steps, loading only necessary buffers into memory.
-*   **Zero-Copy Design**: Algorithms operate on `ndarray` views to avoid expensive memory allocations.
-*   **Domain Decomposition**: Native support for ghost cells and MPI-based partitioning.
+Zero-copy data flow leveraging `ftk::ndarray_stream`.
 
 ## 5. GPU Acceleration Strategy
-
-FTK2 avoids code duplication by using **Static Polymorphism**:
-*   **Kernel Templates**: A single `__global__` kernel iterates over the mesh, templated on the `MeshType` and `PredicateType`.
-*   **Device-Only Mesh Structs**: Lightweight PODs passed to kernels for fast coordinate lookups.
-*   **Parallel CCL**: High-performance Union-Find implementation on the GPU.
+Static polymorphism and lightweight device-mesh structs for CUDA/HIP.
 
 ## 6. Slicing and Visualization
-
-The resulting "Tracks" are spacetime manifolds.
-*   **Slicing**: The manifold (dimension $k$) is intersected with the hyperplane $t=T$ to produce $(k-1)$-dimensional features.
-*   **ParaView Integration**: (High Priority) Server-side filters and client-side plugins for interactive exploration.
+*   **Slicing**: Intersection of spacetime manifolds with $t=T$.
+*   **ParaView Integration**: Export to `.vtu` and `.vtp` files.

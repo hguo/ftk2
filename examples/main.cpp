@@ -1,103 +1,49 @@
-#include <ftk2/core/source.hpp>
-#include <ftk2/core/extractor.hpp>
-#include <ftk2/core/tracker.hpp>
-#include <ftk2/core/feature.hpp>
+#include <ftk2/core/mesh.hpp>
+#include <ftk2/core/engine.hpp>
+#include <ftk2/core/predicate.hpp>
+#include <ndarray/ndarray.hh>
 #include <iostream>
 #include <memory>
 #include <vector>
 #include <map>
 
-namespace ftk2 {
+using namespace ftk2;
 
-/**
- * @brief A simple dummy extractor that returns a single feature at the center.
- */
-template <typename T>
-class DummyExtractor : public Extractor<T, Feature> {
-public:
-    void set_input(const std::map<std::string, ftk::ndarray<T>>& data) override {
-        // Just store the data for now
-        data_ = data;
-    }
+int main(int argc, char** argv) {
+    // 1. Create a 3D Spacetime Mesh (2D spatial + 1D time)
+    // Grid size: 10x10 spatial, 5 time steps
+    auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{10, 10, 5});
 
-    void execute() override {
-        // Extract a dummy feature
-        Feature f;
-        f.id = 0;
-        f.timestep = 0; // Should be set by the tracker/pipeline
-        f.position = {0.5, 0.5, 0.5}; // Center of a unit cube
-        f.scalar_value = 1.0;
-        features_ = {f};
-    }
-
-    std::vector<Feature> get_output() const override {
-        return features_;
-    }
-
-private:
-    std::map<std::string, ftk::ndarray<T>> data_;
-    std::vector<Feature> features_;
-};
-
-/**
- * @brief A simple dummy tracker that collects all features.
- */
-class DummyTracker : public Tracker<Feature, Track> {
-public:
-    void push_features(const std::vector<Feature>& features, int time_step) override {
-        for (auto f : features) {
-            f.timestep = time_step;
-            all_features_.push_back(f);
+    // 2. Create synthetic vector field data (U, V)
+    // We want a critical point that moves from (3, 3) to (7, 7) over 5 time steps.
+    ftk::ndarray<double> u({10, 10, 5}), v({10, 10, 5});
+    for (int t = 0; t < 5; ++t) {
+        double cx = 3.0 + t;
+        double cy = 3.0 + t;
+        for (int y = 0; y < 10; ++y) {
+            for (int x = 0; x < 10; ++x) {
+                u.f(x, y, t) = (double)x - cx;
+                v.f(x, y, t) = (double)y - cy;
+            }
         }
     }
 
-    void finalize() override {
-        // For simplicity, just create one track with all features
-        Track t;
-        t.id = 0;
-        t.features = all_features_;
-        tracks_ = {t};
-    }
+    std::map<std::string, ftk::ndarray<double>> data = {{"U", u}, {"V", v}};
 
-    std::vector<Track> get_tracks() const override {
-        return tracks_;
-    }
+    // 3. Set up the Critical Point Predicate (m=2 for 2D spatial vector field)
+    CriticalPointPredicate<2, double> cp_pred;
+    cp_pred.var_names[0] = "U";
+    cp_pred.var_names[1] = "V";
 
-private:
-    std::vector<Feature> all_features_;
-    std::vector<Track> tracks_;
-};
+    // 4. Initialize and run the Unified Simplicial Engine
+    SimplicialEngine<double, CriticalPointPredicate<2, double>> engine(mesh, cp_pred);
+    
+    std::cout << "Running Simplicial Engine..." << std::endl;
+    engine.execute(data);
 
-} // namespace ftk2
-
-int main(int argc, char** argv) {
-    // 1. Initialize components
-    auto source = std::make_unique<ftk2::NdarrayStreamSource<float>>();
-    auto extractor = std::make_unique<ftk2::DummyExtractor<float>>();
-    auto tracker = std::make_unique<ftk2::DummyTracker>();
-
-    // 2. Configure source (e.g., set data path)
-    std::map<std::string, std::string> config = {{"path", "data.nc"}};
-    source->configure(config);
-
-    // 3. Process time steps
-    while (source->next_timestep()) {
-        int t = source->get_current_timestep();
-        std::cout << "Processing time step " << t << "..." << std::endl;
-
-        // Extract features
-        extractor->set_input(source->get_current_data());
-        extractor->execute();
-
-        // Push features to tracker
-        tracker->push_features(extractor->get_output(), t);
-    }
-
-    // 4. Finalize tracking and output results
-    tracker->finalize();
-    auto tracks = tracker->get_tracks();
-
-    std::cout << "Extracted " << tracks.size() << " tracks." << std::endl;
+    // 5. Output results
+    auto complex = engine.get_complex();
+    std::cout << "Processing complete. Found " << complex.vertices.size() << " feature elements." << std::endl;
 
     return 0;
 }
