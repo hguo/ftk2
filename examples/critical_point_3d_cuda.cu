@@ -11,7 +11,7 @@
 using namespace ftk2;
 
 int main(int argc, char** argv) {
-    const int DW = 16, DH = 16, DD = 16, DT = 5;
+    const int DW = 24, DH = 24, DD = 24, DT = 8;
     std::cout << "Generating 3D+T Critical Point synthetic data (GPU)..." << std::endl;
 
     ftk::ndarray<float> u({(size_t)DW, (size_t)DH, (size_t)DD, (size_t)DT});

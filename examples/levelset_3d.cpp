@@ -13,7 +13,7 @@
 using namespace ftk2;
 
 int main(int argc, char** argv) {
-    const int DW = 16, DH = 16, DD = 16, DT = 5;
+    const int DW = 32, DH = 32, DD = 32, DT = 10;
     std::cout << "Generating 3D+T moving sphere levelset data (" << DW << "x" << DH << "x" << DD << "x" << DT << ")..." << std::endl;
 
     // 1. Generate moving sphere scalar field

@@ -12,7 +12,7 @@
 using namespace ftk2;
 
 int main(int argc, char** argv) {
-    const int DW = 16, DH = 16, DD = 16, DT = 5;
+    const int DW = 32, DH = 32, DD = 32, DT = 10;
     std::cout << "CUDA: Generating 3D+T moving sphere levelset data..." << std::endl;
 
     // 1. Generate scalar field on Host
