@@ -176,7 +176,7 @@ public:
         cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice);
 
         CudaExtractionResult<IDType> res;
-        res.max_nodes = 1000000; res.max_conn = 3000000;
+        res.max_nodes = 10000000; res.max_conn = 20000000;
         cudaMalloc(&res.nodes, res.max_nodes * sizeof(FeatureElement));
         cudaMemset(res.nodes, 0, res.max_nodes * sizeof(FeatureElement));
         cudaMalloc(&res.node_count, sizeof(int));
