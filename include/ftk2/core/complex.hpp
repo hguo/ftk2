@@ -23,6 +23,29 @@ struct FeatureComplex {
     };
     std::vector<SimplexIndices> connectivity;
 
+    void sort() {
+        // Sort the connectivity vector itself by dimension
+        std::sort(connectivity.begin(), connectivity.end(), [](const SimplexIndices& a, const SimplexIndices& b) {
+            return a.dimension < b.dimension;
+        });
+
+        for (auto& conn : connectivity) {
+            int n = conn.dimension + 1;
+            std::vector<std::vector<uint32_t>> cells;
+            for (size_t i = 0; i < conn.indices.size(); i += n) {
+                std::vector<uint32_t> cell(n);
+                for (int j = 0; j < n; ++j) cell[j] = conn.indices[i + j];
+                std::sort(cell.begin(), cell.end());
+                cells.push_back(cell);
+            }
+            std::sort(cells.begin(), cells.end());
+            conn.indices.clear();
+            for (const auto& cell : cells) {
+                for (uint32_t idx : cell) conn.indices.push_back(idx);
+            }
+        }
+    }
+
     /**
      * @brief Slices the complex at a specific time step.
      * This is a standard geometric intersection of the complex with t=T.

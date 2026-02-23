@@ -25,9 +25,15 @@ struct Simplex {
     int dimension; // K
     uint64_t vertices[16]; // K+1 vertex IDs
 
+    FTK_HOST_DEVICE
+    Simplex() : dimension(-1) {
+        for (int i = 0; i < 16; ++i) vertices[i] = 0;
+    }
+
     FTK_HOST_DEVICE int num_vertices() const { return dimension + 1; }
     
     FTK_HOST_DEVICE void sort_vertices() {
+        if (dimension < 0) return;
         for (int i = 0; i <= dimension; ++i) {
             for (int j = i + 1; j <= dimension; ++j) {
                 if (vertices[i] > vertices[j]) {
@@ -37,6 +43,7 @@ struct Simplex {
                 }
             }
         }
+        for (int i = dimension + 1; i < 16; ++i) vertices[i] = 0;
     }
 
     FTK_HOST_DEVICE bool operator==(const Simplex& other) const {
@@ -129,7 +136,7 @@ public:
                 auto local_coords = get_vertex_coords_local(v_idx);
                 std::vector<uint64_t> g0 = local_coords;
                 for(int i=0; i<d; ++i) g0[i] += offset_[i];
-                uint64_t id0 = coords_to_id(g0);
+                uint64_t id0 = grid_index_to_id(g0);
 
                 for (int mask = 1; mask < (1 << d); ++mask) {
                     std::vector<uint64_t> g1 = g0;
@@ -141,7 +148,7 @@ public:
 
                     if (in_bounds) {
                         Simplex edge; edge.dimension = 1;
-                        uint64_t id1 = coords_to_id(g1);
+                        uint64_t id1 = grid_index_to_id(g1);
                         if (id0 < id1) { edge.vertices[0] = id0; edge.vertices[1] = id1; }
                         else { edge.vertices[0] = id1; edge.vertices[1] = id0; }
                         callback(edge);
@@ -170,10 +177,10 @@ public:
 
                     std::vector<uint64_t> curr = base_coords;
                     for(int i=0; i<d; ++i) curr[i] += offset_[i];
-                    top.vertices[0] = coords_to_id(curr);
+                    top.vertices[0] = grid_index_to_id(curr);
                     for (int i = 0; i < d; ++i) {
                         curr[p[i]]++;
-                        top.vertices[i + 1] = coords_to_id(curr);
+                        top.vertices[i + 1] = grid_index_to_id(curr);
                     }
                     top.sort_vertices();
                     callback(top);
@@ -191,10 +198,10 @@ public:
             do {
                 Simplex top; top.dimension = d;
                 std::vector<uint64_t> v_coords = base_coords;
-                top.vertices[0] = coords_to_id(v_coords);
+                top.vertices[0] = grid_index_to_id(v_coords);
                 for (int i = 0; i < d; ++i) {
                     v_coords[p[i]] += 1;
-                    top.vertices[i + 1] = coords_to_id(v_coords);
+                    top.vertices[i + 1] = grid_index_to_id(v_coords);
                 }
                 top.sort_vertices();
                 
@@ -212,7 +219,7 @@ public:
     void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
-        std::vector<uint64_t> g_coords = id_to_coords(vertex_id);
+        std::vector<uint64_t> g_coords = id_to_grid_index(vertex_id);
         std::vector<double> phys_coords(g_coords.size());
         for (size_t i = 0; i < g_coords.size(); ++i) phys_coords[i] = static_cast<double>(g_coords[i]);
         return phys_coords;
@@ -267,10 +274,10 @@ public:
         for (int i = 0; i < p_index; ++i) std::next_permutation(p.begin(), p.end());
 
         std::vector<uint64_t> curr = global_base;
-        s.vertices[0] = coords_to_id(curr);
+        s.vertices[0] = grid_index_to_id(curr);
         for (int i = 0; i < d; ++i) {
             curr[p[i]]++;
-            s.vertices[i + 1] = coords_to_id(curr);
+            s.vertices[i + 1] = grid_index_to_id(curr);
         }
         s.sort_vertices();
     }
@@ -284,19 +291,20 @@ public:
         return coords;
     }
 
-    uint64_t coords_to_id(const std::vector<uint64_t>& global_coords) const {
+    uint64_t grid_index_to_id(const std::vector<uint64_t>& grid_index) const {
         uint64_t id = 0;
         uint64_t multiplier = 1;
-        for (size_t i = 0; i < dims_.size(); ++i) {
-            id += global_coords[i] * multiplier;
+        for (size_t i = 0; i < global_dims_.size(); ++i) {
+            uint64_t c = (i < grid_index.size()) ? grid_index[i] : 0;
+            id += c * multiplier;
             multiplier *= global_dims_[i];
         }
         return id;
     }
 
-    std::vector<uint64_t> id_to_coords(uint64_t global_id) const {
-        std::vector<uint64_t> coords(dims_.size());
-        for (size_t i = 0; i < dims_.size(); ++i) {
+    std::vector<uint64_t> id_to_grid_index(uint64_t global_id) const {
+        std::vector<uint64_t> coords(global_dims_.size(), 0);
+        for (size_t i = 0; i < global_dims_.size(); ++i) {
             coords[i] = global_id % global_dims_[i];
             global_id /= global_dims_[i];
         }

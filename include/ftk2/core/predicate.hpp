@@ -79,7 +79,8 @@ struct CriticalPointPredicate : public Predicate<M, T> {
                 for (int i = 0; i <= M; ++i) {
                     auto coords = mesh.get_vertex_coordinates(s.vertices[i]);
                     T v = 0;
-                    if (coords.size() == 2) v = it->second.f(coords[0], coords[1]);
+                    if (coords.size() == 1) v = it->second.f(coords[0]);
+                    else if (coords.size() == 2) v = it->second.f(coords[0], coords[1]);
                     else if (coords.size() == 3) v = it->second.f(coords[0], coords[1], coords[2]);
                     else if (coords.size() == 4) v = it->second.f(coords[0], coords[1], coords[2], coords[3]);
                     s_val += lambda[i] * v;
@@ -125,9 +126,16 @@ struct CriticalPointPredicate : public Predicate<M, T> {
         
         el.type = 0;
         el.scalar = 0.0f;
+        if (scalar_var_name[0] != '\0' && n_vars > M) {
+            T s_val = 0;
+            for (int i = 0; i <= M; ++i) {
+                uint64_t coords[4] = {0};
+                mesh.id_to_coords(s.vertices[i], coords);
+                s_val += lambda[i] * data[M].f(coords[0], coords[1], coords[2], coords[3]);
+            }
+            el.scalar = (float)s_val;
+        }
         for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
-        
-        // Scalar interpolation can be added here too
         
         return true; 
     }
@@ -172,6 +180,9 @@ struct ContourPredicate : public Predicate<1, T> {
         el.simplex = s;
         el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 1; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
+        
+        el.scalar = (float)threshold;
+        
         return {el};
     }
 
@@ -203,8 +214,8 @@ struct ContourPredicate : public Predicate<1, T> {
         el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 1; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
         
-        el.type = 0; // Default type
-        el.scalar = 0.0f; // Could interpolate from data[0] if needed
+        el.type = 0; 
+        el.scalar = (float)threshold;
         for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
         
         return true;
@@ -253,6 +264,21 @@ struct IsosurfaceIntersectionPredicate : public Predicate<2, T> {
         el.simplex = s;
         el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
+        
+        auto it_orig = data.find(std::string(var_names[0]));
+        if (it_orig != data.end()) {
+            T s_val = 0;
+            for (int i = 0; i <= 2; ++i) {
+                auto coords = mesh.get_vertex_coordinates(s.vertices[i]);
+                T v = 0;
+                if (coords.size() == 2) v = it_orig->second.f(coords[0], coords[1]);
+                else if (coords.size() == 3) v = it_orig->second.f(coords[0], coords[1], coords[2]);
+                else if (coords.size() == 4) v = it_orig->second.f(coords[0], coords[1], coords[2], coords[3]);
+                s_val += lambda[i] * v;
+            }
+            el.scalar = (float)s_val;
+        }
+        
         return {el};
     }
 };

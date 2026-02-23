@@ -57,28 +57,76 @@ void marching_pentatope_device(
 {
     // 1. Collect values and determine signs
     T vals[5];
-    int signs[5];
-    int pos_count = 0;
+    int A[5], B[5];
+    int nA = 0, nB = 0;
+
     for (int i = 0; i < 5; ++i) {
         uint64_t coords[4];
         mesh.id_to_coords(cell.vertices[i], coords);
-        vals[i] = data[0].f(coords[0], coords[1], coords[2], coords[3]); // Assuming m=1, first var
-        signs[i] = (vals[i] > 0) ? 1 : -1;
-        if (signs[i] > 0) pos_count++;
+        vals[i] = data[0].f(coords[0], coords[1], coords[2], coords[3]) - pred.threshold;
+        
+        if (sos::sign(vals[i], cell.vertices[i]) > 0) A[nA++] = i;
+        else B[nB++] = i;
     }
 
-    // 2. Discover nodes on edges
-    // IDType node_ids[10]; // Map from edge (i,j) to global node ID
-    // int edge_node_count = 0;
-    // ... (Extraction logic for nodes)
+    auto make_edge_simplex = [&](int i, int j) -> Simplex {
+        Simplex s; s.dimension = 1;
+        uint64_t v0 = cell.vertices[i], v1 = cell.vertices[j];
+        if (v0 < v1) { s.vertices[0] = v0; s.vertices[1] = v1; }
+        else { s.vertices[0] = v1; s.vertices[1] = v0; }
+        return s;
+    };
 
-    // 3. Tetrahedralize based on split
-    if (pos_count == 1 || pos_count == 4) {
+    auto encode_edge = [&](int i, int j) -> uint64_t {
+        uint64_t v0 = cell.vertices[i], v1 = cell.vertices[j];
+        if (v0 > v1) { uint64_t tmp = v0; v0 = v1; v1 = tmp; }
+        
+        uint64_t c0[4], c1[4];
+        mesh.id_to_coords(v0, c0);
+        mesh.id_to_coords(v1, c1);
+        
+        uint64_t mask = 0;
+        for (int k = 0; k < 4; ++k) if (c1[k] > c0[k]) mask |= (1 << k);
+        
+        return (v0 << 4) | (mask & 0xF);
+    };
+
+    // 2. Discover nodes on edges and emit manifold simplices
+    if (nA == 1 || nB == 1) {
+        int single = (nA == 1) ? A[0] : B[0];
+        int others[4];
+        if (nA == 1) { for(int i=0; i<4; ++i) others[i] = B[i]; }
+        else { for(int i=0; i<4; ++i) others[i] = A[i]; }
+
         // Case 1: 4 nodes form a tetrahedron
-        // Emit 1 tet to res.volumes
-    } else if (pos_count == 2 || pos_count == 3) {
-        // Case 2: 6 nodes form a triangular prism
-        // Align bases and emit 3 tets
+        int idx = atomicAdd(res.volume_count, 1);
+        if (idx < res.max_conn) {
+            for (int i = 0; i < 4; ++i) {
+                res.volumes[idx].nodes[i] = encode_edge(single, others[i]);
+            }
+        }
+    } else if (nA == 2 || nB == 2) {
+        // Case 2: 6 nodes form a triangular prism (split into 3 tets)
+        const int* two = (nA == 2) ? A : B;
+        const int* three = (nA == 2) ? B : A;
+
+        int idx = atomicAdd(res.volume_count, 3);
+        if (idx + 2 < res.max_conn) {
+            uint64_t T0[3], T1[3];
+            for (int i = 0; i < 3; ++i) {
+                T0[i] = encode_edge(two[0], three[i]);
+                T1[i] = encode_edge(two[1], three[i]);
+            }
+            // Tet 1
+            res.volumes[idx].nodes[0] = T0[0]; res.volumes[idx].nodes[1] = T0[1];
+            res.volumes[idx].nodes[2] = T0[2]; res.volumes[idx].nodes[3] = T1[2];
+            // Tet 2
+            res.volumes[idx+1].nodes[0] = T0[0]; res.volumes[idx+1].nodes[1] = T0[1];
+            res.volumes[idx+1].nodes[2] = T1[1]; res.volumes[idx+1].nodes[3] = T1[2];
+            // Tet 3
+            res.volumes[idx+2].nodes[0] = T0[0]; res.volumes[idx+2].nodes[1] = T1[0];
+            res.volumes[idx+2].nodes[2] = T1[1]; res.volumes[idx+2].nodes[3] = T1[2];
+        }
     }
 }
 

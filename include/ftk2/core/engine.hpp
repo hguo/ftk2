@@ -42,7 +42,11 @@ public:
     void unite(IDType i, IDType j) {
         IDType root_i = find(i);
         IDType root_j = find(j);
-        if (root_i != root_j) parent_[root_i] = root_j;
+        if (root_i != root_j) {
+            // Deterministic linking: always attach larger ID to smaller ID
+            if (root_i < root_j) parent_[root_j] = root_i;
+            else parent_[root_i] = root_j;
+        }
     }
 
 private:
@@ -92,7 +96,10 @@ public:
             if (!elements.empty()) {
                 uint64_t node_id = uf_.add();
                 active_nodes_[s] = node_id;
-                node_elements_[node_id] = elements[0]; 
+                
+                FeatureElement element = elements[0];
+                node_elements_[node_id] = element; 
+                node_id_to_simplex_[node_id] = s;
             }
         });
         auto t_nodes = std::chrono::high_resolution_clock::now();
@@ -149,6 +156,7 @@ public:
         if constexpr (m == 1 && std::is_same_v<PredicateType, ContourPredicate<T>>) vars = {predicate_.var_name};
         else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
+            if (predicate_.scalar_var_name[0] != '\0') vars.push_back(std::string(predicate_.scalar_var_name));
         }
 
         auto t_setup = std::chrono::high_resolution_clock::now();
@@ -203,6 +211,11 @@ public:
 
         auto t_d2h = std::chrono::high_resolution_clock::now();
 
+        // SORT elements to ensure deterministic Union-Find IDs
+        std::sort(h_elements.begin(), h_elements.end(), [](const FeatureElement& a, const FeatureElement& b) {
+            return a.simplex < b.simplex;
+        });
+
         for (const auto& el : h_elements) {
             uint64_t node_id = uf_.add();
             active_nodes_[el.simplex] = node_id;
@@ -210,6 +223,40 @@ public:
             FeatureElement element = el;
             // Ensure any non-trivial mapping or initialization happens here
             node_elements_[node_id] = element;
+            node_id_to_simplex_[node_id] = el.simplex;
+        }
+
+        int h_vol_count;
+        cudaMemcpy(&h_vol_count, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost);
+        std::vector<DeviceManifoldSimplex<IDType, 3>> h_volumes(std::min(h_vol_count, res.max_conn));
+        cudaMemcpy(h_volumes.data(), res.volumes, h_volumes.size() * sizeof(DeviceManifoldSimplex<IDType, 3>), cudaMemcpyDeviceToHost);
+
+        auto t_d2h_manifold = std::chrono::high_resolution_clock::now();
+
+        for (const auto& vol : h_volumes) {
+            std::vector<IDType> nodes;
+            for (int i = 0; i < 4; ++i) {
+                uint64_t id = (uint64_t)vol.nodes[i];
+                uint64_t v0 = id >> 4;
+                uint64_t mask = id & 0xF;
+                
+                auto c0 = reg_mesh->id_to_grid_index(v0);
+                std::vector<uint64_t> c1 = c0;
+                for (int k = 0; k < 4; ++k) if ((mask >> k) & 1) c1[k]++;
+                uint64_t v1 = reg_mesh->grid_index_to_id(c1);
+
+                Simplex edge; edge.dimension = 1;
+                edge.vertices[0] = v0; edge.vertices[1] = v1;
+                // edge.sort_vertices(); // already v0 < v1
+
+                if (active_nodes_.count(edge)) {
+                    nodes.push_back(active_nodes_[edge]);
+                }
+            }
+            if (nodes.size() == 4) {
+                manifold_simplices_[3].push_back(nodes);
+                for (int i = 1; i < 4; ++i) uf_.unite(nodes[0], nodes[i]);
+            }
         }
 
         auto t_uf = std::chrono::high_resolution_clock::now();
@@ -221,62 +268,55 @@ public:
         cudaFree(res.faces); cudaFree(res.face_count);
         cudaFree(res.volumes); cudaFree(res.volume_count);
 
-        int d_total = mesh_->get_total_dimension();
-        uint64_t n_v_m = reg_mesh->get_num_vertices();
-        for (uint64_t v_idx = 0; v_idx < n_v_m; ++v_idx) {
-            auto local_coords = reg_mesh->get_vertex_coords_local(v_idx);
-            if (reg_mesh->is_hypercube_base(local_coords)) {
-                uint64_t hc_idx = reg_mesh->hypercube_coords_to_idx(local_coords);
-                int n_p = 1; for(int i=1; i<=d_total; ++i) n_p *= i;
-                for (int p_idx = 0; p_idx < n_p; ++p_idx) {
-                    Simplex cell;
-                    reg_mesh->get_d_simplex(hc_idx, p_idx, cell);
-                    if (m == 1 && d_total == 4) marching_pentatope(cell, data);
-                    else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
-                    else form_general_manifold_patches(cell, data);
-                }
-            }
-        }
-
         auto t_end = std::chrono::high_resolution_clock::now();
 
         auto d_setup = std::chrono::duration_cast<std::chrono::milliseconds>(t_setup - t_start).count();
         auto d_h2d = std::chrono::duration_cast<std::chrono::milliseconds>(t_h2d - t_setup).count();
         auto d_kernel = std::chrono::duration_cast<std::chrono::milliseconds>(t_kernel - t_h2d).count();
         auto d_d2h = std::chrono::duration_cast<std::chrono::milliseconds>(t_d2h - t_kernel).count();
-        auto d_uf = std::chrono::duration_cast<std::chrono::milliseconds>(t_uf - t_d2h).count();
-        auto d_manifold = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_uf).count();
+        auto d_d2h_m = std::chrono::duration_cast<std::chrono::milliseconds>(t_d2h_manifold - t_d2h).count();
+        auto d_uf = std::chrono::duration_cast<std::chrono::milliseconds>(t_uf - t_d2h_manifold).count();
         auto d_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
 
         std::cout << "CUDA Execution Breakdown:" << std::endl;
         std::cout << "  - Setup:    " << d_setup << " ms" << std::endl;
         std::cout << "  - H2D:      " << d_h2d << " ms" << std::endl;
         std::cout << "  - Kernel:   " << d_kernel << " ms" << std::endl;
-        std::cout << "  - D2H:      " << d_d2h << " ms" << std::endl;
-        std::cout << "  - UF Add:   " << d_uf << " ms" << std::endl;
-        std::cout << "  - Manifold: " << d_manifold << " ms" << std::endl;
+        std::cout << "  - D2H (N):  " << d_d2h << " ms" << std::endl;
+        std::cout << "  - D2H (M):  " << d_d2h_m << " ms" << std::endl;
+        std::cout << "  - UF+Conn:  " << d_uf << " ms" << std::endl;
         std::cout << "  - TOTAL:    " << d_total_ms << " ms" << std::endl;
     }
 #endif
 
     FeatureComplex get_complex() {
         FeatureComplex complex;
-        std::map<IDType, uint32_t> node_to_idx;
-        for (auto const& [node_id, element] : node_elements_) {
+        std::map<IDType, uint32_t> node_to_stable_idx;
+        
+        // 1. Define stable indices based on Simplex order (using active_nodes_)
+        for (auto const& [s, node_id] : active_nodes_) {
             uint64_t root = uf_.find(node_id);
-            FeatureElement el = element; el.track_id = (uint64_t)root;
-            node_to_idx[node_id] = complex.vertices.size();
+            FeatureElement el = node_elements_.at(node_id);
+            el.track_id = (uint64_t)root;
+            
+            node_to_stable_idx[node_id] = complex.vertices.size();
             complex.vertices.push_back(el);
         }
+
+        // 2. Build connectivity using stable indices
         for (int dim = 1; dim <= 3; ++dim) {
             if (!manifold_simplices_[dim].empty()) {
                 FeatureComplex::SimplexIndices conn; conn.dimension = dim;
                 for (auto const& simplex : manifold_simplices_[dim]) {
-                    for (IDType nid : simplex) conn.indices.push_back(node_to_idx.at(nid));
+                    for (IDType nid : simplex) conn.indices.push_back(node_to_stable_idx.at(nid));
                 }
                 complex.connectivity.push_back(conn);
             }
         }
+        
+        // 3. Sort connectivity itself
+        complex.sort();
+        
         return complex;
     }
 
@@ -399,6 +439,7 @@ private:
     std::shared_ptr<Mesh> mesh_; PredicateType predicate_; UnionFind<IDType> uf_;
     std::map<Simplex, IDType> active_nodes_;
     std::map<IDType, FeatureElement> node_elements_;
+    std::map<IDType, Simplex> node_id_to_simplex_;
     std::map<int, std::vector<std::vector<IDType>>> manifold_simplices_;
 };
 

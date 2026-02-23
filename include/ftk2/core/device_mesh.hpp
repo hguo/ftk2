@@ -20,6 +20,7 @@ struct RegularSimplicialMeshDevice {
      */
     FTK_HOST_DEVICE 
     void id_to_coords(uint64_t id, uint64_t coords[4]) const {
+        coords[0] = 0; coords[1] = 0; coords[2] = 0; coords[3] = 0;
         for (int i = 0; i < ndims; ++i) {
             coords[i] = id % global_dims[i];
             id /= global_dims[i];
