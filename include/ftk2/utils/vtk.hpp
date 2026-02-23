@@ -10,6 +10,7 @@
 #include <vtkPoints.h>
 #include <vtkCellArray.h>
 #include <vtkSmartPointer.h>
+#include <vtkFloatArray.h>
 #include <vtkDoubleArray.h>
 #include <vtkIntArray.h>
 #include <vtkPointData.h>
@@ -23,13 +24,13 @@ namespace ftk2 {
 inline vtkSmartPointer<vtkPoints> complex_to_vtk_points(const FeatureComplex& complex, const Mesh& mesh, vtkPointData* pointData) {
     auto points = vtkSmartPointer<vtkPoints>::New();
     
-    auto scalar_data = vtkSmartPointer<vtkDoubleArray>::New();
+    auto scalar_data = vtkSmartPointer<vtkFloatArray>::New();
     scalar_data->SetName("Scalar");
     auto track_id_data = vtkSmartPointer<vtkIntArray>::New();
     track_id_data->SetName("TrackID");
     auto type_data = vtkSmartPointer<vtkIntArray>::New();
     type_data->SetName("Type");
-    auto time_data = vtkSmartPointer<vtkDoubleArray>::New();
+    auto time_data = vtkSmartPointer<vtkFloatArray>::New();
     time_data->SetName("Time");
 
     for (auto const& el : complex.vertices) {
@@ -48,7 +49,7 @@ inline vtkSmartPointer<vtkPoints> complex_to_vtk_points(const FeatureComplex& co
         scalar_data->InsertNextValue(el.scalar);
         track_id_data->InsertNextValue((int)el.track_id);
         type_data->InsertNextValue((int)el.type);
-        time_data->InsertNextValue(phys_pos.back());
+        time_data->InsertNextValue((float)phys_pos.back());
     }
 
     if (pointData) {
@@ -92,6 +93,9 @@ inline void write_complex_to_vtp(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLPolyDataWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(polydata);
+    writer->SetDataModeToAppended();
+    writer->SetEncodeAppendedData(0);
+    writer->SetCompressorTypeToNone();
     writer->Write();
 }
 
@@ -126,6 +130,9 @@ inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(grid);
+    writer->SetDataModeToAppended();
+    writer->SetEncodeAppendedData(0);
+    writer->SetCompressorTypeToNone();
     writer->Write();
 }
 

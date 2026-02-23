@@ -43,15 +43,15 @@ int main(int argc, char** argv) {
 
     // 4. Set up the Critical Point Predicate (m=2)
     CriticalPointPredicate<2, double> cp_pred;
-    strncpy(cp_pred.var_names[0], "U", 31);
-    strncpy(cp_pred.var_names[1], "V", 31);
-    strncpy(cp_pred.scalar_var_name, "Woven", 31);
+    cp_pred.var_names[0] = "U";
+    cp_pred.var_names[1] = "V";
+    cp_pred.scalar_var_name = "Woven";
 
     // 5. Initialize and run the Unified Simplicial Engine
     SimplicialEngine<double, CriticalPointPredicate<2, double>> engine(mesh, cp_pred);
     
     std::cout << "Tracking critical points strictly in the CORE region..." << std::endl;
-    engine.execute(data);
+    engine.execute(data, {"U", "V"});
 
     // 6. Output results
     auto complex = engine.get_complex();

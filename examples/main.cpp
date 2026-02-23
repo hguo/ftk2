@@ -32,14 +32,14 @@ int main(int argc, char** argv) {
 
     // 3. Set up the Critical Point Predicate (m=2 for 2D spatial vector field)
     CriticalPointPredicate<2, double> cp_pred;
-    strncpy(cp_pred.var_names[0], "U", 31);
-    strncpy(cp_pred.var_names[1], "V", 31);
+    cp_pred.var_names[0] = "U";
+    cp_pred.var_names[1] = "V";
 
     // 4. Initialize and run the Unified Simplicial Engine
     SimplicialEngine<double, CriticalPointPredicate<2, double>> engine(mesh, cp_pred);
     
     std::cout << "Running Simplicial Engine..." << std::endl;
-    engine.execute(data);
+    engine.execute(data, {"U", "V"});
 
     // 5. Output results
     auto complex = engine.get_complex();

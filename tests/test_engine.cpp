@@ -42,9 +42,9 @@ void test_engine() {
         for (int x = 0; x < 10; ++x) u.f(x, 1) = (double)x - 4.5;
         std::map<std::string, ftk::ndarray<double>> data = {{"U", u}};
         CriticalPointPredicate<1, double> pred;
-        strncpy(pred.var_names[0], "U", 31);
+        pred.var_names[0] = "U";
         SimplicialEngine<double, CriticalPointPredicate<1, double>> engine(mesh, pred);
-        engine.execute(data);
+        engine.execute(data, {"U"});
         auto complex = engine.get_complex();
         ASSERT_TRUE(complex.vertices.size() > 0);
         // Only edges should be present
@@ -61,10 +61,10 @@ void test_engine() {
         s.f(1, 1, 1) = -1.0; 
         std::map<std::string, ftk::ndarray<double>> data = {{"S", s}};
         ContourPredicate<double> pred;
-        strncpy(pred.var_name, "S", 31);
+        pred.var_name = "S";
         pred.threshold = 0.0;
         SimplicialEngine<double, ContourPredicate<double>> engine(mesh, pred);
-        engine.execute(data);
+        engine.execute(data, {"S"});
         auto complex = engine.get_complex();
         ASSERT_TRUE(complex.vertices.size() > 0);
         // Edges and Faces should be present

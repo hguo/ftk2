@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
 
     // 3. Set up the Contour Predicate (m=1)
     ContourPredicate<double> contour_pred;
-    strncpy(contour_pred.var_name, "Scalar", 31);
+    contour_pred.var_name = "Scalar";
     contour_pred.threshold = 0.5;
 
     // 4. Initialize and run the Unified Simplicial Engine
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
     SimplicialEngine<double, ContourPredicate<double>> engine(mesh, contour_pred);
     
     std::cout << "Tracking contours..." << std::endl;
-    engine.execute(data);
+    engine.execute(data, {"Scalar"});
 
     // 5. Output results (Filter to only dim 2 triangles)
     auto complex = engine.get_complex();

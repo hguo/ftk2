@@ -13,7 +13,7 @@
 using namespace ftk2;
 
 int main(int argc, char** argv) {
-    const int DW = 32, DH = 32, DD = 32, DT = 10;
+    const int DW = 16, DH = 16, DD = 16, DT = 5;
     std::cout << "Generating 3D+T moving sphere levelset data (" << DW << "x" << DH << "x" << DD << "x" << DT << ")..." << std::endl;
 
     // 1. Generate moving sphere scalar field
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
 
     // 3. Set up the Levelset Predicate (m=1)
     ContourPredicate<float> levelset_pred;
-    strncpy(levelset_pred.var_name, "S", 31);
+    levelset_pred.var_name = "S";
     levelset_pred.threshold = 0.0f;
 
     // 4. Initialize and run the Unified Simplicial Engine
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     SimplicialEngine<float, ContourPredicate<float>> engine(mesh, levelset_pred);
     
     std::cout << "Tracking 3D levelset (results in a 3D volume manifold in spacetime)..." << std::endl;
-    engine.execute(data);
+    engine.execute(data, {"S"});
 
     // 5. Output results (Filter to dim 3 tetrahedra)
     auto complex = engine.get_complex();

@@ -12,7 +12,7 @@
 using namespace ftk2;
 
 int main(int argc, char** argv) {
-    const int DW = 32, DH = 32, DD = 32, DT = 10;
+    const int DW = 16, DH = 16, DD = 16, DT = 5;
     std::cout << "CUDA: Generating 3D+T moving sphere levelset data..." << std::endl;
 
     // 1. Generate scalar field on Host
@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 
     // 3. Set up the Levelset Predicate
     ContourPredicate<float> levelset_pred;
-    strncpy(levelset_pred.var_name, "S", 31);
+    levelset_pred.var_name = "S";
     levelset_pred.threshold = 0.0f;
 
     // 4. Initialize Unified Engine
@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
     
     std::cout << "Tracking 3D levelset ON GPU (CUDA)..." << std::endl;
     // Note: This method is only available when compiled with NVCC (__CUDACC__)
-    engine.execute_cuda(data);
+    engine.execute_cuda(data, {"S"});
 
     // 5. Output results
     auto complex = engine.get_complex();

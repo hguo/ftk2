@@ -50,8 +50,8 @@ int main(int argc, char** argv) {
 
     // 3. Set up the Intersection Predicate (m=2)
     IsosurfaceIntersectionPredicate<double> inter_pred;
-    strncpy(inter_pred.var_names[0], "S1", 31);
-    strncpy(inter_pred.var_names[1], "S2", 31);
+    inter_pred.var_names[0] = "S1";
+    inter_pred.var_names[1] = "S2";
     inter_pred.thresholds[0] = 0.0;
     inter_pred.thresholds[1] = 0.0;
 
@@ -59,7 +59,7 @@ int main(int argc, char** argv) {
     SimplicialEngine<double, IsosurfaceIntersectionPredicate<double>> engine(mesh, inter_pred);
     
     std::cout << "Tracking sphere intersections..." << std::endl;
-    engine.execute(data);
+    engine.execute(data, {"S1", "S2"});
 
     // 5. Output results (Filter to only dim 2 triangles)
     auto complex = engine.get_complex();

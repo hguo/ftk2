@@ -31,15 +31,20 @@ struct FeatureComplex {
 
         for (auto& conn : connectivity) {
             int n = conn.dimension + 1;
+            if (n <= 0) continue;
             std::vector<std::vector<uint32_t>> cells;
             for (size_t i = 0; i < conn.indices.size(); i += n) {
+                if (i + n > conn.indices.size()) break;
                 std::vector<uint32_t> cell(n);
                 for (int j = 0; j < n; ++j) cell[j] = conn.indices[i + j];
                 std::sort(cell.begin(), cell.end());
                 cells.push_back(cell);
             }
             std::sort(cells.begin(), cells.end());
+            cells.erase(std::unique(cells.begin(), cells.end()), cells.end());
+            
             conn.indices.clear();
+            conn.indices.reserve(cells.size() * n);
             for (const auto& cell : cells) {
                 for (uint32_t idx : cell) conn.indices.push_back(idx);
             }
