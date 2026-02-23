@@ -8,6 +8,7 @@
 #include <numeric>
 #include <set>
 #include <unordered_set>
+#include <iostream>
 
 #ifdef __CUDACC__
 #define FTK_HOST_DEVICE __host__ __device__
@@ -102,7 +103,7 @@ public:
 };
 
 /**
- * @brief Regular simplicial mesh using Kuhn's triangulation.
+ * @brief Regular simplicial mesh.
  */
 class RegularSimplicialMesh : public Mesh {
 public:
@@ -122,6 +123,65 @@ public:
         int d = get_total_dimension();
         if (k > d) return;
 
+        if (k == 1) { // Optimized edge iteration for RegularSimplicialMesh
+            uint64_t n_v = get_num_vertices();
+            for (uint64_t v_idx = 0; v_idx < n_v; ++v_idx) {
+                auto local_coords = get_vertex_coords_local(v_idx);
+                std::vector<uint64_t> g0 = local_coords;
+                for(int i=0; i<d; ++i) g0[i] += offset_[i];
+                uint64_t id0 = coords_to_id(g0);
+
+                for (int mask = 1; mask < (1 << d); ++mask) {
+                    std::vector<uint64_t> g1 = g0;
+                    bool in_bounds = true;
+                    for (int i = 0; i < d; ++i) {
+                        g1[i] += ((mask >> i) & 1);
+                        if (g1[i] >= global_dims_[i]) in_bounds = false;
+                    }
+
+                    if (in_bounds) {
+                        Simplex edge; edge.dimension = 1;
+                        uint64_t id1 = coords_to_id(g1);
+                        if (id0 < id1) { edge.vertices[0] = id0; edge.vertices[1] = id1; }
+                        else { edge.vertices[0] = id1; edge.vertices[1] = id0; }
+                        callback(edge);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (k == d) {
+            uint64_t n_hc = get_num_hypercubes();
+            for (uint64_t hc_idx = 0; hc_idx < n_hc; ++hc_idx) {
+                int n_p = 1; for(int i=1; i<=d; ++i) n_p *= i;
+                for (int p_idx = 0; p_idx < n_p; ++p_idx) {
+                    Simplex top; top.dimension = d;
+                    std::vector<uint64_t> base_coords(d);
+                    uint64_t tmp_idx = hc_idx;
+                    for (int i = 0; i < d; ++i) {
+                        base_coords[i] = tmp_idx % (dims_[i] - 1);
+                        tmp_idx /= (dims_[i] - 1);
+                    }
+
+                    std::vector<int> p(d);
+                    std::iota(p.begin(), p.end(), 0);
+                    for (int i = 0; i < p_idx; ++i) std::next_permutation(p.begin(), p.end());
+
+                    std::vector<uint64_t> curr = base_coords;
+                    for(int i=0; i<d; ++i) curr[i] += offset_[i];
+                    top.vertices[0] = coords_to_id(curr);
+                    for (int i = 0; i < d; ++i) {
+                        curr[p[i]]++;
+                        top.vertices[i + 1] = coords_to_id(curr);
+                    }
+                    top.sort_vertices();
+                    callback(top);
+                }
+            }
+            return;
+        }
+
         std::unordered_set<Simplex, SimplexHash> visited;
         std::vector<uint64_t> current_coords(d, 0);
         
@@ -139,9 +199,10 @@ public:
                 top.sort_vertices();
                 
                 find_k_faces(top, k, [&](const Simplex& f) {
-                    if (visited.find(f) == visited.end()) {
-                        visited.insert(f);
-                        callback(f);
+                    Simplex fs = f; fs.sort_vertices();
+                    if (visited.find(fs) == visited.end()) {
+                        visited.insert(fs);
+                        callback(fs);
                     }
                 });
             } while (std::next_permutation(p.begin(), p.end()));
@@ -161,12 +222,73 @@ public:
     std::vector<uint64_t> get_offset() const { return offset_; }
     std::vector<uint64_t> get_global_dims() const { return global_dims_; }
 
-protected:
-    uint64_t coords_to_id(const std::vector<uint64_t>& local_coords) const {
+    uint64_t get_num_vertices() const {
+        uint64_t n = 1;
+        for (auto d : dims_) n *= d;
+        return n;
+    }
+
+    uint64_t get_num_hypercubes() const {
+        uint64_t n = 1;
+        for (auto d : dims_) n *= (d - 1);
+        return n;
+    }
+
+    bool is_hypercube_base(const std::vector<uint64_t>& coords) const {
+        for (int i = 0; i < dims_.size(); ++i) if (coords[i] >= dims_[i] - 1) return false;
+        return true;
+    }
+
+    uint64_t hypercube_coords_to_idx(const std::vector<uint64_t>& coords) const {
+        uint64_t idx = 0;
+        uint64_t multiplier = 1;
+        for (int i = 0; i < dims_.size(); ++i) {
+            idx += coords[i] * multiplier;
+            multiplier *= (dims_[i] - 1);
+        }
+        return idx;
+    }
+
+    void get_d_simplex(uint64_t hc_index, int p_index, Simplex& s) const {
+        int d = get_total_dimension();
+        s.dimension = d;
+        std::vector<uint64_t> base_coords(d);
+        uint64_t tmp_idx = hc_index;
+        for (int i = 0; i < d; ++i) {
+            base_coords[i] = tmp_idx % (dims_[i] - 1);
+            tmp_idx /= (dims_[i] - 1);
+        }
+
+        std::vector<uint64_t> global_base = base_coords;
+        for (int i = 0; i < d; ++i) global_base[i] += offset_[i];
+
+        std::vector<int> p(d);
+        std::iota(p.begin(), p.end(), 0);
+        for (int i = 0; i < p_index; ++i) std::next_permutation(p.begin(), p.end());
+
+        std::vector<uint64_t> curr = global_base;
+        s.vertices[0] = coords_to_id(curr);
+        for (int i = 0; i < d; ++i) {
+            curr[p[i]]++;
+            s.vertices[i + 1] = coords_to_id(curr);
+        }
+        s.sort_vertices();
+    }
+
+    std::vector<uint64_t> get_vertex_coords_local(uint64_t index) const {
+        std::vector<uint64_t> coords(dims_.size());
+        for (size_t i = 0; i < dims_.size(); ++i) {
+            coords[i] = index % dims_[i];
+            index /= dims_[i];
+        }
+        return coords;
+    }
+
+    uint64_t coords_to_id(const std::vector<uint64_t>& global_coords) const {
         uint64_t id = 0;
         uint64_t multiplier = 1;
         for (size_t i = 0; i < dims_.size(); ++i) {
-            id += (local_coords[i] + offset_[i]) * multiplier;
+            id += global_coords[i] * multiplier;
             multiplier *= global_dims_[i];
         }
         return id;
@@ -180,6 +302,8 @@ protected:
         }
         return coords;
     }
+
+protected:
 
 private:
     void iterate_hypercubes(int dim, std::vector<uint64_t>& coords, std::function<void(const std::vector<uint64_t>&)> callback) const {

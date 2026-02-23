@@ -14,11 +14,11 @@ static constexpr double SoS_Q = 1000000.0;
 template <typename T>
 FTK_HOST_DEVICE
 inline int sign(T v, uint64_t index) {
-    // Rounding on device needs care
     long long qv = static_cast<long long>(v * SoS_Q + (v > 0 ? 0.5 : -0.5));
     if (qv > 0) return 1;
     if (qv < 0) return -1;
-    return 1; 
+    // Tie-breaking: Use index parity to ensure consistent sign for zero values
+    return (index % 2 == 0) ? 1 : -1;
 }
 
 template <typename T>

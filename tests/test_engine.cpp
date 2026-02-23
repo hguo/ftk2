@@ -42,7 +42,7 @@ void test_engine() {
         for (int x = 0; x < 10; ++x) u.f(x, 1) = (double)x - 4.5;
         std::map<std::string, ftk::ndarray<double>> data = {{"U", u}};
         CriticalPointPredicate<1, double> pred;
-        pred.var_names[0] = "U";
+        strncpy(pred.var_names[0], "U", 31);
         SimplicialEngine<double, CriticalPointPredicate<1, double>> engine(mesh, pred);
         engine.execute(data);
         auto complex = engine.get_complex();
@@ -61,7 +61,7 @@ void test_engine() {
         s.f(1, 1, 1) = -1.0; 
         std::map<std::string, ftk::ndarray<double>> data = {{"S", s}};
         ContourPredicate<double> pred;
-        pred.var_name = "S";
+        strncpy(pred.var_name, "S", 31);
         pred.threshold = 0.0;
         SimplicialEngine<double, ContourPredicate<double>> engine(mesh, pred);
         engine.execute(data);

@@ -13,8 +13,9 @@
 #include <unordered_set>
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 
-#if FTK_HAVE_CUDA
+#if FTK_HAVE_CUDA && defined(__CUDACC__)
 #include <ftk2/core/cuda_engine.hpp>
 #include <cuda_runtime.h>
 #endif
@@ -62,7 +63,7 @@ public:
     /**
      * @brief Run extraction and tracking on a time-varying stream (sliding window).
      */
-    void execute_stream(ftk::ndarray_stream<T>& stream) {
+    void execute_stream(ftk::stream<T>& stream) {
         if (!stream.advance()) return;
         auto data_t0 = stream.get_current_data();
 
@@ -84,6 +85,7 @@ public:
     }
 
     void execute(const std::map<std::string, ftk::ndarray<T>>& data) {
+        auto t_start = std::chrono::high_resolution_clock::now();
         int d_total = mesh_->get_total_dimension();
         mesh_->iterate_simplices(m, [&](const Simplex& s) {
             auto elements = predicate_.extract(s, data, *mesh_);
@@ -93,16 +95,42 @@ public:
                 node_elements_[node_id] = elements[0]; 
             }
         });
+        auto t_nodes = std::chrono::high_resolution_clock::now();
 
-        mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
-            if (m == 1 && d_total == 4) marching_pentatope(cell, data);
-            else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
-            else form_general_manifold_patches(cell, data);
-        });
+        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
+        if (reg_mesh) {
+            uint64_t n_v = reg_mesh->get_num_vertices();
+            for (uint64_t v_idx = 0; v_idx < n_v; ++v_idx) {
+                auto local_coords = reg_mesh->get_vertex_coords_local(v_idx);
+                if (reg_mesh->is_hypercube_base(local_coords)) {
+                    uint64_t hc_idx = reg_mesh->hypercube_coords_to_idx(local_coords);
+                    int n_p = 1; for(int i=1; i<=d_total; ++i) n_p *= i;
+                    for (int p_idx = 0; p_idx < n_p; ++p_idx) {
+                        Simplex cell;
+                        reg_mesh->get_d_simplex(hc_idx, p_idx, cell);
+                        if (m == 1 && d_total == 4) marching_pentatope(cell, data);
+                        else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
+                        else form_general_manifold_patches(cell, data);
+                    }
+                }
+            }
+        } else {
+            mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
+                if (m == 1 && d_total == 4) marching_pentatope(cell, data);
+                else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
+                else form_general_manifold_patches(cell, data);
+            });
+        }
+        auto t_end = std::chrono::high_resolution_clock::now();
+        auto d_nodes = std::chrono::duration_cast<std::chrono::milliseconds>(t_nodes - t_start).count();
+        auto d_manifold = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_nodes).count();
+        std::cout << "CPU Execution Breakdown: Nodes=" << d_nodes << "ms, Manifold=" << d_manifold << "ms, Total=" << (d_nodes+d_manifold) << "ms" << std::endl;
     }
 
-#if FTK_HAVE_CUDA
+#if FTK_HAVE_CUDA && defined(__CUDACC__)
     void execute_cuda(const std::map<std::string, ftk::ndarray<T>>& data) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        
         auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
         if (!reg_mesh) return;
 
@@ -123,17 +151,20 @@ public:
             for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
         }
 
+        auto t_setup = std::chrono::high_resolution_clock::now();
+
         std::vector<CudaDataView<T>> h_views;
         for (const auto& var : vars) {
             const auto& arr = data.at(var);
             CudaDataView<T> view;
             cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T));
             cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice);
+            auto lattice = arr.get_lattice();
             for(int i=0; i<4; ++i) { 
-                view.dims[i] = (i < arr.ndims()) ? arr.dim(i) : 1; 
-                view.s[i] = (i < arr.ndims()) ? arr.stride(i) : 0; 
+                view.dims[i] = (i < arr.nd()) ? arr.dimf(i) : 1; 
+                view.s[i] = (i < arr.nd()) ? lattice.prod_[arr.nd() - 1 - i] : 0; 
             }
-            view.ndims = arr.ndims();
+            view.ndims = arr.nd();
             h_views.push_back(view);
         }
 
@@ -156,9 +187,13 @@ public:
         cudaMemset(res.face_count, 0, sizeof(int));
         cudaMemset(res.volume_count, 0, sizeof(int));
 
-        uint64_t n_hc = d_mesh.get_num_hypercubes();
-        extraction_kernel<<< (n_hc+255)/256, 256 >>>(d_mesh, predicate_, d_views, h_views.size(), res);
+        auto t_h2d = std::chrono::high_resolution_clock::now();
+
+        uint64_t n_v = d_mesh.get_num_vertices();
+        extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_, d_views, h_views.size(), res);
         cudaDeviceSynchronize();
+
+        auto t_kernel = std::chrono::high_resolution_clock::now();
 
         int h_node_count;
         cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost);
@@ -166,11 +201,18 @@ public:
         std::vector<FeatureElement> h_elements(std::min(h_node_count, res.max_nodes));
         cudaMemcpy(h_elements.data(), res.nodes, h_elements.size() * sizeof(FeatureElement), cudaMemcpyDeviceToHost);
 
+        auto t_d2h = std::chrono::high_resolution_clock::now();
+
         for (const auto& el : h_elements) {
             uint64_t node_id = uf_.add();
             active_nodes_[el.simplex] = node_id;
-            node_elements_[node_id] = el;
+            
+            FeatureElement element = el;
+            // Ensure any non-trivial mapping or initialization happens here
+            node_elements_[node_id] = element;
         }
+
+        auto t_uf = std::chrono::high_resolution_clock::now();
 
         for (auto& v : h_views) cudaFree((void*)v.data);
         cudaFree(d_views);
@@ -180,11 +222,40 @@ public:
         cudaFree(res.volumes); cudaFree(res.volume_count);
 
         int d_total = mesh_->get_total_dimension();
-        mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
-            if (m == 1 && d_total == 4) marching_pentatope(cell, data);
-            else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
-            else form_general_manifold_patches(cell, data);
-        });
+        uint64_t n_v_m = reg_mesh->get_num_vertices();
+        for (uint64_t v_idx = 0; v_idx < n_v_m; ++v_idx) {
+            auto local_coords = reg_mesh->get_vertex_coords_local(v_idx);
+            if (reg_mesh->is_hypercube_base(local_coords)) {
+                uint64_t hc_idx = reg_mesh->hypercube_coords_to_idx(local_coords);
+                int n_p = 1; for(int i=1; i<=d_total; ++i) n_p *= i;
+                for (int p_idx = 0; p_idx < n_p; ++p_idx) {
+                    Simplex cell;
+                    reg_mesh->get_d_simplex(hc_idx, p_idx, cell);
+                    if (m == 1 && d_total == 4) marching_pentatope(cell, data);
+                    else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
+                    else form_general_manifold_patches(cell, data);
+                }
+            }
+        }
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+
+        auto d_setup = std::chrono::duration_cast<std::chrono::milliseconds>(t_setup - t_start).count();
+        auto d_h2d = std::chrono::duration_cast<std::chrono::milliseconds>(t_h2d - t_setup).count();
+        auto d_kernel = std::chrono::duration_cast<std::chrono::milliseconds>(t_kernel - t_h2d).count();
+        auto d_d2h = std::chrono::duration_cast<std::chrono::milliseconds>(t_d2h - t_kernel).count();
+        auto d_uf = std::chrono::duration_cast<std::chrono::milliseconds>(t_uf - t_d2h).count();
+        auto d_manifold = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_uf).count();
+        auto d_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+
+        std::cout << "CUDA Execution Breakdown:" << std::endl;
+        std::cout << "  - Setup:    " << d_setup << " ms" << std::endl;
+        std::cout << "  - H2D:      " << d_h2d << " ms" << std::endl;
+        std::cout << "  - Kernel:   " << d_kernel << " ms" << std::endl;
+        std::cout << "  - D2H:      " << d_d2h << " ms" << std::endl;
+        std::cout << "  - UF Add:   " << d_uf << " ms" << std::endl;
+        std::cout << "  - Manifold: " << d_manifold << " ms" << std::endl;
+        std::cout << "  - TOTAL:    " << d_total_ms << " ms" << std::endl;
     }
 #endif
 

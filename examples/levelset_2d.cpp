@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
 
     // 3. Set up the Contour Predicate (m=1)
     ContourPredicate<double> contour_pred;
-    contour_pred.var_name = "Scalar";
+    strncpy(contour_pred.var_name, "Scalar", 31);
     contour_pred.threshold = 0.5;
 
     // 4. Initialize and run the Unified Simplicial Engine

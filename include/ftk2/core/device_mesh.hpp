@@ -7,7 +7,7 @@ namespace ftk2 {
 /**
  * @brief Lightweight, POD-compatible regular mesh for CUDA kernels.
  * 
- * Implements implicit indexing and Kuhn's triangulation on the device.
+ * Implements implicit indexing and simplicial subdivision on the device.
  */
 struct RegularSimplicialMeshDevice {
     uint64_t local_dims[4];
@@ -41,6 +41,27 @@ struct RegularSimplicialMeshDevice {
     }
 
     /**
+     * @brief Total number of vertices in the local mesh.
+     */
+    FTK_HOST_DEVICE
+    uint64_t get_num_vertices() const {
+        uint64_t n = 1;
+        for (int i = 0; i < ndims; ++i) n *= local_dims[i];
+        return n;
+    }
+
+    /**
+     * @brief Get local coordinates of a vertex from its linear index.
+     */
+    FTK_HOST_DEVICE
+    void get_vertex_coords_local(uint64_t index, uint64_t coords[4]) const {
+        for (int i = 0; i < ndims; ++i) {
+            coords[i] = index % local_dims[i];
+            index /= local_dims[i];
+        }
+    }
+
+    /**
      * @brief Total number of hypercubes in the local mesh.
      */
     FTK_HOST_DEVICE
@@ -60,6 +81,35 @@ struct RegularSimplicialMeshDevice {
             coords[i] = index % size;
             index /= size;
         }
+    }
+
+    FTK_HOST_DEVICE
+    bool is_hypercube_base(const uint64_t coords[4]) const {
+        for (int i = 0; i < ndims; ++i) if (coords[i] >= local_dims[i] - 1) return false;
+        return true;
+    }
+
+    FTK_HOST_DEVICE
+    uint64_t hypercube_coords_to_idx(const uint64_t coords[4]) const {
+        uint64_t idx = 0;
+        uint64_t multiplier = 1;
+        for (int i = 0; i < ndims; ++i) {
+            idx += coords[i] * multiplier;
+            multiplier *= (local_dims[i] - 1);
+        }
+        return idx;
+    }
+
+    struct HypercubeCoords { uint64_t coords[4]; };
+    FTK_HOST_DEVICE
+    HypercubeCoords get_hypercube_coords_internal(uint64_t index) const {
+        HypercubeCoords res = {{0, 0, 0, 0}};
+        for (int i = 0; i < ndims; ++i) {
+            uint64_t size = local_dims[i] - 1;
+            res.coords[i] = index % size;
+            index /= size;
+        }
+        return res;
     }
 
     /**
