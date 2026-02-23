@@ -59,4 +59,9 @@ This document summarizes the research insights and technical discoveries that ha
 ## 12. Sliding Window Stream Processing
 *   **Insight**: Extreme-scale scientific datasets often exceed both host and device memory. A streaming approach is mandatory.
 *   **Implementation**: FTK2 uses a sliding window of exactly **two consecutive time steps** ($t$ and $t+1$). 
-*   **Data Flow**: As the `ndarray_stream` advances, the $t+1$ buffer becomes $t$, and $t+2$ is loaded into the former $t$ slot. This ensures that the simplicial engine always has the local context needed for spacetime tracking while minimizing memory footprint.
+*   **Data Flow**: As the `ndarray_stream` advances, the $t+1$ buffer becomes $t$, and $t+2$ is loaded into the former $t$ slot.
+
+## 13. Hybrid Unstructured Processing
+*   **Insight**: Storing a 4D spacetime mesh for an unstructured domain is memory-prohibitive.
+*   **Implementation**: FTK2 uses **Explicit Spatial Topology** (connectivity tables for the spatial mesh) and **Implicit Temporal Extrusion**.
+*   **GPU Strategy**: CUDA kernels launch one thread per spatial cell, reading its connectivity and "extruding" it into spacetime simplices on-the-fly. This keeps the GPU memory footprint minimal and focused on data rather than mesh connectivity.

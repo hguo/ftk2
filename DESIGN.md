@@ -13,10 +13,11 @@ For regular hypercubic grids, we implement an implicit simplicial subdivision ba
 *   **Dimensionality**: Supports $n$-dimensional grids ($d$) plus a temporal dimension ($+1$).
 
 ### 1.2 Extruded & Deforming Simplicial Mesh
-For unstructured meshes, we "extrude" the spatial mesh into spacetime.
-*   **Recursive Extrusion**: Supports chaining (e.g., 2D Mesh -> 3D Volume -> 4D Spacetime).
-*   **Deforming Spacetime**: Vertex coordinates can change at each layer (e.g., following simulation grid movement), as detailed in arXiv:2309.02677.
-*   **Topological Consistency**: Ensures that features crossing from one spatial simplex to another are correctly linked across time.
+For unstructured meshes (e.g., VTK tetrahedra, XGC, MPAS), FTK2 uses a hybrid explicit-implicit approach.
+*   **Explicit Spatial Topology**: The base mesh stores raw connectivity and coordinate tables.
+*   **Implicit Temporal Extrusion**: Spacetime connectivity is computed on-the-fly to minimize memory overhead. A spatial $d$-simplex is extruded into $d+1$ spacetime $(d+1)$-simplices.
+*   **Unstructured GPU Strategy**: CUDA kernels utilize Read-Only caches for spatial connectivity while performing temporal extrusion entirely in-thread.
+*   **Deforming Spacetime**: Vertex coordinates can change at each layer while maintaining fixed topology, as detailed in arXiv:2309.02677.
 
 ## 2. The Unified Simplicial Engine
 
