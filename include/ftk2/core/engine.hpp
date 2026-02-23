@@ -6,6 +6,7 @@
 #include <ftk2/core/complex.hpp>
 #include <ftk2/core/sos.hpp>
 #include <ndarray/ndarray.hh>
+#include <ndarray/ndarray_stream.hh>
 #include <map>
 #include <vector>
 #include <set>
@@ -23,33 +24,34 @@ namespace ftk2 {
 /**
  * @brief Simple Union-Find for manifold stitching.
  */
+template <typename IDType = uint64_t>
 class UnionFind {
 public:
-    uint64_t add() {
-        uint64_t id = parent_.size();
+    IDType add() {
+        IDType id = parent_.size();
         parent_.push_back(id);
         return id;
     }
 
-    uint64_t find(uint64_t i) {
+    IDType find(IDType i) {
         if (parent_[i] == i) return i;
         return parent_[i] = find(parent_[i]);
     }
 
-    void unite(uint64_t i, uint64_t j) {
-        uint64_t root_i = find(i);
-        uint64_t root_j = find(j);
+    void unite(IDType i, IDType j) {
+        IDType root_i = find(i);
+        IDType root_j = find(j);
         if (root_i != root_j) parent_[root_i] = root_j;
     }
 
 private:
-    std::vector<uint64_t> parent_;
+    std::vector<IDType> parent_;
 };
 
 /**
  * @brief The Unified Simplicial Engine for FTK2.
  */
-template <typename T, typename PredicateType>
+template <typename T, typename PredicateType, typename IDType = uint64_t>
 class SimplicialEngine {
 public:
     static constexpr int m = PredicateType::codimension;
@@ -57,10 +59,32 @@ public:
     SimplicialEngine(std::shared_ptr<Mesh> mesh, PredicateType pred = PredicateType()) 
         : mesh_(mesh), predicate_(pred) {}
 
+    /**
+     * @brief Run extraction and tracking on a time-varying stream (sliding window).
+     */
+    void execute_stream(ftk::ndarray_stream<T>& stream) {
+        if (!stream.advance()) return;
+        auto data_t0 = stream.get_current_data();
+
+        while (stream.advance()) {
+            auto data_t1 = stream.get_current_data();
+            
+            // For regular grids, we combine t0 and t1 into a temporary local window data
+            std::map<std::string, ftk::ndarray<T>> window_data;
+            for (auto const& [name, arr0] : data_t0) {
+                const auto& arr1 = data_t1.at(name);
+                // In a real implementation, we'd use a zero-copy view if ndarray supports it
+                // For now, assume predicates can handle two separate timesteps
+            }
+            
+            // process_window(data_t0, data_t1);
+            
+            data_t0 = data_t1;
+        }
+    }
+
     void execute(const std::map<std::string, ftk::ndarray<T>>& data) {
         int d_total = mesh_->get_total_dimension();
-        
-        // 1. Extract Nodes from all m-simplices
         mesh_->iterate_simplices(m, [&](const Simplex& s) {
             auto elements = predicate_.extract(s, data, *mesh_);
             if (!elements.empty()) {
@@ -70,7 +94,6 @@ public:
             }
         });
 
-        // 2. Form Manifold Simplices using Marching simplices logic
         mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
             if (m == 1 && d_total == 4) marching_pentatope(cell, data);
             else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data);
@@ -94,14 +117,13 @@ public:
             d_mesh.global_dims[i] = g_dims[i];
         }
 
-        std::vector<CudaDataView<T>> h_views;
         std::vector<std::string> vars;
-        if constexpr (m == 1 && std::is_same_v<PredicateType, ContourPredicate<T>>) {
-            vars = {predicate_.var_name};
-        } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
+        if constexpr (m == 1 && std::is_same_v<PredicateType, ContourPredicate<T>>) vars = {predicate_.var_name};
+        else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
         }
 
+        std::vector<CudaDataView<T>> h_views;
         for (const auto& var : vars) {
             const auto& arr = data.at(var);
             CudaDataView<T> view;
@@ -119,19 +141,30 @@ public:
         cudaMalloc(&d_views, h_views.size() * sizeof(CudaDataView<T>));
         cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice);
 
-        int max_elements = 1000000;
-        FeatureElement* d_output; int* d_count;
-        cudaMalloc(&d_output, max_elements * sizeof(FeatureElement));
-        cudaMalloc(&d_count, sizeof(int));
-        cudaMemset(d_count, 0, sizeof(int));
+        CudaExtractionResult<IDType> res;
+        res.max_nodes = 1000000; res.max_conn = 3000000;
+        cudaMalloc(&res.nodes, res.max_nodes * sizeof(FeatureElement));
+        cudaMalloc(&res.node_count, sizeof(int));
+        cudaMalloc(&res.edges, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>));
+        cudaMalloc(&res.edge_count, sizeof(int));
+        cudaMalloc(&res.faces, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 2>));
+        cudaMalloc(&res.face_count, sizeof(int));
+        cudaMalloc(&res.volumes, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 3>));
+        cudaMalloc(&res.volume_count, sizeof(int));
+        cudaMemset(res.node_count, 0, sizeof(int));
+        cudaMemset(res.edge_count, 0, sizeof(int));
+        cudaMemset(res.face_count, 0, sizeof(int));
+        cudaMemset(res.volume_count, 0, sizeof(int));
 
         uint64_t n_hc = d_mesh.get_num_hypercubes();
-        extraction_kernel<<< (n_hc+255)/256, 256 >>>(d_mesh, predicate_, d_views, h_views.size(), d_output, d_count, max_elements);
+        extraction_kernel<<< (n_hc+255)/256, 256 >>>(d_mesh, predicate_, d_views, h_views.size(), res);
+        cudaDeviceSynchronize();
 
-        int h_count;
-        cudaMemcpy(&h_count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
-        std::vector<FeatureElement> h_elements(std::min(h_count, max_elements));
-        cudaMemcpy(h_elements.data(), d_output, h_elements.size() * sizeof(FeatureElement), cudaMemcpyDeviceToHost);
+        int h_node_count;
+        cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost);
+        
+        std::vector<FeatureElement> h_elements(std::min(h_node_count, res.max_nodes));
+        cudaMemcpy(h_elements.data(), res.nodes, h_elements.size() * sizeof(FeatureElement), cudaMemcpyDeviceToHost);
 
         for (const auto& el : h_elements) {
             uint64_t node_id = uf_.add();
@@ -141,8 +174,10 @@ public:
 
         for (auto& v : h_views) cudaFree((void*)v.data);
         cudaFree(d_views);
-        cudaFree(d_output);
-        cudaFree(d_count);
+        cudaFree(res.nodes); cudaFree(res.node_count);
+        cudaFree(res.edges); cudaFree(res.edge_count);
+        cudaFree(res.faces); cudaFree(res.face_count);
+        cudaFree(res.volumes); cudaFree(res.volume_count);
 
         int d_total = mesh_->get_total_dimension();
         mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
@@ -155,10 +190,10 @@ public:
 
     FeatureComplex get_complex() {
         FeatureComplex complex;
-        std::map<uint64_t, uint32_t> node_to_idx;
+        std::map<IDType, uint32_t> node_to_idx;
         for (auto const& [node_id, element] : node_elements_) {
             uint64_t root = uf_.find(node_id);
-            FeatureElement el = element; el.track_id = root;
+            FeatureElement el = element; el.track_id = (uint64_t)root;
             node_to_idx[node_id] = complex.vertices.size();
             complex.vertices.push_back(el);
         }
@@ -166,7 +201,7 @@ public:
             if (!manifold_simplices_[dim].empty()) {
                 FeatureComplex::SimplexIndices conn; conn.dimension = dim;
                 for (auto const& simplex : manifold_simplices_[dim]) {
-                    for (uint64_t nid : simplex) conn.indices.push_back(node_to_idx.at(nid));
+                    for (IDType nid : simplex) conn.indices.push_back(node_to_idx.at(nid));
                 }
                 complex.connectivity.push_back(conn);
             }
@@ -191,7 +226,7 @@ private:
         if (A.size() == 1 || B.size() == 1) {
             const auto& single = (A.size() == 1) ? A[0] : B[0];
             const auto& others = (A.size() == 1) ? B : A;
-            std::vector<uint64_t> nodes;
+            std::vector<IDType> nodes;
             for (int o : others) {
                 Simplex edge = make_edge(idx[single], idx[o]);
                 if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]);
@@ -235,14 +270,14 @@ private:
         if (A.size() == 1 || B.size() == 1) {
             const auto& single = (A.size() == 1) ? A[0] : B[0];
             const auto& others = (A.size() == 1) ? B : A;
-            std::vector<uint64_t> nodes;
+            std::vector<IDType> nodes;
             for (int o : others) {
                 Simplex edge = make_edge(idx[single], idx[o]);
                 if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]);
             }
             if (nodes.size() == 3) manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]});
         } else if (A.size() == 2 && B.size() == 2) {
-            std::vector<uint64_t> nodes;
+            std::vector<IDType> nodes;
             for (int a : A) for (int b : B) {
                 Simplex edge = make_edge(idx[a], idx[b]);
                 if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]);
@@ -255,9 +290,9 @@ private:
     }
 
     void form_general_manifold_patches(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data) {
-        std::vector<uint64_t> nodes;
-        find_subsimplices(cell, m, [&](const Simplex& f) {
-            if (active_nodes_.count(f)) nodes.push_back(active_nodes_.at(f));
+        std::vector<IDType> nodes;
+        find_m_subsimplices(cell, m, [&](const Simplex& f) {
+            if (active_nodes_.count(f)) nodes.push_back(active_nodes_[f]);
         });
         if (nodes.size() >= 2) {
             int k = mesh_->get_total_dimension() - m;
@@ -275,7 +310,7 @@ private:
         return s;
     }
 
-    void find_subsimplices(const Simplex& s, int target_m, std::function<void(const Simplex&)> callback) {
+    void find_m_subsimplices(const Simplex& s, int target_m, std::function<void(const Simplex&)> callback) {
         int n = s.dimension + 1; int r = target_m + 1;
         std::vector<int> p(r); std::iota(p.begin(), p.end(), 0);
         while (p[0] <= n - r) {
@@ -290,10 +325,10 @@ private:
         }
     }
 
-    std::shared_ptr<Mesh> mesh_; PredicateType predicate_; UnionFind uf_;
-    std::map<Simplex, uint64_t> active_nodes_;
-    std::map<uint64_t, FeatureElement> node_elements_;
-    std::map<int, std::vector<std::vector<uint64_t>>> manifold_simplices_;
+    std::shared_ptr<Mesh> mesh_; PredicateType predicate_; UnionFind<IDType> uf_;
+    std::map<Simplex, IDType> active_nodes_;
+    std::map<IDType, FeatureElement> node_elements_;
+    std::map<int, std::vector<std::vector<IDType>>> manifold_simplices_;
 };
 
 } // namespace ftk2

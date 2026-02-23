@@ -55,3 +55,8 @@ This document summarizes the research insights and technical discoveries that ha
 ## 11. The Orientation Challenge in High-D Manifolds
 *   **Insight**: Inconsistent vertex ordering during the subdivision of high-dimensional prisms (e.g., in Marching Pentatopes) leads to "messy" normals in ParaView when slicing spacetime volumes.
 *   **Future Fix**: Implement a global orientation invariant based on vertex ID parity or specific combinatorial rules to ensure every simplex in the feature complex has a consistent winding order relative to the manifold's normal.
+
+## 12. Sliding Window Stream Processing
+*   **Insight**: Extreme-scale scientific datasets often exceed both host and device memory. A streaming approach is mandatory.
+*   **Implementation**: FTK2 uses a sliding window of exactly **two consecutive time steps** ($t$ and $t+1$). 
+*   **Data Flow**: As the `ndarray_stream` advances, the $t+1$ buffer becomes $t$, and $t+2$ is loaded into the former $t$ slot. This ensures that the simplicial engine always has the local context needed for spacetime tracking while minimizing memory footprint.

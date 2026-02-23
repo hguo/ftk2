@@ -9,6 +9,7 @@ int passed_tests = 0;
 void test_zero_crossing();
 void test_mesh();
 void test_engine();
+void test_sos();
 
 int main(int argc, char** argv) {
     std::cout << "Running FTK2 tests..." << std::endl;
@@ -16,6 +17,7 @@ int main(int argc, char** argv) {
     test_zero_crossing();
     test_mesh();
     test_engine();
+    test_sos();
     
     std::cout << "\nSummary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
     return (passed_tests == total_tests) ? 0 : 1;
