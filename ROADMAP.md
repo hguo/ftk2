@@ -7,10 +7,11 @@ This document outlines the planned milestones and future features for the FTK2 p
 *   [ ] Unified `SimplicialEngine` for extraction and tracking.
 *   [ ] **Universal Zero-Crossing Engine**: Handle **Critical Points**, **Levelsets**, and **Fibers** ($m=1, 2, ...$).
 
-## Milestone 2: GPU Acceleration
-*   [ ] CUDA/HIP kernels for mesh traversal.
-*   [ ] Parallel Union-Find on the GPU for local CCL.
-*   [ ] Unified device-compatible feature structures.
+## Milestone 2: GPU Acceleration (CUDA)
+*   [ ] **CUDA Integration**: Build system support for NVIDIA GPUs.
+*   [ ] **Device Meshes**: CUDA-compatible POD structs for `RegularSimplicialMesh`.
+*   [ ] **Parallel Extraction**: CUDA kernels for parallel feature discovery.
+*   [ ] **Local CCL on GPU**: Parallel Union-Find for stitching within GPU blocks.
 
 ## Milestone 3: Distributed-Parallel Tracking (High Priority)
 Integrate the distributed-parallel CCL algorithm from arXiv:2003.02351.

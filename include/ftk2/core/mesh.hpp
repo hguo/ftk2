@@ -19,7 +19,6 @@ namespace ftk2 {
 
 /**
  * @brief Represents a K-dimensional simplex within a mesh.
- * Vertices are ALWAYS stored in increasing order of their IDs.
  */
 struct Simplex {
     int dimension; // K
@@ -27,14 +26,19 @@ struct Simplex {
 
     FTK_HOST_DEVICE int num_vertices() const { return dimension + 1; }
     
-    /**
-     * @brief Ensure vertices are sorted. Must be called after manual vertex assignment.
-     */
-    void sort_vertices() {
-        std::sort(vertices, vertices + dimension + 1);
+    FTK_HOST_DEVICE void sort_vertices() {
+        for (int i = 0; i <= dimension; ++i) {
+            for (int j = i + 1; j <= dimension; ++j) {
+                if (vertices[i] > vertices[j]) {
+                    uint64_t tmp = vertices[i];
+                    vertices[i] = vertices[j];
+                    vertices[j] = tmp;
+                }
+            }
+        }
     }
 
-    bool operator==(const Simplex& other) const {
+    FTK_HOST_DEVICE bool operator==(const Simplex& other) const {
         if (dimension != other.dimension) return false;
         for (int i = 0; i <= dimension; ++i) {
             if (vertices[i] != other.vertices[i]) return false;
@@ -42,7 +46,7 @@ struct Simplex {
         return true;
     }
     
-    bool operator<(const Simplex& other) const {
+    FTK_HOST_DEVICE bool operator<(const Simplex& other) const {
         if (dimension != other.dimension) return dimension < other.dimension;
         for (int i = 0; i <= dimension; ++i) {
             if (vertices[i] != other.vertices[i]) return vertices[i] < other.vertices[i];
@@ -82,7 +86,6 @@ public:
         while (p[0] <= n - (target_k + 1)) {
             Simplex f; f.dimension = target_k;
             for (int i = 0; i <= target_k; ++i) f.vertices[i] = s.vertices[p[i]];
-            // f.vertices are already sorted if s.vertices is sorted and p is increasing
             callback(f);
             int i = target_k;
             while (i >= 0 && p[i] == n - (target_k + 1) + i) i--;
@@ -133,7 +136,7 @@ public:
                     v_coords[p[i]] += 1;
                     top.vertices[i + 1] = coords_to_id(v_coords);
                 }
-                top.sort_vertices(); // IMPORTANT: Ensure top-level simplex is sorted
+                top.sort_vertices();
                 
                 find_k_faces(top, k, [&](const Simplex& f) {
                     if (visited.find(f) == visited.end()) {
@@ -153,6 +156,10 @@ public:
         for (size_t i = 0; i < g_coords.size(); ++i) phys_coords[i] = static_cast<double>(g_coords[i]);
         return phys_coords;
     }
+
+    std::vector<uint64_t> get_local_dims() const { return dims_; }
+    std::vector<uint64_t> get_offset() const { return offset_; }
+    std::vector<uint64_t> get_global_dims() const { return global_dims_; }
 
 protected:
     uint64_t coords_to_id(const std::vector<uint64_t>& local_coords) const {
@@ -193,7 +200,6 @@ private:
         while (p[0] <= n - r) {
             Simplex f; f.dimension = k;
             for (int i = 0; i < r; ++i) f.vertices[i] = s.vertices[p[i]];
-            // f.vertices are sorted because s.vertices is sorted and p is increasing
             callback(f);
             int i = r - 1;
             while (i >= 0 && p[i] == n - r + i) i--;

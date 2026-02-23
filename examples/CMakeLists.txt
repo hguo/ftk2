@@ -12,3 +12,7 @@ target_link_libraries(ftk2_levelset_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore V
 
 add_executable(ftk2_fiber_3d fiber_3d.cpp)
 target_link_libraries(ftk2_fiber_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+if (CMAKE_CUDA_COMPILER)
+    add_executable(ftk2_levelset_3d_cuda levelset_3d_cuda.cu)
+    target_link_libraries(ftk2_levelset_3d_cuda PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+endif()

@@ -1,0 +1,125 @@
+#pragma once
+
+#include <ftk2/core/mesh.hpp>
+
+namespace ftk2 {
+
+/**
+ * @brief Lightweight, POD-compatible regular mesh for CUDA kernels.
+ * 
+ * Implements implicit indexing and Kuhn's triangulation on the device.
+ */
+struct RegularSimplicialMeshDevice {
+    uint64_t local_dims[4];
+    uint64_t offset[4];
+    uint64_t global_dims[4];
+    int ndims;
+
+    /**
+     * @brief Map global vertex ID back to global coordinates.
+     */
+    FTK_HOST_DEVICE 
+    void id_to_coords(uint64_t id, uint64_t coords[4]) const {
+        for (int i = 0; i < ndims; ++i) {
+            coords[i] = id % global_dims[i];
+            id /= global_dims[i];
+        }
+    }
+
+    /**
+     * @brief Map global coordinates to a unique vertex ID.
+     */
+    FTK_HOST_DEVICE
+    uint64_t coords_to_id(const uint64_t coords[4]) const {
+        uint64_t id = 0;
+        uint64_t multiplier = 1;
+        for (int i = 0; i < ndims; ++i) {
+            id += coords[i] * multiplier;
+            multiplier *= global_dims[i];
+        }
+        return id;
+    }
+
+    /**
+     * @brief Total number of hypercubes in the local mesh.
+     */
+    FTK_HOST_DEVICE
+    uint64_t get_num_hypercubes() const {
+        uint64_t n = 1;
+        for (int i = 0; i < ndims; ++i) n *= (local_dims[i] - 1);
+        return n;
+    }
+
+    /**
+     * @brief Get the base coordinates of a hypercube from its linear index.
+     */
+    FTK_HOST_DEVICE
+    void get_hypercube_coords(uint64_t index, uint64_t coords[4]) const {
+        for (int i = 0; i < ndims; ++i) {
+            uint64_t size = local_dims[i] - 1;
+            coords[i] = index % size;
+            index /= size;
+        }
+    }
+
+    /**
+     * @brief Get a specific top-level d-simplex from a hypercube.
+     * 
+     * @param hc_index Index of the hypercube.
+     * @param p_index Index of the permutation (0 to d!-1).
+     * @param s Output simplex.
+     */
+    FTK_HOST_DEVICE
+    void get_d_simplex(uint64_t hc_index, int p_index, Simplex& s) const {
+        s.dimension = ndims;
+        uint64_t base_coords[4];
+        get_hypercube_coords(hc_index, base_coords);
+
+        // Map relative base_coords to global coords using offset
+        uint64_t global_base[4];
+        for (int i = 0; i < ndims; ++i) global_base[i] = base_coords[i] + offset[i];
+
+        // Generate permutation p from p_index
+        int p[4];
+        get_permutation(ndims, p_index, p);
+
+        uint64_t curr[4];
+        for (int i = 0; i < ndims; ++i) curr[i] = global_base[i];
+        
+        s.vertices[0] = coords_to_id(curr);
+        for (int i = 0; i < ndims; ++i) {
+            curr[p[i]] += 1;
+            s.vertices[i + 1] = coords_to_id(curr);
+        }
+        
+        // Simplicial tracking requires sorted vertices for uniqueness
+        // Bubble sort for small fixed size on GPU
+        for (int i = 0; i < ndims; ++i) {
+            for (int j = 0; j < ndims - i; ++j) {
+                if (s.vertices[j] > s.vertices[j + 1]) {
+                    uint64_t tmp = s.vertices[j];
+                    s.vertices[j] = s.vertices[j + 1];
+                    s.vertices[j + 1] = tmp;
+                }
+            }
+        }
+    }
+
+private:
+    /**
+     * @brief Compute the n-th permutation of [0...d-1].
+     */
+    FTK_HOST_DEVICE
+    void get_permutation(int d, int n, int p[4]) const {
+        int available[4] = {0, 1, 2, 3};
+        int fact[5] = {1, 1, 2, 6, 24};
+        for (int i = 0; i < d; ++i) {
+            int idx = n / fact[d - 1 - i];
+            p[i] = available[idx];
+            for (int j = idx; j < 3; ++j) available[j] = available[j + 1];
+            n %= fact[d - 1 - i];
+        }
+    }
+};
+
+} // namespace ftk2

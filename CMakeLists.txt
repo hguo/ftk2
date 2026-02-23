@@ -4,6 +4,15 @@ project(FTK2 VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CheckLanguage)
+check_language(CUDA)
+if(CMAKE_CUDA_COMPILER)
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+    add_definitions(-DFTK_HAVE_CUDA=1)
+endif()
+
 # Find ndarray (use -Dndarray_DIR=... or -DCMAKE_PREFIX_PATH=... to specify the path)
 find_package(ndarray REQUIRED)
 

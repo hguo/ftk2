@@ -8,6 +8,10 @@
 #include <map>
 #include <string>
 
+#ifdef __CUDACC__
+#include <ftk2/core/device_mesh.hpp>
+#endif
+
 namespace ftk2 {
 
 /**
@@ -18,6 +22,9 @@ struct Predicate {
     static constexpr int codimension = M;
 };
 
+// Forward declaration for device view
+template <typename T> struct CudaDataView;
+
 /**
  * @brief Predicate for finding critical points (zeros of a vector field).
  */
@@ -27,7 +34,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
     std::string scalar_var_name; 
 
     /**
-     * @brief Extract feature elements from a simplex.
+     * @brief Extract feature elements from a simplex (CPU).
      */
     std::vector<FeatureElement> extract(const Simplex& s, 
                                        const std::map<std::string, ftk::ndarray<T>>& data,
@@ -50,24 +57,16 @@ struct CriticalPointPredicate : public Predicate<M, T> {
             }
         }
 
-        // 2. Perform Robust SoS check
-        if (!sos::origin_inside<M, T>::check(values, indices)) {
-            return {};
-        }
+        if (!sos::origin_inside<M, T>::check(values, indices)) return {};
 
-        // 3. Solve for exact location
         T lambda[M + 1];
         if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) {
-            // Topological fallback: Centroid if Solver fails but SoS says origin is inside
             for (int i = 0; i <= M; ++i) lambda[i] = 1.0 / (M + 1);
         }
 
-        FeatureElement el;
-        el.simplex = s;
-        el.geometry_type = FeatureGeometryType::Point;
+        FeatureElement el; el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= M; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
 
-        // 4. Optional: Interpolate scalar field
         if (!scalar_var_name.empty()) {
             auto it = data.find(scalar_var_name);
             if (it != data.end()) {
@@ -83,9 +82,46 @@ struct CriticalPointPredicate : public Predicate<M, T> {
                 el.scalar = (float)s_val;
             }
         }
-
         return {el};
     }
+
+#ifdef __CUDACC__
+    /**
+     * @brief Extract feature elements from a simplex (GPU).
+     */
+    __device__
+    std::vector<FeatureElement> extract_device(const Simplex& s, 
+                                              const CudaDataView<T>* data,
+                                              int n_vars,
+                                              const RegularSimplicialMeshDevice& mesh) const 
+    {
+        T values[M + 1][M];
+        uint64_t indices[M + 1];
+        
+        for (int i = 0; i <= M; ++i) {
+            indices[i] = s.vertices[i];
+            uint64_t coords[4] = {0};
+            mesh.id_to_coords(indices[i], coords);
+            for (int j = 0; j < M && j < n_vars; ++j) {
+                values[i][j] = data[j].f(coords[0], coords[1], coords[2], coords[3]);
+            }
+        }
+
+        if (!sos::origin_inside<M, T>::check(values, indices)) return {};
+
+        T lambda[M + 1];
+        if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) {
+            for (int i = 0; i <= M; ++i) lambda[i] = 1.0 / (M + 1);
+        }
+
+        FeatureElement el; el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
+        for (int i = 0; i <= M; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
+        
+        // Scalar interpolation can be added here too
+        
+        return {el}; 
+    }
+#endif
 };
 
 /**

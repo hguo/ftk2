@@ -23,13 +23,13 @@ struct FeatureElement {
     Simplex simplex; 
     FeatureGeometryType geometry_type;
 
-    float barycentric_coords[3][16] = {0}; 
+    float barycentric_coords[3][16]; 
 
-    uint64_t track_id = 0; // The identifier for the connected component (track)
-    uint32_t type = 0;     // Categorical type (e.g. source, sink, saddle)
-    float scalar = 0.0f;   // Continuous scalar attribute
+    uint64_t track_id; 
+    uint32_t type;     
+    float scalar;   
     
-    float attributes[16] = {0}; 
+    float attributes[16]; 
 };
 
 /**
