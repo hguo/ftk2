@@ -168,6 +168,57 @@ void test_unstructured_critical_point_tracking() {
     ASSERT_TRUE(has_cells);
 }
 
+void test_unstructured_3d_features() {
+    std::cout << "Testing unstructured 3D steady-state features (contour, fiber, cp)..." << std::endl;
+    std::string path = "../tests/data/3d.vtu";
+    auto mesh = read_vtu(path);
+    ASSERT_TRUE(mesh != nullptr);
+    if (!mesh) return;
+
+    std::atomic<int> n_v(0);
+    mesh->iterate_simplices(0, [&](const Simplex& s) { n_v++; });
+    int nv = n_v.load();
+
+    ftk::ndarray<double> s, u, v, w;
+    s.reshapef({(size_t)nv}); u.reshapef({(size_t)nv}); v.reshapef({(size_t)nv}); w.reshapef({(size_t)nv});
+
+    for (int i = 0; i < nv; ++i) {
+        auto coords = mesh->get_vertex_coordinates(i);
+        double dx = coords[0] - 37.5, dy = coords[1] - 37.5, dz = coords[2] - 37.5;
+        s[i] = std::sqrt(dx*dx + dy*dy + dz*dz) - 10.0; // Sphere r=10
+        u[i] = dx; v[i] = dy; w[i] = dz; // CP at (37.5, 37.5, 37.5)
+    }
+
+    std::map<std::string, ftk::ndarray<double>> data = {{"S", s}, {"U", u}, {"V", v}, {"W", w}};
+
+    // 1. Contour (m=1)
+    {
+        ContourPredicate<double> pred; pred.var_name = "S";
+        SimplicialEngine<double, ContourPredicate<double>> engine(mesh, pred);
+        engine.execute(data);
+        auto complex = engine.get_complex();
+        ASSERT_TRUE(complex.vertices.size() > 0);
+    }
+
+    // 2. Fiber (m=2)
+    {
+        FiberPredicate<double> pred; pred.var_names[0] = "U"; pred.var_names[1] = "V";
+        SimplicialEngine<double, FiberPredicate<double>> engine(mesh, pred);
+        engine.execute(data);
+        auto complex = engine.get_complex();
+        ASSERT_TRUE(complex.vertices.size() > 0);
+    }
+
+    // 3. CP (m=3)
+    {
+        CriticalPointPredicate<3, double> pred; pred.var_names[0] = "U"; pred.var_names[1] = "V"; pred.var_names[2] = "W";
+        SimplicialEngine<double, CriticalPointPredicate<3, double>> engine(mesh, pred);
+        engine.execute(data);
+        auto complex = engine.get_complex();
+        ASSERT_TRUE(complex.vertices.size() > 0);
+    }
+}
+
 void test_unstructured() {
     test_unstructured_io();
     test_unstructured_2x1();
@@ -175,4 +226,5 @@ void test_unstructured() {
     test_unstructured_extrusion();
     test_unstructured_float_precision();
     test_unstructured_critical_point_tracking();
+    test_unstructured_3d_features();
 }

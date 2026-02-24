@@ -16,6 +16,9 @@ target_link_libraries(ftk2_fiber_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK:
 add_executable(ftk2_critical_point_unstructured_2d critical_point_unstructured_2d.cpp)
 target_link_libraries(ftk2_critical_point_unstructured_2d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
+add_executable(ftk2_unstructured_3d unstructured_3d.cpp)
+target_link_libraries(ftk2_unstructured_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
 if (CMAKE_CUDA_COMPILER)
     add_executable(ftk2_levelset_3d_cuda levelset_3d_cuda.cu)
     target_link_libraries(ftk2_levelset_3d_cuda PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
