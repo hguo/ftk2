@@ -49,14 +49,14 @@ int main(int argc, char** argv) {
     );
 
     // 3. Set up the Intersection Predicate (m=2)
-    IsosurfaceIntersectionPredicate<double> inter_pred;
+    FiberPredicate<double> inter_pred;
     inter_pred.var_names[0] = "S1";
     inter_pred.var_names[1] = "S2";
     inter_pred.thresholds[0] = 0.0;
     inter_pred.thresholds[1] = 0.0;
 
     // 4. Initialize and run the Unified Simplicial Engine
-    SimplicialEngine<double, IsosurfaceIntersectionPredicate<double>> engine(mesh, inter_pred);
+    SimplicialEngine<double, FiberPredicate<double>> engine(mesh, inter_pred);
     
     std::cout << "Tracking sphere intersections..." << std::endl;
     engine.execute(data, {"S1", "S2"});

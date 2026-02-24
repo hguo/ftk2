@@ -190,9 +190,9 @@ void test_parity() {
             }
         }
         auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{(uint64_t)DW, (uint64_t)DH, (uint64_t)DD, (uint64_t)DT});
-        IsosurfaceIntersectionPredicate<double> pred; pred.var_names[0] = "S1"; pred.var_names[1] = "S2";
+        FiberPredicate<double> pred; pred.var_names[0] = "S1"; pred.var_names[1] = "S2";
         std::map<std::string, ftk::ndarray<double>> data = {{"S1", s1}, {"S2", s2}};
         std::vector<std::string> vars = {"S1", "S2"};
-        verify_parity<double, IsosurfaceIntersectionPredicate<double>>(mesh, pred, data, vars);
+        verify_parity<double, FiberPredicate<double>>(mesh, pred, data, vars);
     }
 }

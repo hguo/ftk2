@@ -142,10 +142,10 @@ struct ContourPredicate : public Predicate<1, T> {
 };
 
 /**
- * @brief Predicate for finding the intersection of two isosurfaces.
+ * @brief Predicate for finding fibers (intersections of two isosurfaces from two scalar fields).
  */
 template <typename T = double>
-struct IsosurfaceIntersectionPredicate : public Predicate<2, T> {
+struct FiberPredicate : public Predicate<2, T> {
     std::string var_names[2];
     T thresholds[2] = {0.0, 0.0};
 

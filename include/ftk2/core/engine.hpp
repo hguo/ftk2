@@ -96,7 +96,7 @@ public:
             else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
                 for(int i=0; i<m; ++i) resolved_vars.push_back(predicate_.var_names[i]);
                 if (!predicate_.scalar_var_name.empty()) resolved_vars.push_back(predicate_.scalar_var_name);
-            } else if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) {
+            } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 resolved_vars = {predicate_.var_names[0], predicate_.var_names[1]};
             }
         }
@@ -180,7 +180,7 @@ public:
             else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
                 for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
                 if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
-            } else if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) {
+            } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 vars = {predicate_.var_names[0], predicate_.var_names[1]};
             }
         }
@@ -331,7 +331,7 @@ public:
 
 private:
     bool extract_simplex(const Simplex& s, const std::map<std::string, ftk::ndarray<T>>& data, FeatureElement& el) {
-        if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) {
+        if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
             T values[3][2];
             for (int i = 0; i < 3; ++i) {
                 auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
@@ -351,7 +351,7 @@ private:
 
     void marching_pentatope(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var) {
         T vals[5]; uint64_t idx[5]; std::vector<int> A, B; T threshold = 0;
-        if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) threshold = predicate_.thresholds[0]; 
+        if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) threshold = predicate_.thresholds[0]; 
         else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) threshold = predicate_.threshold;
         else return;
 
