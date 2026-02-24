@@ -14,7 +14,7 @@ using namespace ftk2;
 
 int main(int argc, char** argv) {
     const int DW = 16, DH = 16, DT = 5;
-    std::cout << "Generating 2D+T merger synthetic data (" << DW << "x" << DH << "x" << DT << ")..." << std::endl;
+    std::cout << "CUDA: Generating 2D+T merger synthetic data (" << DW << "x" << DH << "x" << DT << ")..." << std::endl;
 
     // 1. Generate merger scalar data
     ftk::ndarray<double> scalar({(size_t)DW, (size_t)DH, (size_t)DT});
@@ -37,18 +37,17 @@ int main(int argc, char** argv) {
     contour_pred.threshold = 0.5;
 
     // 4. Initialize and run the Unified Simplicial Engine
-    // The manifold resulting from m=1 in 3D spacetime is a 2D surface (k=2)
     SimplicialEngine<double, ContourPredicate<double>> engine(mesh, contour_pred);
     
-    std::cout << "Tracking contours..." << std::endl;
-    engine.execute(data, {"Scalar"});
+    std::cout << "Tracking contours ON GPU (CUDA)..." << std::endl;
+    engine.execute_cuda(data, {"Scalar"});
 
-    // 5. Output results (Filter to only dim 2 triangles)
+    // 5. Output results
     auto complex = engine.get_complex();
-    std::cout << "Writing results to levelset_2d.vtu..." << std::endl;
-    write_complex_to_vtu(complex, *mesh, "levelset_2d.vtu", 2);
+    std::cout << "Writing results to levelset_2d_cuda.vtu..." << std::endl;
+    write_complex_to_vtu(complex, *mesh, "levelset_2d_cuda.vtu", 2);
 
-    std::cout << "Done. Found " << complex.vertices.size() << " feature elements forming a 2D surface track." << std::endl;
+    std::cout << "Done. Found " << complex.vertices.size() << " feature elements on GPU." << std::endl;
 
     return 0;
 }

@@ -43,6 +43,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
         T lambda[M + 1];
         if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) { for (int i = 0; i <= M; ++i) lambda[i] = 1.0 / (M + 1); }
         
+        el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= M; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
         
@@ -76,7 +77,8 @@ struct CriticalPointPredicate : public Predicate<M, T> {
             }
             if (!sos::origin_inside<M, T>::check(values, indices)) return false;
             T lambda[M + 1]; if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) { for (int i = 0; i <= M; ++i) lambda[i] = 1.0 / (M + 1); }
-            el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
+            el = FeatureElement(); // Full zero-initialization
+        el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
             for (int i = 0; i <= M; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
             el.type = 0; el.scalar = 0.0f;
             if (has_scalar && n_vars > M) {
@@ -106,6 +108,7 @@ struct ContourPredicate : public Predicate<1, T> {
         T adjusted_values[2][1] = {{values[0][0] - threshold}, {values[1][0] - threshold}};
         if (!sos::origin_inside<1, T>::check(adjusted_values, indices)) return false;
         T lambda[2]; if (!ZeroCrossingSolver<1, T>::solve(adjusted_values, lambda)) { for (int i = 0; i <= 1; ++i) lambda[i] = 0.5; }
+        el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 1; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
         el.scalar = (float)threshold;
@@ -126,7 +129,8 @@ struct ContourPredicate : public Predicate<1, T> {
             }
             if (!sos::origin_inside<1, T>::check(values, indices)) return false;
             T lambda[2]; if (!ZeroCrossingSolver<1, T>::solve(values, lambda)) { for (int i = 0; i <= 1; ++i) lambda[i] = 0.5; }
-            el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
+            el = FeatureElement(); // Full zero-initialization
+        el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
             for (int i = 0; i <= 1; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
             el.type = 0; el.scalar = (float)threshold;
             for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
@@ -152,6 +156,7 @@ struct IsosurfaceIntersectionPredicate : public Predicate<2, T> {
         T adj[3][2]; for(int i=0; i<3; ++i) for(int j=0; j<2; ++j) adj[i][j] = values[i][j] - thresholds[j];
         if (!sos::origin_inside<2, T>::check(adj, indices)) return false;
         T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(adj, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = 1.0 / 3.0; }
+        el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
         el.scalar = 0.0f;
@@ -172,7 +177,8 @@ struct IsosurfaceIntersectionPredicate : public Predicate<2, T> {
             }
             if (!sos::origin_inside<2, T>::check(values, indices)) return false;
             T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(values, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = 1.0 / 3.0; }
-            el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
+            el = FeatureElement(); // Full zero-initialization
+        el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
             for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
             el.type = 0; el.scalar = 0.0f;
             for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;

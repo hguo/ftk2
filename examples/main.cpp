@@ -16,17 +16,9 @@ int main(int argc, char** argv) {
 
     // 2. Create synthetic vector field data (U, V)
     // We want a critical point that moves from (3, 3) to (7, 7) over 5 time steps.
-    ftk::ndarray<double> u({10, 10, 5}), v({10, 10, 5});
-    for (int t = 0; t < 5; ++t) {
-        double cx = 3.0 + t;
-        double cy = 3.0 + t;
-        for (int y = 0; y < 10; ++y) {
-            for (int x = 0; x < 10; ++x) {
-                u.f(x, y, t) = (double)x - cx;
-                v.f(x, y, t) = (double)y - cy;
-            }
-        }
-    }
+    ftk::ndarray<double> u({10, 10, 5, 2}), v({10, 10, 5, 2});
+    std::cout << "Data rank=" << u.nd() << std::endl;
+    for(int i=0; i<u.nd(); ++i) std::cout << "dim[" << i << "]=" << u.dimf(i) << ", prod[" << i << "]=" << u.get_lattice().prod_[i] << std::endl;
 
     std::map<std::string, ftk::ndarray<double>> data = {{"U", u}, {"V", v}};
 

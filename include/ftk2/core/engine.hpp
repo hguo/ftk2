@@ -18,6 +18,15 @@
 #if FTK_HAVE_CUDA && defined(__CUDACC__)
 #include <ftk2/core/cuda_engine.hpp>
 #include <cuda_runtime.h>
+
+#define CUDA_CHECK(call) \
+    do { \
+        cudaError_t err = call; \
+        if (err != cudaSuccess) { \
+            std::cerr << "CUDA error at " << __FILE__ << ":" << __LINE__ << " code=" << err << " \"" << cudaGetErrorString(err) << "\"" << std::endl; \
+            exit(EXIT_FAILURE); \
+        } \
+    } while (0)
 #endif
 
 namespace ftk2 {
@@ -78,7 +87,6 @@ public:
         }
         for (const auto& name : resolved_vars) arrays.push_back(&data.at(name));
 
-        // 1. Collect and sort feature elements for deterministic ID assignment
         std::vector<FeatureElement> elements;
         mesh_->iterate_simplices(m, [&](const Simplex& s) {
             T values[m + 1][m];
@@ -93,24 +101,16 @@ public:
                 }
             }
             FeatureElement el;
-            if (predicate_.extract_it(s, values, el, arrays, mesh_.get())) {
-                elements.push_back(el);
-            }
+            if (predicate_.extract_it(s, values, el, arrays, mesh_.get())) elements.push_back(el);
         });
         
-        std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) {
-            return a.simplex < b.simplex;
-        });
-
+        std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : elements) {
-            uint64_t node_id = uf_.add();
-            active_nodes_[el.simplex] = node_id;
-            node_elements_[node_id] = el; 
-            node_id_to_simplex_[node_id] = el.simplex;
+            uint64_t node_id = uf_.add(); active_nodes_[el.simplex] = node_id;
+            node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
         }
         auto t_nodes = std::chrono::high_resolution_clock::now();
 
-        // 2. Build manifold
         auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
         if (reg_mesh) {
             uint64_t n_v = reg_mesh->get_num_vertices();
@@ -148,7 +148,11 @@ public:
 
         RegularSimplicialMeshDevice d_mesh; d_mesh.ndims = reg_mesh->get_total_dimension();
         auto l_dims = reg_mesh->get_local_dims(); auto off = reg_mesh->get_offset(); auto g_dims = reg_mesh->get_global_dims();
-        for(int i=0; i<d_mesh.ndims && i<4; ++i) { d_mesh.local_dims[i] = l_dims[i]; d_mesh.offset[i] = off[i]; d_mesh.global_dims[i] = g_dims[i]; }
+        for(int i=0; i<4; ++i) { 
+            d_mesh.local_dims[i] = (i < d_mesh.ndims) ? l_dims[i] : 1; 
+            d_mesh.offset[i] = (i < d_mesh.ndims) ? off[i] : 0; 
+            d_mesh.global_dims[i] = (i < d_mesh.ndims) ? g_dims[i] : 1; 
+        }
 
         auto t_setup = std::chrono::high_resolution_clock::now();
         std::vector<std::string> vars = var_names;
@@ -164,39 +168,80 @@ public:
         for (const auto& name : vars) {
             const auto& arr = data.at(name);
             CudaDataView<T> view;
-            cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T));
-            cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice);
-            auto lattice = arr.get_lattice();
+            CUDA_CHECK(cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T)));
+            CUDA_CHECK(cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            auto lattice = arr.get_lattice(); view.ndims = arr.nd();
             for(int i=0; i<4; ++i) { view.dims[i] = (i < arr.nd()) ? arr.dimf(i) : 1; view.s[i] = (i < arr.nd()) ? lattice.prod_[arr.nd() - 1 - i] : 0; }
-            view.ndims = arr.nd(); h_views.push_back(view);
+            h_views.push_back(view);
         }
 
         CudaDataView<T>* d_views;
-        cudaMalloc(&d_views, h_views.size() * sizeof(CudaDataView<T>));
-        cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice);
+        CUDA_CHECK(cudaMalloc(&d_views, h_views.size() * sizeof(CudaDataView<T>)));
+        CUDA_CHECK(cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice));
 
+        // Adaptive Buffer Execution Loop
+        int max_nodes = 1000000; int max_conn = 3000000;
+        bool buffer_overflow = true;
         CudaExtractionResult<IDType> res;
-        res.max_nodes = 10000000; res.max_conn = 20000000;
-        cudaMalloc(&res.nodes, res.max_nodes * sizeof(FeatureElement));
-        cudaMemset(res.nodes, 0, res.max_nodes * sizeof(FeatureElement));
-        cudaMalloc(&res.node_count, sizeof(int));
-        cudaMalloc(&res.edges, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>));
-        cudaMalloc(&res.edge_count, sizeof(int));
-        cudaMalloc(&res.faces, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 2>));
-        cudaMalloc(&res.face_count, sizeof(int));
-        cudaMalloc(&res.volumes, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 3>));
-        cudaMalloc(&res.volume_count, sizeof(int));
-        cudaMemset(res.node_count, 0, sizeof(int)); cudaMemset(res.edge_count, 0, sizeof(int)); cudaMemset(res.face_count, 0, sizeof(int)); cudaMemset(res.volume_count, 0, sizeof(int));
-
         auto t_h2d = std::chrono::high_resolution_clock::now();
-        uint64_t n_v = d_mesh.get_num_vertices();
-        extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
-        cudaDeviceSynchronize();
-
         auto t_kernel = std::chrono::high_resolution_clock::now();
-        int h_node_count; cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost);
-        std::vector<FeatureElement> h_elements(std::min(h_node_count, res.max_nodes));
-        cudaMemcpy(h_elements.data(), res.nodes, h_elements.size() * sizeof(FeatureElement), cudaMemcpyDeviceToHost);
+
+        while (buffer_overflow) {
+            res.max_nodes = max_nodes; res.max_conn = max_conn;
+            
+            // Check VRAM availability
+            size_t free_byte, total_byte;
+            CUDA_CHECK(cudaMemGetInfo(&free_byte, &total_byte));
+            size_t required = (size_t)max_nodes * sizeof(FeatureElement) + (size_t)max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>);
+            if (required > free_byte * 0.8) {
+                throw std::runtime_error("Insufficient VRAM for required feature extraction buffers. Required: " + std::to_string(required / (1024*1024)) + " MB");
+            }
+
+            CUDA_CHECK(cudaMalloc(&res.nodes, res.max_nodes * sizeof(FeatureElement)));
+            CUDA_CHECK(cudaMemset(res.nodes, 0, res.max_nodes * sizeof(FeatureElement)));
+            CUDA_CHECK(cudaMalloc(&res.node_count, sizeof(int)));
+            CUDA_CHECK(cudaMalloc(&res.edges, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>)));
+            CUDA_CHECK(cudaMalloc(&res.edge_count, sizeof(int)));
+            CUDA_CHECK(cudaMalloc(&res.faces, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 2>)));
+            CUDA_CHECK(cudaMalloc(&res.face_count, sizeof(int)));
+            CUDA_CHECK(cudaMalloc(&res.volumes, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 3>)));
+            CUDA_CHECK(cudaMalloc(&res.volume_count, sizeof(int)));
+            CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.edge_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.face_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.volume_count, 0, sizeof(int)));
+
+            t_h2d = std::chrono::high_resolution_clock::now();
+            uint64_t n_v = d_mesh.get_num_vertices();
+            extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
+            CUDA_CHECK(cudaDeviceSynchronize());
+            t_kernel = std::chrono::high_resolution_clock::now();
+
+            int h_node_count, h_edge_count, h_face_count, h_vol_count;
+            CUDA_CHECK(cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_edge_count, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_face_count, res.face_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_vol_count, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost));
+
+            int actual_max_conn = std::max({h_edge_count, h_face_count, h_vol_count});
+
+            if (h_node_count > max_nodes || actual_max_conn > max_conn) {
+                std::cout << "CUDA Warning: Buffer overflow detected. Retrying with required capacity..." << std::endl;
+                std::cout << "  Required Nodes: " << h_node_count << " (Available: " << max_nodes << ")" << std::endl;
+                std::cout << "  Required Conn:  " << actual_max_conn << " (Available: " << max_conn << ")" << std::endl;
+                
+                max_nodes = h_node_count + 1000; max_conn = actual_max_conn + 1000;
+                
+                CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
+                CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count));
+                CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count));
+                CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
+                // loop continues
+            } else {
+                buffer_overflow = false;
+            }
+        }
+
+        int h_node_count; CUDA_CHECK(cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
+        std::vector<FeatureElement> h_elements(h_node_count);
+        CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_elements.size() * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
 
         auto t_d2h = std::chrono::high_resolution_clock::now();
         std::sort(h_elements.begin(), h_elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
@@ -206,32 +251,32 @@ public:
         }
 
         int h_counts[4];
-        cudaMemcpy(&h_counts[1], res.edge_count, sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&h_counts[2], res.face_count, sizeof(int), cudaMemcpyDeviceToHost);
-        cudaMemcpy(&h_counts[3], res.volume_count, sizeof(int), cudaMemcpyDeviceToHost);
+        CUDA_CHECK(cudaMemcpy(&h_counts[1], res.edge_count, sizeof(int), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(&h_counts[2], res.face_count, sizeof(int), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(&h_counts[3], res.volume_count, sizeof(int), cudaMemcpyDeviceToHost));
 
         auto t_d2h_manifold = std::chrono::high_resolution_clock::now();
         for (int dim = 1; dim <= 3; ++dim) {
             int count = h_counts[dim]; if (count <= 0) continue;
             if (dim == 1) {
-                std::vector<DeviceManifoldSimplex<IDType, 1>> h_edges(std::min(count, res.max_conn));
-                cudaMemcpy(h_edges.data(), res.edges, h_edges.size()*sizeof(h_edges[0]), cudaMemcpyDeviceToHost);
+                std::vector<DeviceManifoldSimplex<IDType, 1>> h_edges(count);
+                CUDA_CHECK(cudaMemcpy(h_edges.data(), res.edges, h_edges.size()*sizeof(h_edges[0]), cudaMemcpyDeviceToHost));
                 for (const auto& s : h_edges) {
                     std::vector<IDType> nodes;
                     for (int i=0; i<=dim; ++i) { IDType nid; if (resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
                     if (nodes.size() == dim + 1) { manifold_simplices_[dim].push_back(nodes); for(int i=1; i<=dim; ++i) uf_.unite(nodes[0], nodes[i]); }
                 }
             } else if (dim == 2) {
-                std::vector<DeviceManifoldSimplex<IDType, 2>> h_faces(std::min(count, res.max_conn));
-                cudaMemcpy(h_faces.data(), res.faces, h_faces.size()*sizeof(h_faces[0]), cudaMemcpyDeviceToHost);
+                std::vector<DeviceManifoldSimplex<IDType, 2>> h_faces(count);
+                CUDA_CHECK(cudaMemcpy(h_faces.data(), res.faces, h_faces.size()*sizeof(h_faces[0]), cudaMemcpyDeviceToHost));
                 for (const auto& s : h_faces) {
                     std::vector<IDType> nodes;
                     for (int i=0; i<=dim; ++i) { IDType nid; if (resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
                     if (nodes.size() == dim + 1) { manifold_simplices_[dim].push_back(nodes); for(int i=1; i<=dim; ++i) uf_.unite(nodes[0], nodes[i]); }
                 }
             } else if (dim == 3) {
-                std::vector<DeviceManifoldSimplex<IDType, 3>> h_vols(std::min(count, res.max_conn));
-                cudaMemcpy(h_vols.data(), res.volumes, h_vols.size()*sizeof(h_vols[0]), cudaMemcpyDeviceToHost);
+                std::vector<DeviceManifoldSimplex<IDType, 3>> h_vols(count);
+                CUDA_CHECK(cudaMemcpy(h_vols.data(), res.volumes, h_vols.size()*sizeof(h_vols[0]), cudaMemcpyDeviceToHost));
                 for (const auto& s : h_vols) {
                     std::vector<IDType> nodes;
                     for (int i=0; i<=dim; ++i) { IDType nid; if (resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
@@ -241,8 +286,8 @@ public:
         }
 
         auto t_uf = std::chrono::high_resolution_clock::now();
-        for (auto& v : h_views) cudaFree((void*)v.data);
-        cudaFree(d_views); cudaFree(res.nodes); cudaFree(res.node_count); cudaFree(res.edges); cudaFree(res.edge_count); cudaFree(res.faces); cudaFree(res.face_count); cudaFree(res.volumes); cudaFree(res.volume_count);
+        for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
+        CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count)); CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count)); CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count)); CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
 
         auto t_end = std::chrono::high_resolution_clock::now();
         auto d_setup = std::chrono::duration_cast<std::chrono::milliseconds>(t_setup - t_start).count();
@@ -315,11 +360,14 @@ private:
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
             for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
-            if (nodes.size() == 3) manifold_simplices_[2].push_back(nodes);
+            if (nodes.size() == 3) { manifold_simplices_[2].push_back(nodes); for (int i=1; i<3; ++i) uf_.unite(nodes[0], nodes[i]); }
         } else if (A.size() == 2 && B.size() == 2) {
             std::vector<IDType> nodes;
             for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
-            if (nodes.size() == 4) { manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]}); manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); }
+            if (nodes.size() == 4) { 
+                manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]}); manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); 
+                for (int i=1; i<4; ++i) uf_.unite(nodes[0], nodes[i]);
+            }
         }
     }
 

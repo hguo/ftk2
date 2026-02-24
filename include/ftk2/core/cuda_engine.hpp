@@ -62,6 +62,66 @@ __device__ __host__ inline uint64_t encode_simplex_id(const Simplex& s, const De
 }
 
 /**
+ * @brief CUDA implementation of Marching Tetrahedra logic.
+ */
+template <typename T, typename DeviceMesh, typename PredicateDevice, typename IDType>
+__device__
+void marching_tetrahedron_device(
+    const Simplex& cell, 
+    const DeviceMesh& mesh, 
+    const PredicateDevice& pred, 
+    const CudaDataView<T>* data,
+    CudaExtractionResult<IDType>& res) 
+{
+    T vals[4];
+    int A[4], B[4];
+    int nA = 0, nB = 0;
+
+    for (int i = 0; i < 4; ++i) {
+        uint64_t coords[4];
+        mesh.id_to_coords(cell.vertices[i], coords);
+        vals[i] = data[0].f(coords[0], coords[1], coords[2], coords[3]) - pred.threshold;
+        if (sos::sign(vals[i], cell.vertices[i]) > 0) A[nA++] = i;
+        else B[nB++] = i;
+    }
+
+    auto make_edge_simplex = [&](int i, int j) -> Simplex {
+        Simplex s; s.dimension = 1;
+        uint64_t v0 = cell.vertices[i], v1 = cell.vertices[j];
+        if (v0 < v1) { s.vertices[0] = v0; s.vertices[1] = v1; }
+        else { s.vertices[0] = v1; s.vertices[1] = v0; }
+        return s;
+    };
+
+    if (nA == 1 || nB == 1) {
+        int single = (nA == 1) ? A[0] : B[0];
+        int others[3];
+        if (nA == 1) { for(int i=0; i<3; ++i) others[i] = B[i]; }
+        else { for(int i=0; i<3; ++i) others[i] = A[i]; }
+
+        int idx = atomicAdd(res.face_count, 1);
+        if (idx < res.max_conn) {
+            for (int i = 0; i < 3; ++i) {
+                res.faces[idx].nodes[i] = encode_simplex_id(make_edge_simplex(single, others[i]), mesh);
+            }
+        }
+    } else if (nA == 2 && nB == 2) {
+        int idx = atomicAdd(res.face_count, 2);
+        if (idx + 1 < res.max_conn) {
+            uint64_t nodes[4];
+            int ni = 0;
+            for (int i = 0; i < nA; ++i) {
+                for (int j = 0; j < nB; ++j) {
+                    nodes[ni++] = encode_simplex_id(make_edge_simplex(A[i], B[j]), mesh);
+                }
+            }
+            res.faces[idx].nodes[0] = nodes[0]; res.faces[idx].nodes[1] = nodes[1]; res.faces[idx].nodes[2] = nodes[2];
+            res.faces[idx+1].nodes[0] = nodes[0]; res.faces[idx+1].nodes[1] = nodes[2]; res.faces[idx+1].nodes[2] = nodes[3];
+        }
+    }
+}
+
+/**
  * @brief CUDA implementation of Marching Pentatopes logic.
  */
 template <typename T, typename DeviceMesh, typename PredicateDevice, typename IDType>
@@ -142,16 +202,16 @@ __global__ void extraction_kernel(
     int d = mesh.ndims;
     int m = PredicateDevice::codimension;
 
-    uint64_t local_coords[4], global_coords[4];
+    uint64_t local_coords[4] = {0}, global_coords[4] = {0};
     mesh.get_vertex_coords_local(v_idx, local_coords);
-    for (int k = 0; k < 4; ++k) global_coords[k] = local_coords[k] + mesh.offset[k];
+    for (int k = 0; k < d; ++k) global_coords[k] = local_coords[k] + mesh.offset[k];
     uint64_t v0 = mesh.coords_to_id(global_coords);
 
     // 1. Extract nodes on m-simplices
     if (m == 1) {
         for (int mask = 1; mask < (1 << d); ++mask) {
-            uint64_t v1_c[4]; bool in = true;
-            for (int k = 0; k < 4; ++k) {
+            uint64_t v1_c[4] = {0}; bool in = true;
+            for (int k = 0; k < d; ++k) {
                 v1_c[k] = global_coords[k] + ((mask >> k) & 1);
                 if (v1_c[k] >= mesh.global_dims[k]) in = false;
             }
@@ -170,8 +230,8 @@ __global__ void extraction_kernel(
         for (int m1 = 1; m1 < (1 << d); ++m1) {
             for (int m2 = 1; m2 < (1 << d); ++m2) {
                 if ((m1 & m2) == m1 && m1 != m2) {
-                    uint64_t v1_c[4], v2_c[4]; bool in = true;
-                    for (int k = 0; k < 4; ++k) {
+                    uint64_t v1_c[4] = {0}, v2_c[4] = {0}; bool in = true;
+                    for (int k = 0; k < d; ++k) {
                         v1_c[k] = global_coords[k] + ((m1 >> k) & 1);
                         v2_c[k] = global_coords[k] + ((m2 >> k) & 1);
                         if (v1_c[k] >= mesh.global_dims[k] || v2_c[k] >= mesh.global_dims[k]) in = false;
@@ -197,8 +257,8 @@ __global__ void extraction_kernel(
                 if ((m1 & m2) == m1 && m1 != m2) {
                     for (int m3 = 1; m3 < (1 << d); ++m3) {
                         if ((m2 & m3) == m2 && m2 != m3) {
-                            uint64_t v1_c[4], v2_c[4], v3_c[4]; bool in = true;
-                            for (int k = 0; k < 4; ++k) {
+                            uint64_t v1_c[4] = {0}, v2_c[4] = {0}, v3_c[4] = {0}; bool in = true;
+                            for (int k = 0; k < d; ++k) {
                                 v1_c[k] = global_coords[k] + ((m1 >> k) & 1);
                                 v2_c[k] = global_coords[k] + ((m2 >> k) & 1);
                                 v3_c[k] = global_coords[k] + ((m3 >> k) & 1);
@@ -235,13 +295,15 @@ __global__ void extraction_kernel(
             
             if constexpr (PredicateDevice::codimension == 1) {
                 if (d == 4) marching_pentatope_device<T>(cell, mesh, pred, data_views, results);
+                else if (d == 3) marching_tetrahedron_device<T>(cell, mesh, pred, data_views, results);
             } else {
                 uint64_t node_ids[32]; int node_count = 0;
-                if (m == 3 && d == 4) {
-                    for (int i=0; i<5; ++i) {
-                        Simplex face; face.dimension = 3;
+                // General manifold patching for k=1 (d-m=1)
+                if (d - m == 1) {
+                    for (int i=0; i<=d; ++i) {
+                        Simplex face; face.dimension = m;
                         int fj = 0;
-                        for (int j=0; j<5; ++j) if (i != j) face.vertices[fj++] = cell.vertices[j];
+                        for (int j=0; j<=d; ++j) if (i != j) face.vertices[fj++] = cell.vertices[j];
                         face.sort_vertices();
                         FeatureElement el;
                         if (pred.extract_device(face, data_views, n_vars, mesh, el)) {

@@ -144,13 +144,12 @@ struct RegularSimplicialMeshDevice {
         }
         
         // Simplicial tracking requires sorted vertices for uniqueness
-        // Bubble sort for small fixed size on GPU
-        for (int i = 0; i < ndims; ++i) {
-            for (int j = 0; j < ndims - i; ++j) {
-                if (s.vertices[j] > s.vertices[j + 1]) {
-                    uint64_t tmp = s.vertices[j];
-                    s.vertices[j] = s.vertices[j + 1];
-                    s.vertices[j + 1] = tmp;
+        for (int i = 0; i <= ndims; ++i) {
+            for (int j = i + 1; j <= ndims; ++j) {
+                if (s.vertices[i] > s.vertices[j]) {
+                    uint64_t tmp = s.vertices[i];
+                    s.vertices[i] = s.vertices[j];
+                    s.vertices[j] = tmp;
                 }
             }
         }

@@ -29,7 +29,8 @@ int main(int argc, char** argv) {
                 }
     }
 
-    std::map<std::string, ftk::ndarray<float>> data = {{"U", u}, {"V", v}, {"W", w}};
+    ftk::ndarray<float> s({(size_t)DW, (size_t)DH, (size_t)DD, (size_t)DT}); s.fill(0.0f);
+    std::map<std::string, ftk::ndarray<float>> data = {{"U", u}, {"V", v}, {"W", w}, {"S", s}};
     auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{(uint64_t)DW, (uint64_t)DH, (uint64_t)DD, (uint64_t)DT});
 
     CriticalPointPredicate<3, float> pred;
@@ -38,7 +39,7 @@ int main(int argc, char** argv) {
     pred.var_names[2] = "W";
 
     SimplicialEngine<float, CriticalPointPredicate<3, float>> engine(mesh, pred);
-    engine.execute(data, {"U", "V", "W"});
+    engine.execute(data, {"U", "V", "W", "S"});
 
     auto complex = engine.get_complex();
     write_complex_to_vtu(complex, *mesh, "cp_3d.vtu");

@@ -14,7 +14,7 @@ using namespace ftk2;
 
 int main(int argc, char** argv) {
     const int DW = 16, DH = 16, DT = 5;
-    std::cout << "Generating 2D+T woven synthetic data (" << DW << "x" << DH << "x" << DT << ")..." << std::endl;
+    std::cout << "CUDA: Generating 2D+T woven synthetic data (" << DW << "x" << DH << "x" << DT << ")..." << std::endl;
 
     // 1. Generate woven scalar data
     ftk::ndarray<double> scalar = ftk::synthetic_woven_2Dt<double>(DW, DH, DT);
@@ -50,16 +50,15 @@ int main(int argc, char** argv) {
     // 5. Initialize and run the Unified Simplicial Engine
     SimplicialEngine<double, CriticalPointPredicate<2, double>> engine(mesh, cp_pred);
     
-    std::cout << "Tracking critical points strictly in the CORE region..." << std::endl;
-    engine.execute(data, {"U", "V", "Woven"});
+    std::cout << "Tracking critical points ON GPU (CUDA)..." << std::endl;
+    engine.execute_cuda(data, {"U", "V", "Woven"});
 
     // 6. Output results
     auto complex = engine.get_complex();
-    std::cout << "Writing results to critical_point_2d.vtu and critical_point_2d.vtp..." << std::endl;
-    write_complex_to_vtu(complex, *mesh, "critical_point_2d.vtu");
-    write_complex_to_vtp(complex, *mesh, "critical_point_2d.vtp");
+    std::cout << "Writing results to critical_point_2d_cuda.vtu..." << std::endl;
+    write_complex_to_vtu(complex, *mesh, "critical_point_2d_cuda.vtu");
 
-    std::cout << "Done. Found " << complex.vertices.size() << " feature elements." << std::endl;
+    std::cout << "Done. Found " << complex.vertices.size() << " feature elements on GPU." << std::endl;
 
     return 0;
 }
