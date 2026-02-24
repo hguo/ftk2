@@ -5,6 +5,7 @@
 #include <ftk2/core/predicate.hpp>
 #include <ftk2/core/complex.hpp>
 #include <ftk2/core/sos.hpp>
+#include <ftk2/core/parallel.hpp>
 #include <ndarray/ndarray.hh>
 #include <ndarray/ndarray_stream.hh>
 #include <map>
@@ -80,17 +81,23 @@ public:
     SimplicialEngine(std::shared_ptr<Mesh> mesh, PredicateType pred = PredicateType()) 
         : mesh_(mesh), predicate_(pred) {}
 
-    void execute(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
-        auto t_start = std::chrono::high_resolution_clock::now();
-        int d_total = mesh_->get_total_dimension();
-        
+    void clear_results() {
         active_nodes_.clear();
         node_elements_.clear();
         node_id_to_simplex_.clear();
         manifold_simplices_.clear();
         uf_.clear();
+    }
+
+    void execute(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
+        clear_results();
+        feed(mesh_, data, var_names);
+    }
+
+    void feed(std::shared_ptr<Mesh> slab_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        int d_total = slab_mesh->get_total_dimension();
         
-        std::vector<const ftk::ndarray<T>*> arrays;
         std::vector<std::string> resolved_vars = var_names;
         if (resolved_vars.empty()) {
             if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { resolved_vars = {predicate_.var_name}; }
@@ -101,14 +108,13 @@ public:
                 resolved_vars = {predicate_.var_names[0], predicate_.var_names[1]};
             }
         }
-        for (const auto& name : resolved_vars) arrays.push_back(&data.at(name));
 
         // 1. Discover all active nodes
         std::vector<FeatureElement> elements;
         std::mutex mutex;
-        mesh_->iterate_simplices(m, [&](const Simplex& s) {
+        slab_mesh->iterate_simplices(m, [&](const Simplex& s) {
             FeatureElement el;
-            if (extract_simplex(s, data, el)) {
+            if (extract_simplex(s, data, el, slab_mesh.get())) {
                 std::lock_guard<std::mutex> lock(mutex);
                 elements.push_back(el);
             }
@@ -116,18 +122,24 @@ public:
         
         std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : elements) {
-            uint64_t node_id = uf_.add(); 
-            active_nodes_[el.simplex] = node_id;
-            node_elements_[node_id] = el; 
-            node_id_to_simplex_[node_id] = el.simplex;
+            if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
+                uint64_t node_id = uf_.add(); 
+                active_nodes_[el.simplex] = node_id;
+                node_elements_[node_id] = el; 
+                node_id_to_simplex_[node_id] = el.simplex;
+            }
         }
         auto t_nodes = std::chrono::high_resolution_clock::now();
 
         // 2. Perform manifold patching
-        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
+        int n_threads = ftk2::get_num_threads();
+        std::vector<ThreadData> tls(n_threads);
+        
+        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(slab_mesh);
         if (reg_mesh) {
             uint64_t n_v = reg_mesh->get_num_vertices();
-            for (uint64_t v_idx = 0; v_idx < n_v; ++v_idx) {
+            ftk2::parallel_for(uint64_t(0), n_v, [&](uint64_t v_idx, int tid) {
+                auto& local = tls[tid];
                 auto local_coords = reg_mesh->get_vertex_coords_local(v_idx);
                 if (reg_mesh->is_hypercube_base(local_coords)) {
                     uint64_t hc_idx = reg_mesh->hypercube_coords_to_idx(local_coords);
@@ -135,27 +147,97 @@ public:
                     for (int p_idx = 0; p_idx < n_p; ++p_idx) {
                         Simplex cell; reg_mesh->get_d_simplex(hc_idx, p_idx, cell);
                         if constexpr (m == 1) {
-                            if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0]);
-                            else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0]);
-                            else form_general_manifold_patches(cell, data);
-                        } else form_general_manifold_patches(cell, data);
+                            if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0], local, reg_mesh.get());
+                            else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0], local, reg_mesh.get());
+                            else form_general_manifold_patches(cell, data, local, mutex, reg_mesh.get());
+                        } else form_general_manifold_patches(cell, data, local, mutex, reg_mesh.get());
                     }
                 }
-            }
-        } else {
-            mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
-                if constexpr (m == 1) {
-                    if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0]);
-                    else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0]);
-                    else form_general_manifold_patches(cell, data);
-                } else form_general_manifold_patches(cell, data);
             });
+        } else {
+            slab_mesh->iterate_simplices(d_total, [&](const Simplex& cell) {
+                ThreadData local; 
+                if constexpr (m == 1) {
+                    if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0], local, slab_mesh.get());
+                    else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0], local, slab_mesh.get());
+                    else form_general_manifold_patches(cell, data, local, mutex, slab_mesh.get());
+                } else form_general_manifold_patches(cell, data, local, mutex, slab_mesh.get());
+                
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    manifold_simplices_[1].insert(manifold_simplices_[1].end(), local.dim1.begin(), local.dim1.end());
+                    manifold_simplices_[2].insert(manifold_simplices_[2].end(), local.dim2.begin(), local.dim2.end());
+                    manifold_simplices_[3].insert(manifold_simplices_[3].end(), local.dim3.begin(), local.dim3.end());
+                }
+            });
+        }
+        
+        for (const auto& local : tls) {
+            manifold_simplices_[1].insert(manifold_simplices_[1].end(), local.dim1.begin(), local.dim1.end());
+            manifold_simplices_[2].insert(manifold_simplices_[2].end(), local.dim2.begin(), local.dim2.end());
+            manifold_simplices_[3].insert(manifold_simplices_[3].end(), local.dim3.begin(), local.dim3.end());
         }
 
         auto t_end = std::chrono::high_resolution_clock::now();
         auto d_nodes = std::chrono::duration_cast<std::chrono::milliseconds>(t_nodes - t_start).count();
         auto d_manifold = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_nodes).count();
-        std::cout << "CPU Execution Breakdown: Nodes=" << d_nodes << "ms, Manifold=" << d_manifold << "ms, Total=" << (d_nodes+d_manifold) << "ms" << std::endl;
+        std::cout << "CPU Feed Breakdown: Nodes=" << d_nodes << "ms, Manifold=" << d_manifold << "ms, Total=" << (d_nodes+d_manifold) << "ms" << std::endl;
+    }
+
+    void execute_stream(ftk::stream<>& s, const std::vector<std::string>& var_names = {}) {
+        int n_timesteps = s.total_timesteps();
+        if (n_timesteps < 2) return;
+
+        std::vector<std::string> resolved_vars = var_names;
+        if (resolved_vars.empty()) {
+            if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) resolved_vars = {predicate_.var_name};
+            else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
+                for(int i=0; i<m; ++i) resolved_vars.push_back(predicate_.var_names[i]);
+                if (!predicate_.scalar_var_name.empty()) resolved_vars.push_back(predicate_.scalar_var_name);
+            } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
+                resolved_vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            }
+        }
+
+        clear_results();
+        auto group_prev = s.read(0);
+        for (int t = 0; t < n_timesteps - 1; ++t) {
+            auto group_curr = s.read(t + 1);
+            
+            std::map<std::string, ftk::ndarray<T>> slab_data;
+            std::vector<uint64_t> spatial_dims;
+            bool dims_set = false;
+
+            for (const auto& name : resolved_vars) {
+                const auto& arr_prev = group_prev->template get_ref<T>(name);
+                const auto& arr_curr = group_curr->template get_ref<T>(name);
+                
+                if (!dims_set) {
+                    auto shape = arr_prev.shapef();
+                    for (auto d : shape) spatial_dims.push_back(d);
+                    dims_set = true;
+                }
+
+                std::vector<size_t> slab_shape = arr_prev.shapef();
+                slab_shape.push_back(2);
+                ftk::ndarray<T> arr_slab(slab_shape);
+                size_t n_spatial = arr_prev.nelem();
+                for (size_t i = 0; i < n_spatial; ++i) {
+                    arr_slab[i] = arr_prev[i];
+                    arr_slab[i + n_spatial] = arr_curr[i];
+                }
+                slab_data[name] = std::move(arr_slab);
+            }
+
+            std::vector<uint64_t> local_dims = spatial_dims; local_dims.push_back(2);
+            std::vector<uint64_t> offset(spatial_dims.size(), 0); offset.push_back(t);
+            std::vector<uint64_t> global_dims = spatial_dims; global_dims.push_back(n_timesteps);
+            
+            auto slab_mesh = std::make_shared<RegularSimplicialMesh>(local_dims, offset, global_dims);
+            feed(slab_mesh, slab_data, resolved_vars);
+
+            group_prev = group_curr;
+        }
     }
 
 #if FTK_HAVE_CUDA && defined(__CUDACC__)
@@ -335,11 +417,16 @@ public:
     }
 
 private:
-    bool extract_simplex(const Simplex& s, const std::map<std::string, ftk::ndarray<T>>& data, FeatureElement& el) {
+    bool extract_simplex(const Simplex& s, const std::map<std::string, ftk::ndarray<T>>& data, FeatureElement& el, Mesh* mesh) {
+        auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
+        std::vector<uint64_t> offset;
+        if (reg_mesh) offset = reg_mesh->get_offset();
+
         if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
             T values[3][2];
             for (int i = 0; i < 3; ++i) {
-                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
+                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
                 for (int j = 0; j < 2; ++j) {
                     const auto& arr = data.at(predicate_.var_names[j]);
                     if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
@@ -351,7 +438,8 @@ private:
         } else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) {
             T values[2][1];
             for (int i = 0; i < 2; ++i) {
-                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
+                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
                 const auto& arr = data.at(predicate_.var_name);
                 if (coords.size() == 2) values[i][0] = arr.f(coords[0], coords[1]);
                 else if (coords.size() == 3) values[i][0] = arr.f(coords[0], coords[1], coords[2]);
@@ -361,7 +449,8 @@ private:
         } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             T values[m+1][m];
             for (int i = 0; i <= m; ++i) {
-                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
+                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
                 for (int j = 0; j < m; ++j) {
                     const auto& arr = data.at(predicate_.var_names[j]);
                     if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
@@ -373,69 +462,84 @@ private:
             for(int k=0; k<m; ++k) arrays_ptrs.push_back(&data.at(predicate_.var_names[k]));
             if (!predicate_.scalar_var_name.empty()) arrays_ptrs.push_back(&data.at(predicate_.scalar_var_name));
             
-            return predicate_.extract_it(s, values, el, arrays_ptrs, mesh_.get());
+            return predicate_.extract_it(s, values, el, arrays_ptrs, mesh);
         }
         return false;
     }
 
-    void marching_pentatope(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var) {
+    struct ThreadData {
+        std::vector<std::vector<IDType>> dim1, dim2, dim3;
+    };
+
+    void marching_pentatope(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var, ThreadData& local, Mesh* mesh) {
         T vals[5]; uint64_t idx[5]; std::vector<int> A, B; T threshold = 0;
         if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) threshold = predicate_.thresholds[0]; 
         else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) threshold = predicate_.threshold;
         else return;
 
+        auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
+        std::vector<uint64_t> offset;
+        if (reg_mesh) offset = reg_mesh->get_offset();
+
         for (int i=0; i<5; ++i) {
-            idx[i] = cell.vertices[i]; auto coords = mesh_->get_vertex_coordinates(idx[i]);
+            idx[i] = cell.vertices[i]; auto coords = mesh->get_vertex_coordinates(idx[i]);
+            if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
             vals[i] = data.at(var).f(coords[0], coords[1], coords[2], coords[3]) - threshold;
             if (sos::sign(vals[i], idx[i]) > 0) A.push_back(i); else B.push_back(i);
         }
         if (A.size() == 1 || B.size() == 1) {
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
-            for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
-            if (nodes.size() == 4) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[3].push_back(nodes); }
+            for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); }
+            if (nodes.size() == 4) { std::sort(nodes.begin(), nodes.end()); local.dim3.push_back(nodes); }
         } else if (A.size() == 2 || B.size() == 2) {
             const auto& two = (A.size() == 2) ? A : B; const auto& three = (A.size() == 2) ? B : A;
             std::vector<uint64_t> T0, T1;
             for (int t : three) {
                 Simplex e0 = make_edge(idx[two[0]], idx[t]); Simplex e1 = make_edge(idx[two[1]], idx[t]);
-                if (active_nodes_.count(e0)) T0.push_back(active_nodes_[e0]); if (active_nodes_.count(e1)) T1.push_back(active_nodes_[e1]);
+                if (active_nodes_.count(e0)) T0.push_back(active_nodes_.at(e0)); if (active_nodes_.count(e1)) T1.push_back(active_nodes_.at(e1));
             }
             if (T0.size() == 3 && T1.size() == 3) {
                 std::vector<IDType> c0 = {T0[0], T0[1], T0[2], T1[2]}; std::sort(c0.begin(), c0.end());
                 std::vector<IDType> c1 = {T0[0], T0[1], T1[1], T1[2]}; std::sort(c1.begin(), c1.end());
                 std::vector<IDType> c2 = {T0[0], T1[0], T1[1], T1[2]}; std::sort(c2.begin(), c2.end());
-                manifold_simplices_[3].push_back(c0); manifold_simplices_[3].push_back(c1); manifold_simplices_[3].push_back(c2);
+                local.dim3.push_back(c0); local.dim3.push_back(c1); local.dim3.push_back(c2);
             }
         }
     }
 
-    void marching_tetrahedron(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var) {
+    void marching_tetrahedron(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var, ThreadData& local, Mesh* mesh) {
         T vals[4]; uint64_t idx[4]; std::vector<int> A, B; T threshold = 0;
         if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { threshold = predicate_.threshold; } else return;
+        
+        auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
+        std::vector<uint64_t> offset;
+        if (reg_mesh) offset = reg_mesh->get_offset();
+
         for (int i=0; i<4; ++i) {
-            idx[i] = cell.vertices[i]; auto coords = mesh_->get_vertex_coordinates(idx[i]);
+            idx[i] = cell.vertices[i]; auto coords = mesh->get_vertex_coordinates(idx[i]);
+            if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
             vals[i] = data.at(var).f(coords[0], coords[1], coords[2]) - threshold;
             if (sos::sign(vals[i], idx[i]) > 0) A.push_back(i); else B.push_back(i);
         }
         if (A.size() == 1 || B.size() == 1) {
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
-            for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
-            if (nodes.size() == 3) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[2].push_back(nodes); }
+            for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); }
+            if (nodes.size() == 3) { std::sort(nodes.begin(), nodes.end()); local.dim2.push_back(nodes); }
         } else if (A.size() == 2 && B.size() == 2) {
             std::vector<IDType> nodes;
-            for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
+            for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); }
             if (nodes.size() == 4) { 
                 std::sort(nodes.begin(), nodes.end());
-                manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]}); manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); 
+                local.dim2.push_back({nodes[0], nodes[1], nodes[2]}); local.dim2.push_back({nodes[0], nodes[2], nodes[3]}); 
             }
         }
     }
 
-    void form_general_manifold_patches(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data) {
+    void form_general_manifold_patches(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, ThreadData& local, std::mutex& mutex, Mesh* mesh) {
         int d = cell.dimension; int k = d - m; if (k <= 0) return;
-        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
+        auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
         struct NodeInfo { IDType id; uint64_t code; Simplex s; };
         std::vector<NodeInfo> nodes;
         find_m_subsimplices(cell, m, [&](const Simplex& f_orig) { 
@@ -448,31 +552,39 @@ private:
                 found = true;
             } else {
                 FeatureElement el;
-                if (extract_simplex(f, data, el)) {
-                    node_id = uf_.add();
-                    active_nodes_[f] = node_id;
-                    node_elements_[node_id] = el;
-                    node_id_to_simplex_[node_id] = f;
-                    found = true;
+                if (extract_simplex(f, data, el, mesh)) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    if (active_nodes_.count(f)) {
+                        node_id = active_nodes_.at(f);
+                        found = true;
+                    } else {
+                        node_id = uf_.add();
+                        active_nodes_[f] = node_id;
+                        node_elements_[node_id] = el;
+                        node_id_to_simplex_[node_id] = f;
+                        found = true;
+                    }
                 }
             }
 
-            if (found) {
+            if (found && reg_mesh) {
                 nodes.push_back({node_id, encode_simplex_id(f, *reg_mesh), f});
             }
         });
         if (nodes.empty()) return;
-        // Sort by encoded simplex ID to match GPU behavior
-        std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) { return a.code < b.code; });
+        
+        if (reg_mesh) {
+            std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) { return a.code < b.code; });
+        }
+        
         IDType h_S = nodes[0].id;
-        uint64_t h_S_code = nodes[0].code;
+        uint64_t h_S_code = reg_mesh ? nodes[0].code : 0;
 
         if (k == 1) {
             for (size_t i = 1; i < nodes.size(); ++i) {
-                std::vector<IDType> edge = {h_S, nodes[i].id}; std::sort(edge.begin(), edge.end()); manifold_simplices_[1].push_back(edge);
+                std::vector<IDType> edge = {h_S, nodes[i].id}; std::sort(edge.begin(), edge.end()); local.dim1.push_back(edge);
             }
         } else if (k == 2) {
-            // Watertight star-fan for k=2
             for (int i = 0; i <= d; ++i) {
                 int tet_mask = ((1 << (d + 1)) - 1) ^ (1 << i);
                 std::vector<NodeInfo> nodes_T;
@@ -489,18 +601,18 @@ private:
                 }
                 
                 if (nodes_T.size() < 2) continue;
-                // Sort by code (already sorted since 'nodes' is sorted)
                 IDType h_T = nodes_T[0].id;
-                uint64_t h_T_code = nodes_T[0].code;
+                uint64_t h_T_code = reg_mesh ? nodes_T[0].code : 0;
                 
                 for (size_t j = 1; j < nodes_T.size(); ++j) {
                     IDType n_id = nodes_T[j].id;
-                    uint64_t n_code = nodes_T[j].code;
-                    // Use code for comparison to match GPU
-                    if (h_S_code != h_T_code && h_S_code != n_code) {
+                    uint64_t n_code = reg_mesh ? nodes_T[j].code : 0;
+                    
+                    bool different = reg_mesh ? (h_S_code != h_T_code && h_S_code != n_code) : (h_S != h_T && h_S != n_id);
+                    if (different) {
                         std::vector<IDType> tri = {h_S, h_T, n_id};
                         std::sort(tri.begin(), tri.end());
-                        manifold_simplices_[2].push_back(tri);
+                        local.dim2.push_back(tri);
                     }
                 }
             }

@@ -1,5 +1,5 @@
-#include <atomic>
 #include <iostream>
+#include <atomic>
 #include <ftk2/core/mesh.hpp>
 #include <ftk2/core/unstructured_mesh.hpp>
 #include <ftk2/core/engine.hpp>
@@ -32,11 +32,9 @@ extern int passed_tests;
         std::cerr << "FAILED: ASSERT_EQ(" << #a << ", " << #b << ") got " << (a) << ", expected " << (b) << " at " << __FILE__ << ":" << __LINE__ << std::endl; \
     }
 
-#include <atomic>
-
 void test_unstructured_io() {
     std::cout << "Testing unstructured mesh IO (1x1.vtu)..." << std::endl;
-    std::string path = "/home/hguo/workspace/ftk/tests/data/1x1.vtu";
+    std::string path = "../tests/data/1x1.vtu";
     auto mesh = read_vtu(path);
     ASSERT_TRUE(mesh != nullptr);
     if (mesh) {
@@ -49,9 +47,37 @@ void test_unstructured_io() {
     }
 }
 
+void test_unstructured_2x1() {
+    std::cout << "Testing unstructured mesh IO (2x1.vtu)..." << std::endl;
+    std::string path = "../tests/data/2x1.vtu";
+    auto mesh = read_vtu(path);
+    ASSERT_TRUE(mesh != nullptr);
+    if (mesh) {
+        std::atomic<int> n_v(0), n_t(0);
+        mesh->iterate_simplices(0, [&](const Simplex& s){ n_v++; });
+        mesh->iterate_simplices(2, [&](const Simplex& s){ n_t++; });
+        ASSERT_EQ(n_v.load(), 1110);
+        ASSERT_EQ(n_t.load(), 2098);
+    }
+}
+
+void test_unstructured_3d() {
+    std::cout << "Testing unstructured mesh IO (3d.vtu)..." << std::endl;
+    std::string path = "../tests/data/3d.vtu";
+    auto mesh = read_vtu(path);
+    ASSERT_TRUE(mesh != nullptr);
+    if (mesh) {
+        std::atomic<int> n_v(0), n_tetra(0);
+        mesh->iterate_simplices(0, [&](const Simplex& s){ n_v++; });
+        mesh->iterate_simplices(3, [&](const Simplex& s){ n_tetra++; });
+        ASSERT_EQ(n_v.load(), 69943);
+        ASSERT_EQ(n_tetra.load(), 390464);
+    }
+}
+
 void test_unstructured_extrusion() {
     std::cout << "Testing unstructured mesh extrusion..." << std::endl;
-    std::string path = "/home/hguo/workspace/ftk/tests/data/1x1.vtu";
+    std::string path = "../tests/data/1x1.vtu";
     auto base_mesh = read_vtu(path);
     ASSERT_TRUE(base_mesh != nullptr);
     if (!base_mesh) return;
@@ -69,7 +95,7 @@ void test_unstructured_extrusion() {
 
 void test_unstructured_float_precision() {
     std::cout << "Testing unstructured mesh with float precision..." << std::endl;
-    std::string path = "/home/hguo/workspace/ftk/tests/data/1x1.vtu";
+    std::string path = "../tests/data/1x1.vtu";
     auto base_mesh = read_vtu(path);
     auto mesh = std::make_shared<ExtrudedSimplicialMesh>(base_mesh, 1);
 
@@ -79,7 +105,7 @@ void test_unstructured_float_precision() {
 
     // Generate float data
     ftk::ndarray<float> scalar;
-    scalar.reshapef({(size_t)n_v.load()}); // 1124 vertices
+    scalar.reshapef({(size_t)n_v.load()});
     scalar.fill(1.0f);
     scalar[0] = -1.0f; // Cross zero
     
@@ -95,34 +121,6 @@ void test_unstructured_float_precision() {
     
     auto complex = engine.get_complex();
     ASSERT_TRUE(complex.vertices.size() > 0);
-}
-
-void test_unstructured_2x1() {
-    std::cout << "Testing unstructured mesh IO (2x1.vtu)..." << std::endl;
-    std::string path = "/home/hguo/workspace/ftk/tests/data/2x1.vtu";
-    auto mesh = read_vtu(path);
-    ASSERT_TRUE(mesh != nullptr);
-    if (mesh) {
-        std::atomic<int> n_v(0), n_t(0);
-        mesh->iterate_simplices(0, [&](const Simplex& s){ n_v++; });
-        mesh->iterate_simplices(2, [&](const Simplex& s){ n_t++; });
-        ASSERT_EQ(n_v.load(), 1110);
-        ASSERT_EQ(n_t.load(), 2098);
-    }
-}
-
-void test_unstructured_3d() {
-    std::cout << "Testing unstructured mesh IO (3d.vtu)..." << std::endl;
-    std::string path = "/home/hguo/workspace/ftk/tests/data/3d.vtu";
-    auto mesh = read_vtu(path);
-    ASSERT_TRUE(mesh != nullptr);
-    if (mesh) {
-        std::atomic<int> n_v(0), n_tetra(0);
-        mesh->iterate_simplices(0, [&](const Simplex& s){ n_v++; });
-        mesh->iterate_simplices(3, [&](const Simplex& s){ n_tetra++; });
-        ASSERT_EQ(n_v.load(), 69943);
-        ASSERT_EQ(n_tetra.load(), 390464);
-    }
 }
 
 void test_unstructured() {
