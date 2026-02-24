@@ -41,7 +41,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
         if (!sos::origin_inside<M, T>::check(values, indices)) return false;
         
         T lambda[M + 1];
-        if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) { for (int i = 0; i <= M; ++i) lambda[i] = 1.0 / (M + 1); }
+        if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) return false; 
         
         el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;

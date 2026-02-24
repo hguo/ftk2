@@ -4,6 +4,7 @@ add_executable(ftk2_tests
     test_mesh.cpp
     test_engine.cpp
     test_sos.cpp
+    test_parity.cu
 )
 target_link_libraries(ftk2_tests PRIVATE ftk2)
 add_test(NAME ftk2_tests COMMAND ftk2_tests)

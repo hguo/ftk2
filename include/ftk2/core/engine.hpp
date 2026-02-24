@@ -363,7 +363,8 @@ private:
             std::vector<IDType> nodes;
             for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
             if (nodes.size() == 4) { 
-                manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); manifold_simplices_[2].push_back({nodes[0], nodes[3], nodes[1]}); 
+                std::sort(nodes.begin(), nodes.end());
+                manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]}); manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); 
                 for (int i=1; i<4; ++i) uf_.unite(nodes[0], nodes[i]);
             }
         }

@@ -90,7 +90,10 @@ public:
         s[1] = det3(v[1], v[2], v[3], idx[1], idx[2], idx[3]);
         s[2] = det3(v[2], v[3], v[0], idx[2], idx[3], idx[0]);
         s[3] = det3(v[3], v[0], v[1], idx[3], idx[0], idx[1]);
-        return (s[0] == s[1] && s[1] == s[2] && s[2] == s[3]);
+        
+        // In 3D, for origin to be inside, signs must alternate:
+        // s1 == s3 and s0 == s2 and s0 != s1
+        return (s[1] == s[3] && s[0] == s[2] && s[0] != s[1]);
     }
 };
 

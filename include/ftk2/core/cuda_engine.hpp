@@ -115,6 +115,14 @@ void marching_tetrahedron_device(
                     nodes[ni++] = encode_simplex_id(make_edge_simplex(A[i], B[j]), mesh);
                 }
             }
+            // Sort nodes for canonical triangulation
+            for (int i=0; i<4; ++i) {
+                for (int j=i+1; j<4; ++j) {
+                    if (nodes[i] > nodes[j]) {
+                        uint64_t tmp = nodes[i]; nodes[i] = nodes[j]; nodes[j] = tmp;
+                    }
+                }
+            }
             res.faces[idx].nodes[0] = nodes[0]; res.faces[idx].nodes[1] = nodes[1]; res.faces[idx].nodes[2] = nodes[2];
             res.faces[idx+1].nodes[0] = nodes[0]; res.faces[idx+1].nodes[1] = nodes[2]; res.faces[idx+1].nodes[2] = nodes[3];
         }
