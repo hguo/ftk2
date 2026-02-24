@@ -12,13 +12,15 @@ namespace ftk2 {
 class UnstructuredSimplicialMesh : public Mesh {
 public:
     // cells are flattened indices. cell_dim is the dimension of the cell (e.g. 3 for tet).
+    // coords are always 3D from VTK reader
     UnstructuredSimplicialMesh(int spatial_dim, int cell_dim, 
                                const std::vector<double>& coords, 
                                const std::vector<uint64_t>& cells) 
         : spatial_dim_(spatial_dim), cell_dim_(cell_dim), coords_(coords) 
     {
         // Build dimension 0 (vertices)
-        int n_verts = coords_.size() / spatial_dim_;
+        // VTK reader always gives 3 coordinates per point
+        int n_verts = coords_.size() / 3;
         simplices_[0].resize(n_verts);
         for (int i = 0; i < n_verts; ++i) {
             simplices_[0][i].dimension = 0;
@@ -38,17 +40,12 @@ public:
 
         // Build intermediate dimensions
         for (int d = cell_dim - 1; d >= 1; --d) {
-            std::set<Simplex, SimplexHash> unique_faces; // Use set/hash for uniqueness
-            // Actually Simplex < operator exists, set is fine.
-            // Using set<Simplex> (default compare)
             std::set<Simplex> face_set;
-            
             for (const auto& s : simplices_[d + 1]) {
                 faces(s, [&](const Simplex& f) {
                     face_set.insert(f);
                 });
             }
-            
             simplices_[d].assign(face_set.begin(), face_set.end());
         }
     }
@@ -59,30 +56,27 @@ public:
     void iterate_simplices(int k, std::function<void(const Simplex&)> callback) const override {
         if (k < 0 || k > cell_dim_) return;
         
-        // Use parallel_for if available
         ftk2::parallel_for(size_t(0), simplices_[k].size(), [&](size_t i, int tid) {
             callback(simplices_[k][i]);
         });
     }
 
-    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {
-        // Not implemented efficiently yet (needs lookup)
-    }
+    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
         if (vertex_id >= simplices_[0].size()) return {};
         std::vector<double> c(spatial_dim_);
         for (int i = 0; i < spatial_dim_; ++i) {
-            c[i] = coords_[vertex_id * spatial_dim_ + i];
+            c[i] = coords_[vertex_id * 3 + i]; // Always 3 coords per vertex in buffer
         }
         return c;
     }
 
 private:
     int spatial_dim_;
-    int cell_dim_; // Top dimension
+    int cell_dim_; 
     std::vector<double> coords_;
-    std::vector<Simplex> simplices_[4]; // Stores unique simplices for each dimension 0..3
+    std::vector<Simplex> simplices_[4]; 
 };
 
 } // namespace ftk2

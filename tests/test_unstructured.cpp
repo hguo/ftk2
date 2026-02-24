@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <limits>
 
 using namespace ftk2;
 
@@ -123,10 +124,55 @@ void test_unstructured_float_precision() {
     ASSERT_TRUE(complex.vertices.size() > 0);
 }
 
+void test_unstructured_critical_point_tracking() {
+    std::cout << "Testing unstructured 2D critical point tracking..." << std::endl;
+    std::string vtu_path = "../tests/data/1x1.vtu";
+    const int n_timesteps = 10;
+
+    auto base_mesh = read_vtu(vtu_path);
+    ASSERT_TRUE(base_mesh != nullptr);
+    if (!base_mesh) return;
+
+    auto mesh = std::make_shared<ExtrudedSimplicialMesh>(base_mesh, n_timesteps - 1);
+
+    std::atomic<int> n_total_verts(0);
+    mesh->iterate_simplices(0, [&](const Simplex& s) { n_total_verts++; });
+
+    ftk::ndarray<double> u, v;
+    u.reshapef({(size_t)n_total_verts.load()});
+    v.reshapef({(size_t)n_total_verts.load()});
+    
+    for (int i = 0; i < n_total_verts.load(); ++i) {
+        auto coords = mesh->get_vertex_coordinates(i);
+        double x = coords[0], y = coords[1], t = coords.back();
+        double phase = t * (2.0 * M_PI / (n_timesteps - 1));
+        double cx = 0.5 + 0.2 * std::cos(phase);
+        double cy = 0.5 + 0.2 * std::sin(phase);
+        u[i] = x - cx;
+        v[i] = y - cy;
+    }
+
+    std::map<std::string, ftk::ndarray<double>> data = {{"U", u}, {"V", v}};
+    CriticalPointPredicate<2, double> cp_pred;
+    cp_pred.var_names[0] = "U"; cp_pred.var_names[1] = "V";
+
+    SimplicialEngine<double, CriticalPointPredicate<2, double>> engine(mesh, cp_pred);
+    engine.execute(data);
+
+    auto complex = engine.get_complex();
+    
+    // We expect some interior nodes and connected cells (tracks)
+    ASSERT_TRUE(complex.vertices.size() > 0);
+    bool has_cells = false;
+    for (const auto& conn : complex.connectivity) if (conn.dimension == 1 && !conn.indices.empty()) has_cells = true;
+    ASSERT_TRUE(has_cells);
+}
+
 void test_unstructured() {
     test_unstructured_io();
     test_unstructured_2x1();
     test_unstructured_3d();
     test_unstructured_extrusion();
     test_unstructured_float_precision();
+    test_unstructured_critical_point_tracking();
 }
