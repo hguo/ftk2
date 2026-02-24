@@ -20,6 +20,7 @@ namespace ftk2 {
 template <int M, typename T = double>
 struct Predicate {
     static constexpr int codimension = M;
+    double sos_q = 1000000.0;
 };
 
 // Forward declaration for device view
@@ -38,7 +39,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
     {
         uint64_t indices[M + 1];
         for(int i=0; i<=M; ++i) indices[i] = s.vertices[i];
-        if (!sos::origin_inside<M, T>::check(values, indices)) return false;
+        if (!sos::origin_inside<M, T>::check(values, indices, this->sos_q)) return false;
         
         T lambda[M + 1];
         if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) return false; 
@@ -68,6 +69,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
     struct Device {
         static constexpr int codimension = M;
         bool has_scalar;
+        double sos_q;
         __device__
         bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const RegularSimplicialMeshDevice& mesh, FeatureElement& el) const {
             T values[M + 1][M]; uint64_t indices[M + 1];
@@ -75,8 +77,8 @@ struct CriticalPointPredicate : public Predicate<M, T> {
                 indices[i] = s.vertices[i]; uint64_t coords[4] = {0}; mesh.id_to_coords(indices[i], coords);
                 for (int j = 0; j < M && j < n_vars; ++j) values[i][j] = data[j].f(coords[0], coords[1], coords[2], coords[3]);
             }
-            if (!sos::origin_inside<M, T>::check(values, indices)) return false;
-            T lambda[M + 1]; if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) { for (int i = 0; i <= M; ++i) lambda[i] = 1.0 / (M + 1); }
+            if (!sos::origin_inside<M, T>::check(values, indices, sos_q)) return false;
+            T lambda[M + 1]; if (!ZeroCrossingSolver<M, T>::solve(values, lambda)) { for (int i = 0; i <= M; ++i) lambda[i] = (T)1.0 / (M + 1); }
             el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
             for (int i = 0; i <= M; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
@@ -89,7 +91,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
             return true; 
         }
     };
-    Device get_device() const { return {!scalar_var_name.empty()}; }
+    Device get_device() const { return {!scalar_var_name.empty(), this->sos_q}; }
 #endif
 };
 
@@ -99,15 +101,15 @@ struct CriticalPointPredicate : public Predicate<M, T> {
 template <typename T = double>
 struct ContourPredicate : public Predicate<1, T> {
     std::string var_name;
-    T threshold = 0.0;
+    T threshold = (T)0.0;
 
     bool extract_it(const Simplex& s, const T values[2][1], FeatureElement& el,
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const 
     {
         uint64_t indices[2] = {s.vertices[0], s.vertices[1]};
         T adjusted_values[2][1] = {{values[0][0] - threshold}, {values[1][0] - threshold}};
-        if (!sos::origin_inside<1, T>::check(adjusted_values, indices)) return false;
-        T lambda[2]; if (!ZeroCrossingSolver<1, T>::solve(adjusted_values, lambda)) { for (int i = 0; i <= 1; ++i) lambda[i] = 0.5; }
+        if (!sos::origin_inside<1, T>::check(adjusted_values, indices, this->sos_q)) return false;
+        T lambda[2]; if (!ZeroCrossingSolver<1, T>::solve(adjusted_values, lambda)) { for (int i = 0; i <= 1; ++i) lambda[i] = (T)0.5; }
         el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 1; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
@@ -120,6 +122,7 @@ struct ContourPredicate : public Predicate<1, T> {
     struct Device {
         static constexpr int codimension = 1;
         T threshold;
+        double sos_q;
         __device__
         bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const RegularSimplicialMeshDevice& mesh, FeatureElement& el) const {
             T values[2][1]; uint64_t indices[2];
@@ -127,8 +130,8 @@ struct ContourPredicate : public Predicate<1, T> {
                 indices[i] = s.vertices[i]; uint64_t coords[4] = {0}; mesh.id_to_coords(indices[i], coords);
                 values[i][0] = data[0].f(coords[0], coords[1], coords[2], coords[3]) - threshold;
             }
-            if (!sos::origin_inside<1, T>::check(values, indices)) return false;
-            T lambda[2]; if (!ZeroCrossingSolver<1, T>::solve(values, lambda)) { for (int i = 0; i <= 1; ++i) lambda[i] = 0.5; }
+            if (!sos::origin_inside<1, T>::check(values, indices, sos_q)) return false;
+            T lambda[2]; if (!ZeroCrossingSolver<1, T>::solve(values, lambda)) { for (int i = 0; i <= 1; ++i) lambda[i] = (T)0.5; }
             el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
             for (int i = 0; i <= 1; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
@@ -137,7 +140,7 @@ struct ContourPredicate : public Predicate<1, T> {
             return true;
         }
     };
-    Device get_device() const { return {threshold}; }
+    Device get_device() const { return {threshold, this->sos_q}; }
 #endif
 };
 
@@ -147,15 +150,15 @@ struct ContourPredicate : public Predicate<1, T> {
 template <typename T = double>
 struct FiberPredicate : public Predicate<2, T> {
     std::string var_names[2];
-    T thresholds[2] = {0.0, 0.0};
+    T thresholds[2] = {(T)0.0, (T)0.0};
 
     bool extract_it(const Simplex& s, const T values[3][2], FeatureElement& el,
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const 
     {
         uint64_t indices[3] = {s.vertices[0], s.vertices[1], s.vertices[2]};
         T adj[3][2]; for(int i=0; i<3; ++i) for(int j=0; j<2; ++j) adj[i][j] = values[i][j] - thresholds[j];
-        if (!sos::origin_inside<2, T>::check(adj, indices)) return false;
-        T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(adj, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = 1.0 / 3.0; }
+        if (!sos::origin_inside<2, T>::check(adj, indices, this->sos_q)) return false;
+        T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(adj, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = (T)1.0 / 3.0; }
         
         el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
@@ -169,6 +172,7 @@ struct FiberPredicate : public Predicate<2, T> {
     struct Device {
         static constexpr int codimension = 2;
         T thresholds[2];
+        double sos_q;
         __device__
         bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const RegularSimplicialMeshDevice& mesh, FeatureElement& el) const {
             T values[3][2]; uint64_t indices[3];
@@ -176,8 +180,8 @@ struct FiberPredicate : public Predicate<2, T> {
                 indices[i] = s.vertices[i]; uint64_t coords[4] = {0}; mesh.id_to_coords(indices[i], coords);
                 for (int j = 0; j < 2 && j < n_vars; ++j) values[i][j] = data[j].f(coords[0], coords[1], coords[2], coords[3]) - thresholds[j];
             }
-            if (!sos::origin_inside<2, T>::check(values, indices)) return false;
-            T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(values, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = 1.0 / 3.0; }
+            if (!sos::origin_inside<2, T>::check(values, indices, sos_q)) return false;
+            T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(values, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = (T)1.0 / 3.0; }
             el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
             for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
@@ -186,7 +190,7 @@ struct FiberPredicate : public Predicate<2, T> {
             return true;
         }
     };
-    Device get_device() const { return {{thresholds[0], thresholds[1]}}; }
+    Device get_device() const { return {{thresholds[0], thresholds[1]}, this->sos_q}; }
 #endif
 };
 

@@ -37,6 +37,7 @@ void test_engine();
 void test_sos();
 void test_parity();
 void test_examples();
+void test_unstructured();
 
 int main(int argc, char** argv) {
     std::cout << "Running FTK2 tests..." << std::endl;
@@ -47,6 +48,7 @@ int main(int argc, char** argv) {
     test_sos();
     test_parity();
     test_examples();
+    test_unstructured();
     
     std::cout << "\nSummary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
     return (passed_tests == total_tests) ? 0 : 1;

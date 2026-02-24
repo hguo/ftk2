@@ -57,8 +57,10 @@ void verify_parity(std::shared_ptr<RegularSimplicialMesh> mesh,
     gpu_engine.execute_cuda(data, vars);
     auto gpu_complex = gpu_engine.get_complex();
 
-    std::cout << "  CPU: Nodes=" << cpu_complex.vertices.size() << ", Cells=" << (cpu_complex.connectivity.empty() ? 0 : cpu_complex.connectivity[0].indices.size()/(cpu_complex.connectivity[0].dimension+1)) << std::endl;
-    std::cout << "  GPU: Nodes=" << gpu_complex.vertices.size() << ", Cells=" << (gpu_complex.connectivity.empty() ? 0 : gpu_complex.connectivity[0].indices.size()/(gpu_complex.connectivity[0].dimension+1)) << std::endl;
+    if (cpu_complex.vertices.size() != gpu_complex.vertices.size()) {
+        std::cerr << "  CPU: Nodes=" << cpu_complex.vertices.size() << ", Cells=" << (cpu_complex.connectivity.empty() ? 0 : cpu_complex.connectivity[0].indices.size()/(cpu_complex.connectivity[0].dimension+1)) << std::endl;
+        std::cerr << "  GPU: Nodes=" << gpu_complex.vertices.size() << ", Cells=" << (gpu_complex.connectivity.empty() ? 0 : gpu_complex.connectivity[0].indices.size()/(gpu_complex.connectivity[0].dimension+1)) << std::endl;
+    }
 
     // 3. Compare Results
     ASSERT_EQ(cpu_complex.vertices.size(), gpu_complex.vertices.size());

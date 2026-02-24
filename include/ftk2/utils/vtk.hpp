@@ -14,8 +14,9 @@
 #include <vtkDoubleArray.h>
 #include <vtkIntArray.h>
 #include <vtkPointData.h>
-#include <vtkCellType.h>
-#include <cstdlib>
+#include <vtkXMLUnstructuredGridReader.h>
+#include <vtkCell.h>
+#include <ftk2/core/unstructured_mesh.hpp>
 
 namespace ftk2 {
 
@@ -143,6 +144,38 @@ inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh
         writer->SetCompressorTypeToNone();
     }
     writer->Write();
+}
+
+/**
+ * @brief Read an unstructured simplicial mesh from a VTU file.
+ */
+inline std::shared_ptr<UnstructuredSimplicialMesh> read_vtu(const std::string& filename) {
+    auto reader = vtkSmartPointer<vtkXMLUnstructuredGridReader>::New();
+    reader->SetFileName(filename.c_str());
+    reader->Update();
+    auto grid = reader->GetOutput();
+    if (!grid) return nullptr;
+
+    int n_pts = grid->GetNumberOfPoints();
+    std::vector<double> coords(n_pts * 3);
+    for (int i = 0; i < n_pts; ++i) {
+        grid->GetPoint(i, &coords[i * 3]);
+    }
+
+    int n_cells = grid->GetNumberOfCells();
+    std::vector<uint64_t> cells;
+    int cell_dim = 0;
+    for (int i = 0; i < n_cells; ++i) {
+        auto cell = grid->GetCell(i);
+        if (cell->GetCellType() == VTK_TRIANGLE) cell_dim = 2;
+        else if (cell->GetCellType() == VTK_TETRA) cell_dim = 3;
+        else continue; // Skip non-simplicial cells
+        
+        for (int j = 0; j < cell->GetNumberOfPoints(); ++j) {
+            cells.push_back(cell->GetPointId(j));
+        }
+    }
+    return std::make_shared<UnstructuredSimplicialMesh>(3, cell_dim, coords, cells);
 }
 
 } // namespace ftk2

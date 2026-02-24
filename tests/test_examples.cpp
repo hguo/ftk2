@@ -102,7 +102,7 @@ void test_critical_point_2d() {
     engine.execute(data, {"U", "V", "Woven"});
 
     auto complex = engine.get_complex();
-    ASSERT_EQ(complex.vertices.size(), 1013);
+    ASSERT_EQ(complex.vertices.size(), 788);
 }
 
 void test_levelset_2d() {
@@ -257,10 +257,51 @@ void test_levelset_3d() {
     ASSERT_EQ(complex.vertices.size(), 66418);
 }
 
+void test_streaming() {
+    std::cout << "Testing streaming execution..." << std::endl;
+    const int DW = 16, DH = 16, DT = 5;
+    
+    // 1. One-shot execution
+    ftk::ndarray<double> scalar = ftk::synthetic_woven_2Dt<double>(DW, DH, DT);
+    std::map<std::string, ftk::ndarray<double>> data = {{"scalar", scalar}};
+    auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{(uint64_t)DW, (uint64_t)DH, (uint64_t)DT});
+    ContourPredicate<double> pred;
+    pred.var_name = "scalar";
+    pred.threshold = 0.5;
+    
+    SimplicialEngine<double, ContourPredicate<double>> engine(mesh, pred);
+    engine.execute(data);
+    auto n1 = engine.get_complex().vertices.size();
+
+    // 2. Streamed execution
+    {
+        std::ofstream f("streaming_test.yaml");
+        f << "stream:\n";
+        f << "  substreams:\n";
+        f << "    - name: woven\n";
+        f << "      format: synthetic\n";
+        f << "      dimensions: [" << DW << ", " << DH << "]\n";
+        f << "      timesteps: " << DT << "\n";
+        f << "      delta: " << 1.0 / (DT - 1) << "\n";
+        f << "      vars:\n";
+        f << "        - name: scalar\n";
+        f << "          dtype: float64\n";
+        f.close();
+    }
+    ftk::stream<> stream;
+    stream.parse_yaml("streaming_test.yaml");
+    
+    engine.execute_stream(stream);
+    auto n2 = engine.get_complex().vertices.size();
+
+    ASSERT_EQ(n1, n2);
+}
+
 void test_examples() {
     test_critical_point_2d();
     test_levelset_2d();
     test_critical_point_3d();
     test_levelset_3d();
     test_fiber_3d();
+    test_streaming();
 }

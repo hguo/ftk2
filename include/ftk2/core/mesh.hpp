@@ -137,7 +137,7 @@ public:
 
         uint64_t n_v = get_num_vertices();
         
-        ftk2::parallel_for(uint64_t(0), n_v, [&](uint64_t v_idx) {
+        ftk2::parallel_for(uint64_t(0), n_v, [&](uint64_t v_idx, int tid) {
             auto l0 = get_vertex_coords_local(v_idx);
             std::vector<uint64_t> g0 = l0; for(int i=0; i<d; ++i) g0[i] += offset_[i];
             uint64_t v0 = grid_index_to_id(g0);
@@ -148,7 +148,10 @@ public:
                     Simplex s; s.dimension = k; s.vertices[0] = v0;
                     for (int i = 0; i < k; ++i) {
                         std::vector<uint64_t> gi = g0; bool in = true;
-                        for (int j = 0; j < d; ++j) { gi[j] += (chain[i] >> j) & 1; if (gi[j] >= global_dims_[j]) in = false; }
+                        for (int j = 0; j < d; ++j) { 
+                            gi[j] += (chain[i] >> j) & 1; 
+                            if (gi[j] >= offset_[j] + dims_[j]) in = false; 
+                        }
                         if (!in) return;
                         s.vertices[i + 1] = grid_index_to_id(gi);
                     }
@@ -264,9 +267,31 @@ public:
         return coords;
     }
 
-    void id_to_coords(uint64_t id, uint64_t coords[4]) const {
-        std::vector<uint64_t> g = id_to_grid_index(id);
-        for(int i=0; i<4; ++i) coords[i] = (i < g.size()) ? g[i] : 0;
+    FTK_HOST_DEVICE void id_to_coords(uint64_t id, uint64_t coords[4]) const {
+        for (int i = 0; i < 4; ++i) coords[i] = 0;
+#ifndef __CUDA_ARCH__
+        uint64_t temp_id = id;
+        for (size_t i = 0; i < global_dims_.size(); ++i) {
+            coords[i] = temp_id % global_dims_[i];
+            temp_id /= global_dims_[i];
+        }
+#else
+        (void)id; // Suppress unused warning on device
+#endif
+    }
+
+    FTK_HOST_DEVICE uint64_t grid_index_to_id(const uint64_t g[4]) const {
+        uint64_t id = 0;
+#ifndef __CUDA_ARCH__
+        uint64_t multiplier = 1;
+        for (size_t i = 0; i < global_dims_.size(); ++i) {
+            id += g[i] * multiplier;
+            multiplier *= global_dims_[i];
+        }
+#else
+        (void)g; // Suppress unused warning on device
+#endif
+        return id;
     }
 
 protected:
@@ -302,18 +327,77 @@ private:
     std::vector<uint64_t> dims_, offset_, global_dims_;
 };
 
+/**
+ * @brief Represents a mesh extruded in time.
+ */
 class ExtrudedSimplicialMesh : public Mesh {
 public:
     ExtrudedSimplicialMesh(std::shared_ptr<Mesh> base_mesh, uint64_t n_layers = 0) 
-        : base_mesh_(base_mesh), n_layers_(n_layers) {}
+        : base_mesh_(base_mesh), n_layers_(n_layers) 
+    {
+        n_spatial_verts_ = 0;
+        // Optimization: Find max vertex ID in base mesh if needed, or assume it's compact.
+        // For RegularSimplicialMesh, we can use get_num_vertices().
+        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(base_mesh_);
+        if (reg_mesh) n_spatial_verts_ = reg_mesh->grid_index_to_id(reg_mesh->get_global_dims());
+        else {
+            // For unstructured mesh, find max vertex index
+            base_mesh_->iterate_simplices(0, [&](const Simplex& s) {
+                if (s.vertices[0] + 1 > n_spatial_verts_) n_spatial_verts_ = s.vertices[0] + 1;
+            });
+        }
+    }
+
     int get_spatial_dimension() const override { return base_mesh_->get_spatial_dimension(); }
     int get_total_dimension() const override { return base_mesh_->get_total_dimension() + 1; }
-    void iterate_simplices(int k, std::function<void(const Simplex&)> callback) const override {}
+
+    void iterate_simplices(int k, std::function<void(const Simplex&)> callback) const override {
+        int d_spatial = base_mesh_->get_total_dimension();
+        if (k < 0 || k > d_spatial + 1) return;
+
+        // 1. Purely spatial simplices at each timestep
+        for (uint64_t t = 0; t <= n_layers_; ++t) {
+            base_mesh_->iterate_simplices(k, [&](const Simplex& s_spatial) {
+                Simplex s = s_spatial;
+                for (int i = 0; i <= k; ++i) s.vertices[i] += t * n_spatial_verts_;
+                callback(s);
+            });
+        }
+
+        // 2. Spacetime simplices connecting t and t+1
+        if (k > 0) {
+            for (uint64_t t = 0; t < n_layers_; ++t) {
+                base_mesh_->iterate_simplices(k - 1, [&](const Simplex& s_spatial) {
+                    // Kuhn subdivision of (k-1)-simplex * [t, t+1] gives k simplices of dim k
+                    // Spatial vertices are sorted: v0 < v1 < ... < vk-1
+                    for (int j = 0; j < k; ++j) {
+                        Simplex s; s.dimension = k;
+                        // Vertices at time t: v0, ..., vj
+                        for (int l = 0; l <= j; ++l) s.vertices[l] = s_spatial.vertices[l] + t * n_spatial_verts_;
+                        // Vertices at time t+1: vj, ..., vk-1
+                        for (int l = j; l < k; ++l) s.vertices[l + 1] = s_spatial.vertices[l] + (t + 1) * n_spatial_verts_;
+                        s.sort_vertices();
+                        callback(s);
+                    }
+                });
+            }
+        }
+    }
+
     void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
-    std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override { return {}; }
+
+    std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
+        uint64_t t = vertex_id / n_spatial_verts_;
+        uint64_t v = vertex_id % n_spatial_verts_;
+        std::vector<double> coords = base_mesh_->get_vertex_coordinates(v);
+        coords.push_back(static_cast<double>(t));
+        return coords;
+    }
+
 private:
     std::shared_ptr<Mesh> base_mesh_;
     uint64_t n_layers_;
+    uint64_t n_spatial_verts_;
 };
 
 inline std::shared_ptr<Mesh> Mesh::extrude(uint64_t n_layers) {
@@ -339,6 +423,9 @@ public:
     static std::unique_ptr<Mesh> create_regular_mesh(const std::vector<uint64_t>& local_dims, 
                                                    const std::vector<uint64_t>& offset = {},
                                                    const std::vector<uint64_t>& global_dims = {});
+    static std::unique_ptr<Mesh> create_unstructured_mesh(int spatial_dim, int cell_dim,
+                                                        const std::vector<double>& coords,
+                                                        const std::vector<uint64_t>& cells);
     static std::unique_ptr<Mesh> create_extruded_mesh(std::shared_ptr<Mesh> base_mesh, uint64_t n_layers = 0);
 };
 

@@ -63,7 +63,7 @@ void marching_tetrahedron_device(
         uint64_t coords[4];
         mesh.id_to_coords(cell.vertices[i], coords);
         vals[i] = data[0].f(coords[0], coords[1], coords[2], coords[3]) - pred.threshold;
-        if (sos::sign(vals[i], cell.vertices[i]) > 0) A[nA++] = i;
+        if (sos::sign(vals[i], cell.vertices[i], pred.sos_q) > 0) A[nA++] = i;
         else B[nB++] = i;
     }
 
@@ -131,7 +131,7 @@ void marching_pentatope_device(
         uint64_t coords[4];
         mesh.id_to_coords(cell.vertices[i], coords);
         vals[i] = data[0].f(coords[0], coords[1], coords[2], coords[3]) - pred.threshold;
-        if (sos::sign(vals[i], cell.vertices[i]) > 0) A[nA++] = i;
+        if (sos::sign(vals[i], cell.vertices[i], pred.sos_q) > 0) A[nA++] = i;
         else B[nB++] = i;
     }
 
@@ -198,13 +198,15 @@ __global__ void extraction_kernel(
     uint64_t v0 = mesh.coords_to_id(global_coords);
 
     // 1. Extract nodes on m-simplices
-    // Iterative chain-based discovery (matching RegularSimplicialMesh::iterate_simplices)
     if (m == 1) {
         for (int m1 = 1; m1 < (1 << d); ++m1) {
-            uint64_t gi_c[4] = {0}; bool in = true;
-            for (int j = 0; j < d; ++j) { gi_c[j] = global_coords[j] + ((m1 >> j) & 1); if (gi_c[j] >= mesh.global_dims[j]) in = false; }
+            uint64_t g1[4]; bool in = true;
+            for (int j = 0; j < d; ++j) { 
+                g1[j] = global_coords[j] + ((m1 >> j) & 1); 
+                if (g1[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false; 
+            }
             if (in) {
-                Simplex s; s.dimension = 1; s.vertices[0] = v0; s.vertices[1] = mesh.coords_to_id(gi_c);
+                Simplex s; s.dimension = 1; s.vertices[0] = v0; s.vertices[1] = mesh.coords_to_id(g1);
                 s.sort_vertices();
                 if (s.vertices[0] == v0) {
                     FeatureElement el;
@@ -219,16 +221,16 @@ __global__ void extraction_kernel(
         for (int m1 = 1; m1 < (1 << d); ++m1) {
             for (int m2 = m1 + 1; m2 < (1 << d); ++m2) {
                 if ((m1 & m2) == m1) {
-                    uint64_t g1_c[4] = {0}, g2_c[4] = {0}; bool in = true;
+                    uint64_t g1[4], g2[4]; bool in = true;
                     for (int j = 0; j < d; ++j) {
-                        g1_c[j] = global_coords[j] + ((m1 >> j) & 1);
-                        g2_c[j] = global_coords[j] + ((m2 >> j) & 1);
-                        if (g1_c[j] >= mesh.global_dims[j] || g2_c[j] >= mesh.global_dims[j]) in = false;
+                        g1[j] = global_coords[j] + ((m1 >> j) & 1);
+                        g2[j] = global_coords[j] + ((m2 >> j) & 1);
+                        if (g1[j] >= mesh.offset[j] + mesh.local_dims[j] || g2[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false;
                     }
                     if (in) {
                         Simplex s; s.dimension = 2; s.vertices[0] = v0;
-                        s.vertices[1] = mesh.coords_to_id(g1_c);
-                        s.vertices[2] = mesh.coords_to_id(g2_c);
+                        s.vertices[1] = mesh.coords_to_id(g1);
+                        s.vertices[2] = mesh.coords_to_id(g2);
                         s.sort_vertices();
                         if (s.vertices[0] == v0) {
                             FeatureElement el;
@@ -247,18 +249,20 @@ __global__ void extraction_kernel(
                 if ((m1 & m2) == m1) {
                     for (int m3 = m2 + 1; m3 < (1 << d); ++m3) {
                         if ((m2 & m3) == m2) {
-                            uint64_t g1_c[4] = {0}, g2_c[4] = {0}, g3_c[4] = {0}; bool in = true;
+                            uint64_t g1[4], g2[4], g3[4]; bool in = true;
                             for (int j = 0; j < d; ++j) {
-                                g1_c[j] = global_coords[j] + ((m1 >> j) & 1);
-                                g2_c[j] = global_coords[j] + ((m2 >> j) & 1);
-                                g3_c[j] = global_coords[j] + ((m3 >> j) & 1);
-                                if (g1_c[j] >= mesh.global_dims[j] || g2_c[j] >= mesh.global_dims[j] || g3_c[j] >= mesh.global_dims[j]) in = false;
+                                g1[j] = global_coords[j] + ((m1 >> j) & 1);
+                                g2[j] = global_coords[j] + ((m2 >> j) & 1);
+                                g3[j] = global_coords[j] + ((m3 >> j) & 1);
+                                if (g1[j] >= mesh.offset[j] + mesh.local_dims[j] || 
+                                    g2[j] >= mesh.offset[j] + mesh.local_dims[j] || 
+                                    g3[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false;
                             }
                             if (in) {
                                 Simplex s; s.dimension = 3; s.vertices[0] = v0;
-                                s.vertices[1] = mesh.coords_to_id(g1_c);
-                                s.vertices[2] = mesh.coords_to_id(g2_c);
-                                s.vertices[3] = mesh.coords_to_id(g3_c);
+                                s.vertices[1] = mesh.coords_to_id(g1);
+                                s.vertices[2] = mesh.coords_to_id(g2);
+                                s.vertices[3] = mesh.coords_to_id(g3);
                                 s.sort_vertices();
                                 if (s.vertices[0] == v0) {
                                     FeatureElement el;
@@ -345,7 +349,6 @@ __global__ void extraction_kernel(
                             }
                             if (count_T < 2) continue;
                             
-                            // nodes_T is already sorted because node_ids is sorted
                             uint64_t h_T = nodes_T[0];
                             for (int j = 1; j < count_T; ++j) {
                                 uint64_t n_id = nodes_T[j];
