@@ -547,17 +547,14 @@ private:
             IDType node_id;
             bool found = false;
             
-            if (active_nodes_.count(f)) {
-                node_id = active_nodes_.at(f);
-                found = true;
-            } else {
-                FeatureElement el;
-                if (extract_simplex(f, data, el, mesh)) {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    if (active_nodes_.count(f)) {
-                        node_id = active_nodes_.at(f);
-                        found = true;
-                    } else {
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                if (active_nodes_.count(f)) {
+                    node_id = active_nodes_.at(f);
+                    found = true;
+                } else {
+                    FeatureElement el;
+                    if (extract_simplex(f, data, el, mesh)) {
                         node_id = uf_.add();
                         active_nodes_[f] = node_id;
                         node_elements_[node_id] = el;
@@ -567,18 +564,20 @@ private:
                 }
             }
 
-            if (found && reg_mesh) {
-                nodes.push_back({node_id, encode_simplex_id(f, *reg_mesh), f});
+            if (found) {
+                uint64_t code = reg_mesh ? encode_simplex_id(f, *reg_mesh) : 0;
+                nodes.push_back({node_id, code, f});
             }
         });
         if (nodes.empty()) return;
         
         if (reg_mesh) {
             std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) { return a.code < b.code; });
+        } else {
+            std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) { return a.id < b.id; });
         }
         
         IDType h_S = nodes[0].id;
-        uint64_t h_S_code = reg_mesh ? nodes[0].code : 0;
 
         if (k == 1) {
             for (size_t i = 1; i < nodes.size(); ++i) {
@@ -602,14 +601,10 @@ private:
                 
                 if (nodes_T.size() < 2) continue;
                 IDType h_T = nodes_T[0].id;
-                uint64_t h_T_code = reg_mesh ? nodes_T[0].code : 0;
                 
                 for (size_t j = 1; j < nodes_T.size(); ++j) {
                     IDType n_id = nodes_T[j].id;
-                    uint64_t n_code = reg_mesh ? nodes_T[j].code : 0;
-                    
-                    bool different = reg_mesh ? (h_S_code != h_T_code && h_S_code != n_code) : (h_S != h_T && h_S != n_id);
-                    if (different) {
+                    if (h_S != h_T && h_S != n_id) {
                         std::vector<IDType> tri = {h_S, h_T, n_id};
                         std::sort(tri.begin(), tri.end());
                         local.dim2.push_back(tri);

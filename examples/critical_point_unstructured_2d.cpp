@@ -48,11 +48,14 @@ int main(int argc, char** argv) {
         double x = coords[0], y = coords[1], t = coords[2];
         
         // Define a critical point moving in a circle: cx(t), cy(t)
+        // 1x1.vtu bounds are roughly [0, 1] x [0, 1]. 
+        // We pick a trajectory well within the interior.
         double phase = t * (2.0 * M_PI / (n_timesteps - 1));
-        double cx = 0.5 + 0.2 * std::cos(phase);
-        double cy = 0.5 + 0.2 * std::sin(phase);
+        double cx = 0.5 + 0.25 * std::cos(phase);
+        double cy = 0.5 + 0.25 * std::sin(phase);
         
         // Simple linear field: (u, v) = (x - cx, y - cy)
+        // This has a single isolated critical point at (cx, cy)
         u[i] = x - cx;
         v[i] = y - cy;
     }

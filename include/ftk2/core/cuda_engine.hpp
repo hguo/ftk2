@@ -204,6 +204,7 @@ __global__ void extraction_kernel(
             for (int j = 0; j < d; ++j) { 
                 g1[j] = global_coords[j] + ((m1 >> j) & 1); 
                 if (g1[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false; 
+                if (g1[j] < mesh.offset[j]) in = false;
             }
             if (in) {
                 Simplex s; s.dimension = 1; s.vertices[0] = v0; s.vertices[1] = mesh.coords_to_id(g1);
@@ -226,6 +227,7 @@ __global__ void extraction_kernel(
                         g1[j] = global_coords[j] + ((m1 >> j) & 1);
                         g2[j] = global_coords[j] + ((m2 >> j) & 1);
                         if (g1[j] >= mesh.offset[j] + mesh.local_dims[j] || g2[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false;
+                        if (g1[j] < mesh.offset[j] || g2[j] < mesh.offset[j]) in = false;
                     }
                     if (in) {
                         Simplex s; s.dimension = 2; s.vertices[0] = v0;
@@ -257,6 +259,7 @@ __global__ void extraction_kernel(
                                 if (g1[j] >= mesh.offset[j] + mesh.local_dims[j] || 
                                     g2[j] >= mesh.offset[j] + mesh.local_dims[j] || 
                                     g3[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false;
+                                if (g1[j] < mesh.offset[j] || g2[j] < mesh.offset[j] || g3[j] < mesh.offset[j]) in = false;
                             }
                             if (in) {
                                 Simplex s; s.dimension = 3; s.vertices[0] = v0;
