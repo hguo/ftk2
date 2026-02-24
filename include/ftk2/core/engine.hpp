@@ -19,6 +19,7 @@
 #include <ftk2/core/cuda_engine.hpp>
 #include <cuda_runtime.h>
 
+#ifndef CUDA_CHECK
 #define CUDA_CHECK(call) \
     do { \
         cudaError_t err = call; \
@@ -27,6 +28,7 @@
             exit(EXIT_FAILURE); \
         } \
     } while (0)
+#endif
 #endif
 
 namespace ftk2 {
@@ -224,16 +226,12 @@ public:
 
             if (h_node_count > max_nodes || actual_max_conn > max_conn) {
                 std::cout << "CUDA Warning: Buffer overflow detected. Retrying with required capacity..." << std::endl;
-                std::cout << "  Required Nodes: " << h_node_count << " (Available: " << max_nodes << ")" << std::endl;
-                std::cout << "  Required Conn:  " << actual_max_conn << " (Available: " << max_conn << ")" << std::endl;
-                
                 max_nodes = h_node_count + 1000; max_conn = actual_max_conn + 1000;
                 
                 CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
                 CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count));
                 CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count));
                 CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
-                // loop continues
             } else {
                 buffer_overflow = false;
             }
@@ -365,7 +363,7 @@ private:
             std::vector<IDType> nodes;
             for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
             if (nodes.size() == 4) { 
-                manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]}); manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); 
+                manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); manifold_simplices_[2].push_back({nodes[0], nodes[3], nodes[1]}); 
                 for (int i=1; i<4; ++i) uf_.unite(nodes[0], nodes[i]);
             }
         }
