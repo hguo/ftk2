@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <limits>
 
 using namespace ftk2;
 
@@ -29,55 +30,55 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Print mesh bounds for verification
+    double min_x = std::numeric_limits<double>::max(), max_x = std::numeric_limits<double>::lowest();
+    double min_y = std::numeric_limits<double>::max(), max_y = std::numeric_limits<double>::lowest();
+    base_mesh->iterate_simplices(0, [&](const Simplex& s) {
+        auto coords = base_mesh->get_vertex_coordinates(s.vertices[0]);
+        min_x = std::min(min_x, coords[0]); max_x = std::max(max_x, coords[0]);
+        min_y = std::min(min_y, coords[1]); max_y = std::max(max_y, coords[1]);
+    });
+    std::cout << "Mesh bounds: X=[" << min_x << ", " << max_x << "], Y=[" << min_y << ", " << max_y << "]" << std::endl;
+
     std::cout << "Extruding mesh for " << n_timesteps << " timesteps..." << std::endl;
-    // Extrude creates a 3D spacetime mesh (2D space + 1D time)
     auto mesh = std::make_shared<ExtrudedSimplicialMesh>(base_mesh, n_timesteps - 1);
 
-    // Count total vertices in spacetime mesh
     int n_total_verts = 0;
     mesh->iterate_simplices(0, [&](const Simplex& s) { n_total_verts++; });
 
     std::cout << "Generating synthetic vector field (U, V) on " << n_total_verts << " vertices..." << std::endl;
-    // Create 1D ndarrays indexed by vertex ID
     ftk::ndarray<double> u, v;
     u.reshapef({(size_t)n_total_verts});
     v.reshapef({(size_t)n_total_verts});
     
     for (int i = 0; i < n_total_verts; ++i) {
         auto coords = mesh->get_vertex_coordinates(i);
-        double x = coords[0], y = coords[1], t = coords[2];
+        double x = coords[0], y = coords[1];
+        double t = coords.back(); // Last component is always time in ExtrudedSimplicialMesh
         
-        // Define a critical point moving in a circle: cx(t), cy(t)
-        // 1x1.vtu bounds are roughly [0, 1] x [0, 1]. 
-        // We pick a trajectory well within the interior.
+        // Define a critical point moving in a small circle well within the interior
         double phase = t * (2.0 * M_PI / (n_timesteps - 1));
-        double cx = 0.5 + 0.25 * std::cos(phase);
-        double cy = 0.5 + 0.25 * std::sin(phase);
+        double cx = 0.5 + 0.2 * std::cos(phase);
+        double cy = 0.5 + 0.2 * std::sin(phase);
         
         // Simple linear field: (u, v) = (x - cx, y - cy)
-        // This has a single isolated critical point at (cx, cy)
         u[i] = x - cx;
         v[i] = y - cy;
     }
 
     std::map<std::string, ftk::ndarray<double>> data = {{"U", u}, {"V", v}};
 
-    // Set up the Critical Point Predicate (m=2 for points in 3D spacetime)
     CriticalPointPredicate<2, double> cp_pred;
     cp_pred.var_names[0] = "U";
     cp_pred.var_names[1] = "V";
-    cp_pred.sos_q = 1e6; // Default quantization
 
-    // Initialize and run the Simplicial Engine
     SimplicialEngine<double, CriticalPointPredicate<2, double>> engine(mesh, cp_pred);
     
     std::cout << "Tracking critical points..." << std::endl;
     engine.execute(data);
 
-    // Extract the resulting feature complex
     auto complex = engine.get_complex();
     
-    // Output tracks (dimension 1 manifold in 3D spacetime)
     std::string out_vtu = "cp_unstructured_2d.vtu";
     std::cout << "Writing tracks to " << out_vtu << "..." << std::endl;
     write_complex_to_vtu(complex, *mesh, out_vtu, 1);

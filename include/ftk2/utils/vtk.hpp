@@ -175,7 +175,7 @@ inline std::shared_ptr<UnstructuredSimplicialMesh> read_vtu(const std::string& f
             cells.push_back(cell->GetPointId(j));
         }
     }
-    return std::make_shared<UnstructuredSimplicialMesh>(3, cell_dim, coords, cells);
+    return std::make_shared<UnstructuredSimplicialMesh>(cell_dim, cell_dim, coords, cells);
 }
 
 } // namespace ftk2
