@@ -335,16 +335,40 @@ private:
             T values[3][2];
             for (int i = 0; i < 3; ++i) {
                 auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
-                for (int j = 0; j < 2; ++j) values[i][j] = data.at(predicate_.var_names[j]).f(coords[0], coords[1], coords[2], coords[3]);
+                for (int j = 0; j < 2; ++j) {
+                    const auto& arr = data.at(predicate_.var_names[j]);
+                    if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
+                    else if (coords.size() == 3) values[i][j] = arr.f(coords[0], coords[1], coords[2]);
+                    else if (coords.size() == 4) values[i][j] = arr.f(coords[0], coords[1], coords[2], coords[3]);
+                }
             }
             return predicate_.extract_it(s, values, el);
         } else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) {
             T values[2][1];
             for (int i = 0; i < 2; ++i) {
                 auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
-                values[i][0] = data.at(predicate_.var_name).f(coords[0], coords[1], coords[2], coords[3]);
+                const auto& arr = data.at(predicate_.var_name);
+                if (coords.size() == 2) values[i][0] = arr.f(coords[0], coords[1]);
+                else if (coords.size() == 3) values[i][0] = arr.f(coords[0], coords[1], coords[2]);
+                else if (coords.size() == 4) values[i][0] = arr.f(coords[0], coords[1], coords[2], coords[3]);
             }
             return predicate_.extract_it(s, values, el);
+        } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
+            T values[m+1][m];
+            for (int i = 0; i <= m; ++i) {
+                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
+                for (int j = 0; j < m; ++j) {
+                    const auto& arr = data.at(predicate_.var_names[j]);
+                    if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
+                    else if (coords.size() == 3) values[i][j] = arr.f(coords[0], coords[1], coords[2]);
+                    else if (coords.size() == 4) values[i][j] = arr.f(coords[0], coords[1], coords[2], coords[3]);
+                }
+            }
+            std::vector<const ftk::ndarray<T>*> arrays_ptrs;
+            for(int k=0; k<m; ++k) arrays_ptrs.push_back(&data.at(predicate_.var_names[k]));
+            if (!predicate_.scalar_var_name.empty()) arrays_ptrs.push_back(&data.at(predicate_.scalar_var_name));
+            
+            return predicate_.extract_it(s, values, el, arrays_ptrs, mesh_.get());
         }
         return false;
     }
