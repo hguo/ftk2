@@ -65,7 +65,7 @@ inline vtkSmartPointer<vtkPoints> complex_to_vtk_points(const FeatureComplex& co
 /**
  * @brief Write a feature complex to a VTK PolyData file (.vtp).
  */
-inline void write_complex_to_vtp(const FeatureComplex& complex, const Mesh& mesh, const std::string& filename, int target_dim = -1) {
+inline void write_complex_to_vtp(const FeatureComplex& complex, const Mesh& mesh, const std::string& filename, int target_dim = -1, bool use_ascii = false) {
     auto polydata = vtkSmartPointer<vtkPolyData>::New();
     polydata->SetPoints(complex_to_vtk_points(complex, mesh, polydata->GetPointData()));
 
@@ -94,7 +94,7 @@ inline void write_complex_to_vtp(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLPolyDataWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(polydata);
-    if (std::getenv("FTK_DEBUG")) {
+    if (use_ascii || std::getenv("FTK_DEBUG")) {
         writer->SetDataModeToAscii();
     } else {
         writer->SetDataModeToAppended();
@@ -107,7 +107,7 @@ inline void write_complex_to_vtp(const FeatureComplex& complex, const Mesh& mesh
 /**
  * @brief Write a feature complex to a VTK UnstructuredGrid file (.vtu).
  */
-inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh, const std::string& filename, int target_dim = -1) {
+inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh, const std::string& filename, int target_dim = -1, bool use_ascii = false) {
     auto grid = vtkSmartPointer<vtkUnstructuredGrid>::New();
     grid->SetPoints(complex_to_vtk_points(complex, mesh, grid->GetPointData()));
 
@@ -135,7 +135,7 @@ inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(grid);
-    if (std::getenv("FTK_DEBUG")) {
+    if (use_ascii || std::getenv("FTK_DEBUG")) {
         writer->SetDataModeToAscii();
     } else {
         writer->SetDataModeToAppended();
