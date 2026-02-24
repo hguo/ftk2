@@ -17,6 +17,8 @@ endif()
 # Find ndarray (use -Dndarray_DIR=... or -DCMAKE_PREFIX_PATH=... to specify the path)
 find_package(ndarray REQUIRED)
 
+find_package(OpenMP REQUIRED)
+
 # FTK2 library
 add_library(ftk2 STATIC 
     src/core/mesh.cpp
@@ -25,7 +27,7 @@ target_include_directories(ftk2 PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(ftk2 PUBLIC ndarray::ndarray)
+target_link_libraries(ftk2 PUBLIC ndarray::ndarray OpenMP::OpenMP_CXX)
 
 # Tests
 enable_testing()

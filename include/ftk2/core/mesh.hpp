@@ -9,6 +9,7 @@
 #include <set>
 #include <unordered_set>
 #include <iostream>
+#include <ftk2/core/parallel.hpp>
 
 #ifdef __CUDACC__
 #define FTK_HOST_DEVICE __host__ __device__
@@ -135,7 +136,8 @@ public:
         if (k > d) return;
 
         uint64_t n_v = get_num_vertices();
-        for (uint64_t v_idx = 0; v_idx < n_v; ++v_idx) {
+        
+        ftk2::parallel_for(uint64_t(0), n_v, [&](uint64_t v_idx) {
             auto l0 = get_vertex_coords_local(v_idx);
             std::vector<uint64_t> g0 = l0; for(int i=0; i<d; ++i) g0[i] += offset_[i];
             uint64_t v0 = grid_index_to_id(g0);
@@ -164,7 +166,7 @@ public:
             };
             std::vector<int> chain;
             gen(0, 0, chain);
-        }
+        });
     }
 
     void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}

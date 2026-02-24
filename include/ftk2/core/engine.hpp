@@ -16,6 +16,7 @@
 #include <chrono>
 #include <numeric>
 #include <functional>
+#include <mutex>
 
 #if FTK_HAVE_CUDA && defined(__CUDACC__)
 #include <ftk2/core/cuda_engine.hpp>
@@ -104,9 +105,13 @@ public:
 
         // 1. Discover all active nodes
         std::vector<FeatureElement> elements;
+        std::mutex mutex;
         mesh_->iterate_simplices(m, [&](const Simplex& s) {
             FeatureElement el;
-            if (extract_simplex(s, data, el)) elements.push_back(el);
+            if (extract_simplex(s, data, el)) {
+                std::lock_guard<std::mutex> lock(mutex);
+                elements.push_back(el);
+            }
         });
         
         std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });

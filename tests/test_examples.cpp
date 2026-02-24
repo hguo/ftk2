@@ -1,9 +1,11 @@
 #include <iostream>
+#include <fstream>
 #include <ftk2/core/mesh.hpp>
 #include <ftk2/core/engine.hpp>
 #include <ftk2/core/predicate.hpp>
 #include <ndarray/ndarray.hh>
 #include <ndarray/synthetic.hh>
+#include <ndarray/ndarray_stream.hh>
 #include <map>
 #include <vector>
 #include <string>
@@ -38,7 +40,38 @@ extern int passed_tests;
 void test_critical_point_2d() {
     std::cout << "Testing critical_point_2d example..." << std::endl;
     const int DW = 16, DH = 16, DT = 5;
-    ftk::ndarray<double> scalar = ftk::synthetic_woven_2Dt<double>(DW, DH, DT);
+    
+    // Create YAML configuration for woven data
+    {
+        std::ofstream f("woven_test.yaml");
+        f << "stream:\n";
+        f << "  substreams:\n";
+        f << "    - name: woven\n";
+        f << "      format: synthetic\n";
+        f << "      dimensions: [" << DW << ", " << DH << "]\n";
+        f << "      timesteps: " << DT << "\n";
+        f << "      delta: " << 1.0 / (DT - 1) << "\n"; // Match synthetic_woven_2Dt logic
+        f << "      vars:\n";
+        f << "        - name: scalar\n";
+        f << "          dtype: float64\n";
+        f.close();
+    }
+
+    ftk::stream<> stream;
+    stream.parse_yaml("woven_test.yaml");
+
+    ftk::ndarray<double> scalar({(size_t)DW, (size_t)DH, (size_t)DT});
+    
+    // Read stream into scalar array
+    for (int t = 0; t < DT; ++t) {
+        auto group = stream.read(t);
+        const auto& s_t = group->get_ref<double>("scalar");
+        for (int y = 0; y < DH; ++y) {
+            for (int x = 0; x < DW; ++x) {
+                scalar.f(x, y, t) = s_t.f(x, y);
+            }
+        }
+    }
 
     ftk::ndarray<double> u({(size_t)DW, (size_t)DH, (size_t)DT}), v({(size_t)DW, (size_t)DH, (size_t)DT});
     u.fill(0.0); v.fill(0.0);
@@ -75,13 +108,33 @@ void test_critical_point_2d() {
 void test_levelset_2d() {
     std::cout << "Testing levelset_2d example..." << std::endl;
     const int DW = 16, DH = 16, DT = 5;
+
+    // Create YAML configuration for merger data
+    {
+        std::ofstream f("merger_test.yaml");
+        f << "stream:\n";
+        f << "  substreams:\n";
+        f << "    - name: merger\n";
+        f << "      format: synthetic\n";
+        f << "      dimensions: [" << DW << ", " << DH << "]\n";
+        f << "      timesteps: " << DT << "\n";
+        f << "      delta: " << M_PI / (DT - 1) << "\n"; // Match levelset_2d logic
+        f << "      vars:\n";
+        f << "        - name: scalar\n";
+        f << "          dtype: float64\n";
+        f.close();
+    }
+
+    ftk::stream<> stream;
+    stream.parse_yaml("merger_test.yaml");
+
     ftk::ndarray<double> scalar({(size_t)DW, (size_t)DH, (size_t)DT});
     for (int t = 0; t < DT; ++t) {
-        double time = (double)t / (DT - 1) * M_PI;
-        auto s = ftk::synthetic_merger_2D<double>(DW, DH, time);
+        auto group = stream.read(t);
+        const auto& s_t = group->get_ref<double>("scalar");
         for (int y = 0; y < DH; ++y)
             for (int x = 0; x < DW; ++x)
-                scalar.f(x, y, t) = s.f(x, y);
+                scalar.f(x, y, t) = s_t.f(x, y);
     }
 
     std::map<std::string, ftk::ndarray<double>> data = {{"Scalar", scalar}};

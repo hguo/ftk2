@@ -15,6 +15,7 @@
 #include <vtkIntArray.h>
 #include <vtkPointData.h>
 #include <vtkCellType.h>
+#include <cstdlib>
 
 namespace ftk2 {
 
@@ -93,9 +94,13 @@ inline void write_complex_to_vtp(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLPolyDataWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(polydata);
-    writer->SetDataModeToAppended();
-    writer->SetEncodeAppendedData(0);
-    writer->SetCompressorTypeToNone();
+    if (std::getenv("FTK_DEBUG")) {
+        writer->SetDataModeToAscii();
+    } else {
+        writer->SetDataModeToAppended();
+        writer->SetEncodeAppendedData(1);
+        writer->SetCompressorTypeToNone();
+    }
     writer->Write();
 }
 
@@ -130,7 +135,13 @@ inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(grid);
-    writer->SetDataModeToAscii();
+    if (std::getenv("FTK_DEBUG")) {
+        writer->SetDataModeToAscii();
+    } else {
+        writer->SetDataModeToAppended();
+        writer->SetEncodeAppendedData(1);
+        writer->SetCompressorTypeToNone();
+    }
     writer->Write();
 }
 
