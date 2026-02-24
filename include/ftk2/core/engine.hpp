@@ -417,46 +417,41 @@ public:
     }
 
 private:
+    T get_value(const ftk::ndarray<T>& arr, uint64_t v_id, const std::vector<double>& coords, const std::vector<uint64_t>& offset) {
+        if (arr.nd() == 1) return arr[v_id];
+        
+        std::vector<double> local_coords = coords;
+        for (size_t i = 0; i < local_coords.size() && i < offset.size(); ++i) local_coords[i] -= offset[i];
+
+        if (local_coords.size() == 2) return arr.f(local_coords[0], local_coords[1]);
+        else if (local_coords.size() == 3) return arr.f(local_coords[0], local_coords[1], local_coords[2]);
+        else if (local_coords.size() == 4) return arr.f(local_coords[0], local_coords[1], local_coords[2], local_coords[3]);
+        return (T)0;
+    }
+
     bool extract_simplex(const Simplex& s, const std::map<std::string, ftk::ndarray<T>>& data, FeatureElement& el, Mesh* mesh) {
         auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
-        std::vector<uint64_t> offset;
-        if (reg_mesh) offset = reg_mesh->get_offset();
+        std::vector<uint64_t> offset = reg_mesh ? reg_mesh->get_offset() : std::vector<uint64_t>{0,0,0,0};
 
         if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
             T values[3][2];
             for (int i = 0; i < 3; ++i) {
                 auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
-                for (int j = 0; j < 2; ++j) {
-                    const auto& arr = data.at(predicate_.var_names[j]);
-                    if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
-                    else if (coords.size() == 3) values[i][j] = arr.f(coords[0], coords[1], coords[2]);
-                    else if (coords.size() == 4) values[i][j] = arr.f(coords[0], coords[1], coords[2], coords[3]);
-                }
+                for (int j = 0; j < 2; ++j) values[i][j] = get_value(data.at(predicate_.var_names[j]), s.vertices[i], coords, offset);
             }
             return predicate_.extract_it(s, values, el);
         } else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) {
             T values[2][1];
             for (int i = 0; i < 2; ++i) {
                 auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
-                const auto& arr = data.at(predicate_.var_name);
-                if (coords.size() == 2) values[i][0] = arr.f(coords[0], coords[1]);
-                else if (coords.size() == 3) values[i][0] = arr.f(coords[0], coords[1], coords[2]);
-                else if (coords.size() == 4) values[i][0] = arr.f(coords[0], coords[1], coords[2], coords[3]);
+                values[i][0] = get_value(data.at(predicate_.var_name), s.vertices[i], coords, offset);
             }
             return predicate_.extract_it(s, values, el);
         } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             T values[m+1][m];
             for (int i = 0; i <= m; ++i) {
                 auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
-                for (int j = 0; j < m; ++j) {
-                    const auto& arr = data.at(predicate_.var_names[j]);
-                    if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
-                    else if (coords.size() == 3) values[i][j] = arr.f(coords[0], coords[1], coords[2]);
-                    else if (coords.size() == 4) values[i][j] = arr.f(coords[0], coords[1], coords[2], coords[3]);
-                }
+                for (int j = 0; j < m; ++j) values[i][j] = get_value(data.at(predicate_.var_names[j]), s.vertices[i], coords, offset);
             }
             std::vector<const ftk::ndarray<T>*> arrays_ptrs;
             for(int k=0; k<m; ++k) arrays_ptrs.push_back(&data.at(predicate_.var_names[k]));
@@ -478,13 +473,11 @@ private:
         else return;
 
         auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
-        std::vector<uint64_t> offset;
-        if (reg_mesh) offset = reg_mesh->get_offset();
+        std::vector<uint64_t> offset = reg_mesh ? reg_mesh->get_offset() : std::vector<uint64_t>{0,0,0,0};
 
         for (int i=0; i<5; ++i) {
             idx[i] = cell.vertices[i]; auto coords = mesh->get_vertex_coordinates(idx[i]);
-            if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
-            vals[i] = data.at(var).f(coords[0], coords[1], coords[2], coords[3]) - threshold;
+            vals[i] = get_value(data.at(var), idx[i], coords, offset) - threshold;
             if (sos::sign(vals[i], idx[i]) > 0) A.push_back(i); else B.push_back(i);
         }
         if (A.size() == 1 || B.size() == 1) {
@@ -513,13 +506,11 @@ private:
         if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { threshold = predicate_.threshold; } else return;
         
         auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
-        std::vector<uint64_t> offset;
-        if (reg_mesh) offset = reg_mesh->get_offset();
+        std::vector<uint64_t> offset = reg_mesh ? reg_mesh->get_offset() : std::vector<uint64_t>{0,0,0,0};
 
         for (int i=0; i<4; ++i) {
             idx[i] = cell.vertices[i]; auto coords = mesh->get_vertex_coordinates(idx[i]);
-            if (reg_mesh) for(size_t k=0; k<coords.size(); ++k) coords[k] -= offset[k];
-            vals[i] = data.at(var).f(coords[0], coords[1], coords[2]) - threshold;
+            vals[i] = get_value(data.at(var), idx[i], coords, offset) - threshold;
             if (sos::sign(vals[i], idx[i]) > 0) A.push_back(i); else B.push_back(i);
         }
         if (A.size() == 1 || B.size() == 1) {
