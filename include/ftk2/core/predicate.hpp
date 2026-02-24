@@ -156,6 +156,7 @@ struct IsosurfaceIntersectionPredicate : public Predicate<2, T> {
         T adj[3][2]; for(int i=0; i<3; ++i) for(int j=0; j<2; ++j) adj[i][j] = values[i][j] - thresholds[j];
         if (!sos::origin_inside<2, T>::check(adj, indices)) return false;
         T lambda[3]; if (!ZeroCrossingSolver<2, T>::solve(adj, lambda)) { for (int i = 0; i <= 2; ++i) lambda[i] = 1.0 / 3.0; }
+        
         el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = (float)lambda[i];

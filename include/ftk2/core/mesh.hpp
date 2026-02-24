@@ -134,136 +134,37 @@ public:
         int d = get_total_dimension();
         if (k > d) return;
 
-        if (k < d) { // Optimized chain-based iteration for any k < d
-            uint64_t n_v = get_num_vertices();
-            for (uint64_t v_idx = 0; v_idx < n_v; ++v_idx) {
-                auto local_coords = get_vertex_coords_local(v_idx);
-                std::vector<uint64_t> g0 = local_coords;
-                for(int i=0; i<d; ++i) g0[i] += offset_[i];
-                uint64_t v0 = grid_index_to_id(g0);
+        uint64_t n_v = get_num_vertices();
+        for (uint64_t v_idx = 0; v_idx < n_v; ++v_idx) {
+            auto l0 = get_vertex_coords_local(v_idx);
+            std::vector<uint64_t> g0 = l0; for(int i=0; i<d; ++i) g0[i] += offset_[i];
+            uint64_t v0 = grid_index_to_id(g0);
 
-                // We need to iterate all unique k-simplices starting at v0.
-                // This corresponds to all chains 0 < M1 < M2 < ... < Mk < (1 << d).
-                // We implement this using a simple stack-based or recursive approach.
-                // For small k (1, 2, 3), we can use nested loops for clarity.
-                if (k == 1) {
-                    for (int m1 = 1; m1 < (1 << d); ++m1) {
-                        std::vector<uint64_t> g1 = g0; bool in = true;
-                        for (int i = 0; i < d; ++i) { g1[i] += (m1 >> i) & 1; if (g1[i] >= global_dims_[i]) in = false; }
-                        if (in) {
-                            Simplex s; s.dimension = 1; 
-                            uint64_t v[2]; v[0] = v0; v[1] = grid_index_to_id(g1);
-                            if (v[0] > v[1]) { uint64_t t = v[0]; v[0] = v[1]; v[1] = t; }
-                            s.vertices[0] = v[0]; s.vertices[1] = v[1];
-                            callback(s);
-                        }
+            // Generate all chains 0 < m1 < m2 < ... < mk < (1 << d)
+            std::function<void(int, int, std::vector<int>&)> gen = [&](int last_m, int depth, std::vector<int>& chain) {
+                if (depth == k) {
+                    Simplex s; s.dimension = k; s.vertices[0] = v0;
+                    for (int i = 0; i < k; ++i) {
+                        std::vector<uint64_t> gi = g0; bool in = true;
+                        for (int j = 0; j < d; ++j) { gi[j] += (chain[i] >> j) & 1; if (gi[j] >= global_dims_[j]) in = false; }
+                        if (!in) return;
+                        s.vertices[i + 1] = grid_index_to_id(gi);
                     }
-                } else if (k == 2) {
-                    for (int m1 = 1; m1 < (1 << d); ++m1) {
-                        for (int m2 = 1; m2 < (1 << d); ++m2) {
-                            if ((m1 & m2) == m1 && m1 != m2) { // Chain: 0 < m1 < m2
-                                std::vector<uint64_t> g1=g0, g2=g0; bool in = true;
-                                for (int i = 0; i < d; ++i) {
-                                    g1[i] += (m1 >> i) & 1; g2[i] += (m2 >> i) & 1;
-                                    if (g1[i] >= global_dims_[i] || g2[i] >= global_dims_[i]) in = false;
-                                }
-                                if (in) {
-                                    Simplex s; s.dimension = 2;
-                                    uint64_t v[3];
-                                    v[0]=v0; v[1]=grid_index_to_id(g1); v[2]=grid_index_to_id(g2);
-                                    for(int i=0; i<3; ++i) for(int j=i+1; j<3; ++j) if(v[i]>v[j]){ uint64_t t=v[i]; v[i]=v[j]; v[j]=t; }
-                                    for(int i=0; i<3; ++i) s.vertices[i] = v[i];
-                                    callback(s);
-                                }
-                            }
-                        }
-                    }
-                } else if (k == 3) {
-                    for (int m1 = 1; m1 < (1 << d); ++m1) {
-                        for (int m2 = 1; m2 < (1 << d); ++m2) {
-                            if ((m1 & m2) == m1 && m1 != m2) {
-                                for (int m3 = 1; m3 < (1 << d); ++m3) {
-                                    if ((m2 & m3) == m2 && m2 != m3) { // 0 < m1 < m2 < m3
-                                        std::vector<uint64_t> g1=g0, g2=g0, g3=g0; bool in = true;
-                                        for (int i = 0; i < d; ++i) {
-                                            g1[i]+=(m1>>i)&1; g2[i]+=(m2>>i)&1; g3[i]+=(m3>>i)&1;
-                                            if (g1[i]>=global_dims_[i] || g2[i]>=global_dims_[i] || g3[i]>=global_dims_[i]) in = false;
-                                        }
-                                        if (in) {
-                                            Simplex s; s.dimension = 3;
-                                            uint64_t v[4];
-                                            v[0]=v0; v[1]=grid_index_to_id(g1); v[2]=grid_index_to_id(g2); v[3]=grid_index_to_id(g3);
-                                            for(int i=0; i<4; ++i) for(int j=i+1; j<4; ++j) if(v[i]>v[j]){ uint64_t t=v[i]; v[i]=v[j]; v[j]=t; }
-                                            for(int i=0; i<4; ++i) s.vertices[i] = v[i];
-                                            callback(s);
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    s.sort_vertices();
+                    if (s.vertices[0] == v0) callback(s); // Canonical representation: v0 is the minimum
+                    return;
+                }
+                for (int m = last_m + 1; m < (1 << d); ++m) {
+                    if ((last_m & m) == last_m) {
+                        chain.push_back(m);
+                        gen(m, depth + 1, chain);
+                        chain.pop_back();
                     }
                 }
-            }
-            return;
+            };
+            std::vector<int> chain;
+            gen(0, 0, chain);
         }
-
-        if (k == d) {
-            uint64_t n_hc = get_num_hypercubes();
-            for (uint64_t hc_idx = 0; hc_idx < n_hc; ++hc_idx) {
-                int n_p = 1; for(int i=1; i<=d; ++i) n_p *= i;
-                for (int p_idx = 0; p_idx < n_p; ++p_idx) {
-                    Simplex top; top.dimension = d;
-                    std::vector<uint64_t> base_coords(d);
-                    uint64_t tmp_idx = hc_idx;
-                    for (int i = 0; i < d; ++i) {
-                        base_coords[i] = tmp_idx % (dims_[i] - 1);
-                        tmp_idx /= (dims_[i] - 1);
-                    }
-
-                    std::vector<int> p(d);
-                    std::iota(p.begin(), p.end(), 0);
-                    for (int i = 0; i < p_idx; ++i) std::next_permutation(p.begin(), p.end());
-
-                    std::vector<uint64_t> curr = base_coords;
-                    for(int i=0; i<d; ++i) curr[i] += offset_[i];
-                    top.vertices[0] = grid_index_to_id(curr);
-                    for (int i = 0; i < d; ++i) {
-                        curr[p[i]]++;
-                        top.vertices[i + 1] = grid_index_to_id(curr);
-                    }
-                    top.sort_vertices();
-                    callback(top);
-                }
-            }
-            return;
-        }
-
-        std::unordered_set<Simplex, SimplexHash> visited;
-        std::vector<uint64_t> current_coords(d, 0);
-        
-        iterate_hypercubes(0, current_coords, [&](const std::vector<uint64_t>& base_coords) {
-            std::vector<int> p(d);
-            std::iota(p.begin(), p.end(), 0);
-            do {
-                Simplex top; top.dimension = d;
-                std::vector<uint64_t> v_coords = base_coords;
-                for(int i=0; i<d; ++i) v_coords[i] += offset_[i];
-                top.vertices[0] = grid_index_to_id(v_coords);
-                for (int i = 0; i < d; ++i) {
-                    v_coords[p[i]] += 1;
-                    top.vertices[i + 1] = grid_index_to_id(v_coords);
-                }
-                top.sort_vertices();
-                
-                find_k_faces(top, k, [&](const Simplex& f) {
-                    Simplex fs = f; fs.sort_vertices();
-                    if (visited.find(fs) == visited.end()) {
-                        visited.insert(fs);
-                        callback(fs);
-                    }
-                });
-            } while (std::next_permutation(p.begin(), p.end()));
-        });
     }
 
     void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
@@ -438,5 +339,24 @@ public:
                                                    const std::vector<uint64_t>& global_dims = {});
     static std::unique_ptr<Mesh> create_extruded_mesh(std::shared_ptr<Mesh> base_mesh, uint64_t n_layers = 0);
 };
+
+/**
+ * @brief Unified encoding for simplices in regular meshes.
+ */
+template <typename DeviceMesh>
+FTK_HOST_DEVICE inline uint64_t encode_simplex_id(const Simplex& s, const DeviceMesh& mesh) {
+    uint64_t v_min = s.vertices[0];
+    uint64_t c_min[4];
+    mesh.id_to_coords(v_min, c_min);
+    
+    uint64_t combined_mask = 0;
+    for (int i = 1; i <= s.dimension; ++i) {
+        uint64_t ci[4]; mesh.id_to_coords(s.vertices[i], ci);
+        uint64_t mask = 0;
+        for (int k = 0; k < 4; ++k) if (ci[k] > c_min[k]) mask |= (1ULL << k);
+        combined_mask |= (mask << ((i - 1) * 4));
+    }
+    return (v_min << 24) | (combined_mask & 0xFFFFFF);
+}
 
 } // namespace ftk2

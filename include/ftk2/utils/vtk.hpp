@@ -130,9 +130,7 @@ inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh
     auto writer = vtkSmartPointer<vtkXMLUnstructuredGridWriter>::New();
     writer->SetFileName(filename.c_str());
     writer->SetInputData(grid);
-    writer->SetDataModeToAppended();
-    writer->SetEncodeAppendedData(0);
-    writer->SetCompressorTypeToNone();
+    writer->SetDataModeToAscii();
     writer->Write();
 }
 

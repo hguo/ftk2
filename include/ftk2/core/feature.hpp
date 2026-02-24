@@ -32,9 +32,9 @@ struct FeatureElement {
     float attributes[16]; 
 
     FTK_HOST_DEVICE
-    FeatureElement() : geometry_type(FeatureGeometryType::Point), track_id(0), type(0), scalar(0.0f) {
-        for (int i = 0; i < 3; ++i) for (int j = 0; j < 16; ++j) barycentric_coords[i][j] = 0.0f;
-        for (int i = 0; i < 16; ++i) attributes[i] = 0.0f;
+    FeatureElement() {
+        memset(this, 0, sizeof(FeatureElement));
+        geometry_type = FeatureGeometryType::Point;
     }
 };
 

@@ -2,6 +2,7 @@
 
 #include <ftk2/core/feature.hpp>
 #include <vector>
+#include <algorithm>
 
 namespace ftk2 {
 
@@ -24,6 +25,11 @@ struct FeatureComplex {
     std::vector<SimplexIndices> connectivity;
 
     void sort() {
+        // Sort vertices by simplex for deterministic ordering
+        std::sort(vertices.begin(), vertices.end(), [](const FeatureElement& a, const FeatureElement& b) {
+            return a.simplex < b.simplex;
+        });
+
         // Sort the connectivity vector itself by dimension
         std::sort(connectivity.begin(), connectivity.end(), [](const SimplexIndices& a, const SimplexIndices& b) {
             return a.dimension < b.dimension;

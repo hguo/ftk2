@@ -19,6 +19,9 @@ if (CMAKE_CUDA_COMPILER)
     add_executable(ftk2_levelset_2d_cuda levelset_2d_cuda.cu)
     target_link_libraries(ftk2_levelset_2d_cuda PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
+    add_executable(ftk2_fiber_3d_cuda fiber_3d_cuda.cu)
+    target_link_libraries(ftk2_fiber_3d_cuda PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
     add_executable(ftk2_critical_point_3d critical_point_3d.cpp)
     target_link_libraries(ftk2_critical_point_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 

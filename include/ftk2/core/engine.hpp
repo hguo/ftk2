@@ -14,6 +14,8 @@
 #include <iostream>
 #include <algorithm>
 #include <chrono>
+#include <numeric>
+#include <functional>
 
 #if FTK_HAVE_CUDA && defined(__CUDACC__)
 #include <ftk2/core/cuda_engine.hpp>
@@ -59,6 +61,9 @@ public:
         }
     }
 
+    void clear() { parent_.clear(); }
+    size_t size() const { return parent_.size(); }
+
 private:
     std::vector<IDType> parent_;
 };
@@ -77,7 +82,13 @@ public:
     void execute(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
         auto t_start = std::chrono::high_resolution_clock::now();
         int d_total = mesh_->get_total_dimension();
-
+        
+        active_nodes_.clear();
+        node_elements_.clear();
+        node_id_to_simplex_.clear();
+        manifold_simplices_.clear();
+        uf_.clear();
+        
         std::vector<const ftk::ndarray<T>*> arrays;
         std::vector<std::string> resolved_vars = var_names;
         if (resolved_vars.empty()) {
@@ -85,34 +96,29 @@ public:
             else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
                 for(int i=0; i<m; ++i) resolved_vars.push_back(predicate_.var_names[i]);
                 if (!predicate_.scalar_var_name.empty()) resolved_vars.push_back(predicate_.scalar_var_name);
+            } else if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) {
+                resolved_vars = {predicate_.var_names[0], predicate_.var_names[1]};
             }
         }
         for (const auto& name : resolved_vars) arrays.push_back(&data.at(name));
 
+        // 1. Discover all active nodes
         std::vector<FeatureElement> elements;
         mesh_->iterate_simplices(m, [&](const Simplex& s) {
-            T values[m + 1][m];
-            for (int i = 0; i <= m; ++i) {
-                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
-                for (int j = 0; j < m; ++j) {
-                    const auto& arr = *arrays[j];
-                    if (coords.size() == 1) values[i][j] = arr.f(coords[0]);
-                    else if (coords.size() == 2) values[i][j] = arr.f(coords[0], coords[1]);
-                    else if (coords.size() == 3) values[i][j] = arr.f(coords[0], coords[1], coords[2]);
-                    else if (coords.size() == 4) values[i][j] = arr.f(coords[0], coords[1], coords[2], coords[3]);
-                }
-            }
             FeatureElement el;
-            if (predicate_.extract_it(s, values, el, arrays, mesh_.get())) elements.push_back(el);
+            if (extract_simplex(s, data, el)) elements.push_back(el);
         });
         
         std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : elements) {
-            uint64_t node_id = uf_.add(); active_nodes_[el.simplex] = node_id;
-            node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
+            uint64_t node_id = uf_.add(); 
+            active_nodes_[el.simplex] = node_id;
+            node_elements_[node_id] = el; 
+            node_id_to_simplex_[node_id] = el.simplex;
         }
         auto t_nodes = std::chrono::high_resolution_clock::now();
 
+        // 2. Perform manifold patching
         auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
         if (reg_mesh) {
             uint64_t n_v = reg_mesh->get_num_vertices();
@@ -123,19 +129,24 @@ public:
                     int n_p = 1; for(int i=1; i<=d_total; ++i) n_p *= i;
                     for (int p_idx = 0; p_idx < n_p; ++p_idx) {
                         Simplex cell; reg_mesh->get_d_simplex(hc_idx, p_idx, cell);
-                        if (m == 1 && d_total == 4) marching_pentatope(cell, data, resolved_vars[0]);
-                        else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0]);
-                        else form_general_manifold_patches(cell, data);
+                        if constexpr (m == 1) {
+                            if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0]);
+                            else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0]);
+                            else form_general_manifold_patches(cell, data);
+                        } else form_general_manifold_patches(cell, data);
                     }
                 }
             }
         } else {
             mesh_->iterate_simplices(d_total, [&](const Simplex& cell) {
-                if (m == 1 && d_total == 4) marching_pentatope(cell, data, resolved_vars[0]);
-                else if (m == 1 && d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0]);
-                else form_general_manifold_patches(cell, data);
+                if constexpr (m == 1) {
+                    if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0]);
+                    else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0]);
+                    else form_general_manifold_patches(cell, data);
+                } else form_general_manifold_patches(cell, data);
             });
         }
+
         auto t_end = std::chrono::high_resolution_clock::now();
         auto d_nodes = std::chrono::duration_cast<std::chrono::milliseconds>(t_nodes - t_start).count();
         auto d_manifold = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_nodes).count();
@@ -147,6 +158,12 @@ public:
         auto t_start = std::chrono::high_resolution_clock::now();
         auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
         if (!reg_mesh) return;
+
+        active_nodes_.clear();
+        node_elements_.clear();
+        node_id_to_simplex_.clear();
+        manifold_simplices_.clear();
+        uf_.clear();
 
         RegularSimplicialMeshDevice d_mesh; d_mesh.ndims = reg_mesh->get_total_dimension();
         auto l_dims = reg_mesh->get_local_dims(); auto off = reg_mesh->get_offset(); auto g_dims = reg_mesh->get_global_dims();
@@ -163,6 +180,8 @@ public:
             else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
                 for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
                 if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
+            } else if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) {
+                vars = {predicate_.var_names[0], predicate_.var_names[1]};
             }
         }
 
@@ -181,7 +200,6 @@ public:
         CUDA_CHECK(cudaMalloc(&d_views, h_views.size() * sizeof(CudaDataView<T>)));
         CUDA_CHECK(cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice));
 
-        // Adaptive Buffer Execution Loop
         int max_nodes = 1000000; int max_conn = 3000000;
         bool buffer_overflow = true;
         CudaExtractionResult<IDType> res;
@@ -190,24 +208,13 @@ public:
 
         while (buffer_overflow) {
             res.max_nodes = max_nodes; res.max_conn = max_conn;
-            
-            // Check VRAM availability
-            size_t free_byte, total_byte;
-            CUDA_CHECK(cudaMemGetInfo(&free_byte, &total_byte));
-            size_t required = (size_t)max_nodes * sizeof(FeatureElement) + (size_t)max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>);
-            if (required > free_byte * 0.8) {
-                throw std::runtime_error("Insufficient VRAM for required feature extraction buffers. Required: " + std::to_string(required / (1024*1024)) + " MB");
-            }
-
             CUDA_CHECK(cudaMalloc(&res.nodes, res.max_nodes * sizeof(FeatureElement)));
             CUDA_CHECK(cudaMemset(res.nodes, 0, res.max_nodes * sizeof(FeatureElement)));
             CUDA_CHECK(cudaMalloc(&res.node_count, sizeof(int)));
             CUDA_CHECK(cudaMalloc(&res.edges, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>)));
-            CUDA_CHECK(cudaMalloc(&res.edge_count, sizeof(int)));
             CUDA_CHECK(cudaMalloc(&res.faces, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 2>)));
-            CUDA_CHECK(cudaMalloc(&res.face_count, sizeof(int)));
             CUDA_CHECK(cudaMalloc(&res.volumes, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 3>)));
-            CUDA_CHECK(cudaMalloc(&res.volume_count, sizeof(int)));
+            CUDA_CHECK(cudaMalloc(&res.edge_count, sizeof(int))); CUDA_CHECK(cudaMalloc(&res.face_count, sizeof(int))); CUDA_CHECK(cudaMalloc(&res.volume_count, sizeof(int)));
             CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.edge_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.face_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.volume_count, 0, sizeof(int)));
 
             t_h2d = std::chrono::high_resolution_clock::now();
@@ -216,30 +223,24 @@ public:
             CUDA_CHECK(cudaDeviceSynchronize());
             t_kernel = std::chrono::high_resolution_clock::now();
 
-            int h_node_count, h_edge_count, h_face_count, h_vol_count;
-            CUDA_CHECK(cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(&h_edge_count, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(&h_face_count, res.face_count, sizeof(int), cudaMemcpyDeviceToHost));
-            CUDA_CHECK(cudaMemcpy(&h_vol_count, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost));
+            int h_n, h_e, h_f, h_v;
+            CUDA_CHECK(cudaMemcpy(&h_n, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_e, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_f, res.face_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_v, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost));
 
-            int actual_max_conn = std::max({h_edge_count, h_face_count, h_vol_count});
-
-            if (h_node_count > max_nodes || actual_max_conn > max_conn) {
-                std::cout << "CUDA Warning: Buffer overflow detected. Retrying with required capacity..." << std::endl;
-                max_nodes = h_node_count + 1000; max_conn = actual_max_conn + 1000;
-                
+            if (h_n > max_nodes || std::max({h_e, h_f, h_v}) > max_conn) {
+                max_nodes = h_n + 1000; max_conn = std::max({h_e, h_f, h_v}) + 1000;
                 CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
                 CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count));
                 CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count));
                 CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
-            } else {
-                buffer_overflow = false;
-            }
+            } else { buffer_overflow = false; }
         }
 
         int h_node_count; CUDA_CHECK(cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
         std::vector<FeatureElement> h_elements(h_node_count);
-        CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_elements.size() * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_node_count * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
 
         auto t_d2h = std::chrono::high_resolution_clock::now();
         std::sort(h_elements.begin(), h_elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
@@ -248,69 +249,79 @@ public:
             node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
         }
 
-        int h_counts[4];
-        CUDA_CHECK(cudaMemcpy(&h_counts[1], res.edge_count, sizeof(int), cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaMemcpy(&h_counts[2], res.face_count, sizeof(int), cudaMemcpyDeviceToHost));
-        CUDA_CHECK(cudaMemcpy(&h_counts[3], res.volume_count, sizeof(int), cudaMemcpyDeviceToHost));
-
         auto t_d2h_manifold = std::chrono::high_resolution_clock::now();
         for (int dim = 1; dim <= 3; ++dim) {
-            int count = h_counts[dim]; if (count <= 0) continue;
-            if (dim == 1) {
-                std::vector<DeviceManifoldSimplex<IDType, 1>> h_edges(count);
-                CUDA_CHECK(cudaMemcpy(h_edges.data(), res.edges, h_edges.size()*sizeof(h_edges[0]), cudaMemcpyDeviceToHost));
-                for (const auto& s : h_edges) {
-                    std::vector<IDType> nodes;
-                    for (int i=0; i<=dim; ++i) { IDType nid; if (resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
-                    if (nodes.size() == dim + 1) { manifold_simplices_[dim].push_back(nodes); for(int i=1; i<=dim; ++i) uf_.unite(nodes[0], nodes[i]); }
-                }
-            } else if (dim == 2) {
-                std::vector<DeviceManifoldSimplex<IDType, 2>> h_faces(count);
-                CUDA_CHECK(cudaMemcpy(h_faces.data(), res.faces, h_faces.size()*sizeof(h_faces[0]), cudaMemcpyDeviceToHost));
-                for (const auto& s : h_faces) {
-                    std::vector<IDType> nodes;
-                    for (int i=0; i<=dim; ++i) { IDType nid; if (resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
-                    if (nodes.size() == dim + 1) { manifold_simplices_[dim].push_back(nodes); for(int i=1; i<=dim; ++i) uf_.unite(nodes[0], nodes[i]); }
-                }
-            } else if (dim == 3) {
-                std::vector<DeviceManifoldSimplex<IDType, 3>> h_vols(count);
-                CUDA_CHECK(cudaMemcpy(h_vols.data(), res.volumes, h_vols.size()*sizeof(h_vols[0]), cudaMemcpyDeviceToHost));
-                for (const auto& s : h_vols) {
-                    std::vector<IDType> nodes;
-                    for (int i=0; i<=dim; ++i) { IDType nid; if (resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
-                    if (nodes.size() == dim + 1) { manifold_simplices_[dim].push_back(nodes); for(int i=1; i<=dim; ++i) uf_.unite(nodes[0], nodes[i]); }
-                }
-            }
+            int count = 0;
+            if (dim == 1) { CUDA_CHECK(cudaMemcpy(&count, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
+                std::vector<DeviceManifoldSimplex<IDType, 1>> h_s(count); CUDA_CHECK(cudaMemcpy(h_s.data(), res.edges, count*sizeof(h_s[0]), cudaMemcpyDeviceToHost));
+                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
+                if(nodes.size()==dim+1) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[dim].push_back(nodes); } }
+            }} else if (dim == 2) { CUDA_CHECK(cudaMemcpy(&count, res.face_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
+                std::vector<DeviceManifoldSimplex<IDType, 2>> h_s(count); CUDA_CHECK(cudaMemcpy(h_s.data(), res.faces, count*sizeof(h_s[0]), cudaMemcpyDeviceToHost));
+                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
+                if(nodes.size()==dim+1) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[dim].push_back(nodes); } }
+            }} else if (dim == 3) { CUDA_CHECK(cudaMemcpy(&count, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
+                std::vector<DeviceManifoldSimplex<IDType, 3>> h_s(count); CUDA_CHECK(cudaMemcpy(h_s.data(), res.volumes, count*sizeof(h_s[0]), cudaMemcpyDeviceToHost));
+                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
+                if(nodes.size()==dim+1) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[dim].push_back(nodes); } }
+            }}
         }
 
         auto t_uf = std::chrono::high_resolution_clock::now();
         for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
         CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count)); CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count)); CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count)); CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
-
         auto t_end = std::chrono::high_resolution_clock::now();
-        auto d_setup = std::chrono::duration_cast<std::chrono::milliseconds>(t_setup - t_start).count();
-        auto d_h2d = std::chrono::duration_cast<std::chrono::milliseconds>(t_h2d - t_setup).count();
-        auto d_kernel = std::chrono::duration_cast<std::chrono::milliseconds>(t_kernel - t_h2d).count();
-        auto d_d2h = std::chrono::duration_cast<std::chrono::milliseconds>(t_d2h - t_kernel).count();
-        auto d_d2h_m = std::chrono::duration_cast<std::chrono::milliseconds>(t_d2h_manifold - t_d2h).count();
-        auto d_uf = std::chrono::duration_cast<std::chrono::milliseconds>(t_uf - t_d2h_manifold).count();
         auto d_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
-        std::cout << "CUDA Execution Breakdown: Setup=" << d_setup << "ms, H2D=" << d_h2d << "ms, Kernel=" << d_kernel << "ms, D2H(N)=" << d_d2h << "ms, D2H(M)=" << d_d2h_m << "ms, UF+Conn=" << d_uf << "ms, Total=" << d_total_ms << "ms" << std::endl;
+        std::cout << "CUDA Execution Total=" << d_total_ms << "ms" << std::endl;
     }
 #endif
 
     FeatureComplex get_complex() {
         FeatureComplex complex;
-        std::map<IDType, uint32_t> node_to_stable_idx;
-        for (auto const& [s, node_id] : active_nodes_) {
-            uint64_t root = uf_.find(node_id);
-            FeatureElement el = node_elements_.at(node_id); el.track_id = (uint64_t)root;
-            node_to_stable_idx[node_id] = complex.vertices.size(); complex.vertices.push_back(el);
+        for (int dim = 1; dim <= 3; ++dim) {
+            for (auto& nodes : manifold_simplices_[dim]) std::sort(nodes.begin(), nodes.end());
+            std::sort(manifold_simplices_[dim].begin(), manifold_simplices_[dim].end());
+            manifold_simplices_[dim].erase(std::unique(manifold_simplices_[dim].begin(), manifold_simplices_[dim].end()), manifold_simplices_[dim].end());
         }
+
+        uf_.clear();
+        std::vector<Simplex> sorted_active_simplices;
+        for (auto const& [s, _] : active_nodes_) sorted_active_simplices.push_back(s);
+        std::sort(sorted_active_simplices.begin(), sorted_active_simplices.end());
+        
+        std::map<Simplex, IDType> canonical_active_nodes;
+        for (const auto& s : sorted_active_simplices) canonical_active_nodes[s] = uf_.add();
+
+        for (int dim = 1; dim <= 3; ++dim) {
+            for (const auto& nodes : manifold_simplices_[dim]) {
+                for (size_t i = 1; i < nodes.size(); ++i) uf_.unite(nodes[0], nodes[i]);
+            }
+        }
+
+        std::map<uint64_t, Simplex> root_to_min_simplex;
+        for (auto const& [s, original_id] : active_nodes_) {
+            IDType canonical_id = canonical_active_nodes.at(s);
+            uint64_t root = uf_.find(canonical_id);
+            if (root_to_min_simplex.find(root) == root_to_min_simplex.end() || s < root_to_min_simplex[root]) root_to_min_simplex[root] = s;
+        }
+
+        std::map<IDType, uint32_t> node_to_stable_idx;
+        for (const auto& s : sorted_active_simplices) {
+            IDType original_id = active_nodes_.at(s);
+            IDType canonical_id = canonical_active_nodes.at(s);
+            uint64_t root = uf_.find(canonical_id);
+            FeatureElement el = node_elements_.at(original_id); 
+            el.track_id = root_to_min_simplex[root].vertices[0];
+            node_to_stable_idx[original_id] = complex.vertices.size(); 
+            complex.vertices.push_back(el);
+        }
+        
         for (int dim = 1; dim <= 3; ++dim) {
             if (!manifold_simplices_[dim].empty()) {
                 FeatureComplex::SimplexIndices conn; conn.dimension = dim;
-                for (auto const& simplex : manifold_simplices_[dim]) { for (IDType nid : simplex) conn.indices.push_back(node_to_stable_idx.at(nid)); }
+                for (auto const& nodes : manifold_simplices_[dim]) {
+                    for (IDType nid : nodes) conn.indices.push_back(node_to_stable_idx.at(nid));
+                }
                 complex.connectivity.push_back(conn);
             }
         }
@@ -319,9 +330,31 @@ public:
     }
 
 private:
+    bool extract_simplex(const Simplex& s, const std::map<std::string, ftk::ndarray<T>>& data, FeatureElement& el) {
+        if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) {
+            T values[3][2];
+            for (int i = 0; i < 3; ++i) {
+                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
+                for (int j = 0; j < 2; ++j) values[i][j] = data.at(predicate_.var_names[j]).f(coords[0], coords[1], coords[2], coords[3]);
+            }
+            return predicate_.extract_it(s, values, el);
+        } else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) {
+            T values[2][1];
+            for (int i = 0; i < 2; ++i) {
+                auto coords = mesh_->get_vertex_coordinates(s.vertices[i]);
+                values[i][0] = data.at(predicate_.var_name).f(coords[0], coords[1], coords[2], coords[3]);
+            }
+            return predicate_.extract_it(s, values, el);
+        }
+        return false;
+    }
+
     void marching_pentatope(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var) {
         T vals[5]; uint64_t idx[5]; std::vector<int> A, B; T threshold = 0;
-        if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { threshold = predicate_.threshold; } else return;
+        if constexpr (std::is_same_v<PredicateType, IsosurfaceIntersectionPredicate<T>>) threshold = predicate_.thresholds[0]; 
+        else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) threshold = predicate_.threshold;
+        else return;
+
         for (int i=0; i<5; ++i) {
             idx[i] = cell.vertices[i]; auto coords = mesh_->get_vertex_coordinates(idx[i]);
             vals[i] = data.at(var).f(coords[0], coords[1], coords[2], coords[3]) - threshold;
@@ -331,7 +364,7 @@ private:
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
             for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
-            if (nodes.size() == 4) { manifold_simplices_[3].push_back(nodes); for (int i=1; i<4; ++i) uf_.unite(nodes[0], nodes[i]); }
+            if (nodes.size() == 4) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[3].push_back(nodes); }
         } else if (A.size() == 2 || B.size() == 2) {
             const auto& two = (A.size() == 2) ? A : B; const auto& three = (A.size() == 2) ? B : A;
             std::vector<uint64_t> T0, T1;
@@ -340,8 +373,10 @@ private:
                 if (active_nodes_.count(e0)) T0.push_back(active_nodes_[e0]); if (active_nodes_.count(e1)) T1.push_back(active_nodes_[e1]);
             }
             if (T0.size() == 3 && T1.size() == 3) {
-                manifold_simplices_[3].push_back({T0[0], T0[1], T0[2], T1[2]}); manifold_simplices_[3].push_back({T0[0], T0[1], T1[1], T1[2]}); manifold_simplices_[3].push_back({T0[0], T1[0], T1[1], T1[2]});
-                for (int i=0; i<3; ++i) { uf_.unite(T0[0], T0[i]); uf_.unite(T0[0], T1[i]); }
+                std::vector<IDType> c0 = {T0[0], T0[1], T0[2], T1[2]}; std::sort(c0.begin(), c0.end());
+                std::vector<IDType> c1 = {T0[0], T0[1], T1[1], T1[2]}; std::sort(c1.begin(), c1.end());
+                std::vector<IDType> c2 = {T0[0], T1[0], T1[1], T1[2]}; std::sort(c2.begin(), c2.end());
+                manifold_simplices_[3].push_back(c0); manifold_simplices_[3].push_back(c1); manifold_simplices_[3].push_back(c2);
             }
         }
     }
@@ -358,25 +393,88 @@ private:
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
             for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
-            if (nodes.size() == 3) { manifold_simplices_[2].push_back(nodes); for (int i=1; i<3; ++i) uf_.unite(nodes[0], nodes[i]); }
+            if (nodes.size() == 3) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[2].push_back(nodes); }
         } else if (A.size() == 2 && B.size() == 2) {
             std::vector<IDType> nodes;
             for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_[edge]); }
             if (nodes.size() == 4) { 
                 std::sort(nodes.begin(), nodes.end());
                 manifold_simplices_[2].push_back({nodes[0], nodes[1], nodes[2]}); manifold_simplices_[2].push_back({nodes[0], nodes[2], nodes[3]}); 
-                for (int i=1; i<4; ++i) uf_.unite(nodes[0], nodes[i]);
             }
         }
     }
 
     void form_general_manifold_patches(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data) {
-        std::vector<IDType> nodes; find_m_subsimplices(cell, m, [&](const Simplex& f) { if (active_nodes_.count(f)) nodes.push_back(active_nodes_[f]); });
-        if (nodes.size() >= 2) {
-            std::sort(nodes.begin(), nodes.end());
-            int k = mesh_->get_total_dimension() - m; for (size_t i = 1; i < nodes.size(); ++i) uf_.unite(nodes[0], nodes[i]);
-            if (k == 1) { for (size_t i = 1; i < nodes.size(); ++i) manifold_simplices_[1].push_back({nodes[0], nodes[i]}); }
-            else if (k == 2) { for (size_t i = 1; i < nodes.size() - 1; ++i) manifold_simplices_[2].push_back({nodes[0], nodes[i], nodes[i+1]}); }
+        int d = cell.dimension; int k = d - m; if (k <= 0) return;
+        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
+        struct NodeInfo { IDType id; uint64_t code; Simplex s; };
+        std::vector<NodeInfo> nodes;
+        find_m_subsimplices(cell, m, [&](const Simplex& f_orig) { 
+            Simplex f = f_orig; f.sort_vertices();
+            IDType node_id;
+            bool found = false;
+            
+            if (active_nodes_.count(f)) {
+                node_id = active_nodes_.at(f);
+                found = true;
+            } else {
+                FeatureElement el;
+                if (extract_simplex(f, data, el)) {
+                    node_id = uf_.add();
+                    active_nodes_[f] = node_id;
+                    node_elements_[node_id] = el;
+                    node_id_to_simplex_[node_id] = f;
+                    found = true;
+                }
+            }
+
+            if (found) {
+                nodes.push_back({node_id, encode_simplex_id(f, *reg_mesh), f});
+            }
+        });
+        if (nodes.empty()) return;
+        // Sort by encoded simplex ID to match GPU behavior
+        std::sort(nodes.begin(), nodes.end(), [](const NodeInfo& a, const NodeInfo& b) { return a.code < b.code; });
+        IDType h_S = nodes[0].id;
+        uint64_t h_S_code = nodes[0].code;
+
+        if (k == 1) {
+            for (size_t i = 1; i < nodes.size(); ++i) {
+                std::vector<IDType> edge = {h_S, nodes[i].id}; std::sort(edge.begin(), edge.end()); manifold_simplices_[1].push_back(edge);
+            }
+        } else if (k == 2) {
+            // Watertight star-fan for k=2
+            for (int i = 0; i <= d; ++i) {
+                int tet_mask = ((1 << (d + 1)) - 1) ^ (1 << i);
+                std::vector<NodeInfo> nodes_T;
+                for (const auto& n : nodes) {
+                    bool on_face = true;
+                    for (int j = 0; j <= m; ++j) {
+                        bool found = false;
+                        for (int l = 0; l <= d; ++l) {
+                            if ((tet_mask & (1 << l)) && n.s.vertices[j] == cell.vertices[l]) { found = true; break; }
+                        }
+                        if (!found) { on_face = false; break; }
+                    }
+                    if (on_face) nodes_T.push_back(n);
+                }
+                
+                if (nodes_T.size() < 2) continue;
+                // Sort by code (already sorted since 'nodes' is sorted)
+                IDType h_T = nodes_T[0].id;
+                uint64_t h_T_code = nodes_T[0].code;
+                
+                for (size_t j = 1; j < nodes_T.size(); ++j) {
+                    IDType n_id = nodes_T[j].id;
+                    uint64_t n_code = nodes_T[j].code;
+                    // Use code for comparison to match GPU
+                    if (h_S_code != h_T_code && h_S_code != n_code) {
+                        std::vector<IDType> tri = {h_S, h_T, n_id};
+                        std::sort(tri.begin(), tri.end());
+                        manifold_simplices_[2].push_back(tri);
+                    }
+                }
+            }
         }
     }
 
@@ -392,12 +490,12 @@ private:
     }
 
     bool resolve_simplex_to_node(uint64_t encoded_id, const std::shared_ptr<RegularSimplicialMesh>& reg_mesh, int dim, IDType& nid) {
-        uint64_t v0 = encoded_id >> 24; uint64_t combined_mask = encoded_id & 0xFFFFFF;
-        auto c0 = reg_mesh->id_to_grid_index(v0);
-        Simplex s; s.dimension = dim; s.vertices[0] = v0;
+        uint64_t v_min = encoded_id >> 24; uint64_t combined_mask = encoded_id & 0xFFFFFF;
+        auto c_min = reg_mesh->id_to_grid_index(v_min);
+        Simplex s; s.dimension = dim; s.vertices[0] = v_min;
         for (int i = 1; i <= dim; ++i) {
             uint64_t mask = (combined_mask >> ((i - 1) * 4)) & 0xF;
-            std::vector<uint64_t> ci = c0; for (int k = 0; k < 4; ++k) if ((mask >> k) & 1) ci[k]++;
+            std::vector<uint64_t> ci = c_min; for (int k = 0; k < 4; ++k) if ((mask >> k) & 1) ci[k]++;
             s.vertices[i] = reg_mesh->grid_index_to_id(ci);
         }
         s.sort_vertices();

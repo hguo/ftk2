@@ -44,24 +44,6 @@ struct CudaExtractionResult {
 };
 
 /**
- * @brief Unified encoding for simplices in regular meshes.
- */
-template <typename DeviceMesh>
-__device__ __host__ inline uint64_t encode_simplex_id(const Simplex& s, const DeviceMesh& mesh) {
-    uint64_t v0 = s.vertices[0];
-    uint64_t c0[4], ci[4];
-    mesh.id_to_coords(v0, c0);
-    uint64_t combined_mask = 0;
-    for (int i = 1; i <= s.dimension; ++i) {
-        mesh.id_to_coords(s.vertices[i], ci);
-        uint64_t mask = 0;
-        for (int k = 0; k < 4; ++k) if (ci[k] > c0[k]) mask |= (1ULL << k);
-        combined_mask |= (mask << ((i - 1) * 4));
-    }
-    return (v0 << 24) | (combined_mask & 0xFFFFFF);
-}
-
-/**
  * @brief CUDA implementation of Marching Tetrahedra logic.
  */
 template <typename T, typename DeviceMesh, typename PredicateDevice, typename IDType>
@@ -216,44 +198,44 @@ __global__ void extraction_kernel(
     uint64_t v0 = mesh.coords_to_id(global_coords);
 
     // 1. Extract nodes on m-simplices
+    // Iterative chain-based discovery (matching RegularSimplicialMesh::iterate_simplices)
     if (m == 1) {
-        for (int mask = 1; mask < (1 << d); ++mask) {
-            uint64_t v1_c[4] = {0}; bool in = true;
-            for (int k = 0; k < d; ++k) {
-                v1_c[k] = global_coords[k] + ((mask >> k) & 1);
-                if (v1_c[k] >= mesh.global_dims[k]) in = false;
-            }
+        for (int m1 = 1; m1 < (1 << d); ++m1) {
+            uint64_t gi_c[4] = {0}; bool in = true;
+            for (int j = 0; j < d; ++j) { gi_c[j] = global_coords[j] + ((m1 >> j) & 1); if (gi_c[j] >= mesh.global_dims[j]) in = false; }
             if (in) {
-                Simplex s; s.dimension = 1;
-                s.vertices[0] = v0; s.vertices[1] = mesh.coords_to_id(v1_c);
+                Simplex s; s.dimension = 1; s.vertices[0] = v0; s.vertices[1] = mesh.coords_to_id(gi_c);
                 s.sort_vertices();
-                FeatureElement el;
-                if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
-                    int idx = atomicAdd(results.node_count, 1);
-                    if (idx < results.max_nodes) results.nodes[idx] = el;
+                if (s.vertices[0] == v0) {
+                    FeatureElement el;
+                    if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+                        int idx = atomicAdd(results.node_count, 1);
+                        if (idx < results.max_nodes) results.nodes[idx] = el;
+                    }
                 }
             }
         }
     } else if (m == 2) {
         for (int m1 = 1; m1 < (1 << d); ++m1) {
-            for (int m2 = 1; m2 < (1 << d); ++m2) {
-                if ((m1 & m2) == m1 && m1 != m2) {
-                    uint64_t v1_c[4] = {0}, v2_c[4] = {0}; bool in = true;
-                    for (int k = 0; k < d; ++k) {
-                        v1_c[k] = global_coords[k] + ((m1 >> k) & 1);
-                        v2_c[k] = global_coords[k] + ((m2 >> k) & 1);
-                        if (v1_c[k] >= mesh.global_dims[k] || v2_c[k] >= mesh.global_dims[k]) in = false;
+            for (int m2 = m1 + 1; m2 < (1 << d); ++m2) {
+                if ((m1 & m2) == m1) {
+                    uint64_t g1_c[4] = {0}, g2_c[4] = {0}; bool in = true;
+                    for (int j = 0; j < d; ++j) {
+                        g1_c[j] = global_coords[j] + ((m1 >> j) & 1);
+                        g2_c[j] = global_coords[j] + ((m2 >> j) & 1);
+                        if (g1_c[j] >= mesh.global_dims[j] || g2_c[j] >= mesh.global_dims[j]) in = false;
                     }
                     if (in) {
-                        Simplex s; s.dimension = 2;
-                        s.vertices[0] = v0;
-                        s.vertices[1] = mesh.coords_to_id(v1_c);
-                        s.vertices[2] = mesh.coords_to_id(v2_c);
+                        Simplex s; s.dimension = 2; s.vertices[0] = v0;
+                        s.vertices[1] = mesh.coords_to_id(g1_c);
+                        s.vertices[2] = mesh.coords_to_id(g2_c);
                         s.sort_vertices();
-                        FeatureElement el;
-                        if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
-                            int idx = atomicAdd(results.node_count, 1);
-                            if (idx < results.max_nodes) results.nodes[idx] = el;
+                        if (s.vertices[0] == v0) {
+                            FeatureElement el;
+                            if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+                                int idx = atomicAdd(results.node_count, 1);
+                                if (idx < results.max_nodes) results.nodes[idx] = el;
+                            }
                         }
                     }
                 }
@@ -261,28 +243,29 @@ __global__ void extraction_kernel(
         }
     } else if (m == 3) {
         for (int m1 = 1; m1 < (1 << d); ++m1) {
-            for (int m2 = 1; m2 < (1 << d); ++m2) {
-                if ((m1 & m2) == m1 && m1 != m2) {
-                    for (int m3 = 1; m3 < (1 << d); ++m3) {
-                        if ((m2 & m3) == m2 && m2 != m3) {
-                            uint64_t v1_c[4] = {0}, v2_c[4] = {0}, v3_c[4] = {0}; bool in = true;
-                            for (int k = 0; k < d; ++k) {
-                                v1_c[k] = global_coords[k] + ((m1 >> k) & 1);
-                                v2_c[k] = global_coords[k] + ((m2 >> k) & 1);
-                                v3_c[k] = global_coords[k] + ((m3 >> k) & 1);
-                                if (v1_c[k] >= mesh.global_dims[k] || v2_c[k] >= mesh.global_dims[k] || v3_c[k] >= mesh.global_dims[k]) in = false;
+            for (int m2 = m1 + 1; m2 < (1 << d); ++m2) {
+                if ((m1 & m2) == m1) {
+                    for (int m3 = m2 + 1; m3 < (1 << d); ++m3) {
+                        if ((m2 & m3) == m2) {
+                            uint64_t g1_c[4] = {0}, g2_c[4] = {0}, g3_c[4] = {0}; bool in = true;
+                            for (int j = 0; j < d; ++j) {
+                                g1_c[j] = global_coords[j] + ((m1 >> j) & 1);
+                                g2_c[j] = global_coords[j] + ((m2 >> j) & 1);
+                                g3_c[j] = global_coords[j] + ((m3 >> j) & 1);
+                                if (g1_c[j] >= mesh.global_dims[j] || g2_c[j] >= mesh.global_dims[j] || g3_c[j] >= mesh.global_dims[j]) in = false;
                             }
                             if (in) {
-                                Simplex s; s.dimension = 3;
-                                s.vertices[0] = v0;
-                                s.vertices[1] = mesh.coords_to_id(v1_c);
-                                s.vertices[2] = mesh.coords_to_id(v2_c);
-                                s.vertices[3] = mesh.coords_to_id(v3_c);
+                                Simplex s; s.dimension = 3; s.vertices[0] = v0;
+                                s.vertices[1] = mesh.coords_to_id(g1_c);
+                                s.vertices[2] = mesh.coords_to_id(g2_c);
+                                s.vertices[3] = mesh.coords_to_id(g3_c);
                                 s.sort_vertices();
-                                FeatureElement el;
-                                if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
-                                    int idx = atomicAdd(results.node_count, 1);
-                                    if (idx < results.max_nodes) results.nodes[idx] = el;
+                                if (s.vertices[0] == v0) {
+                                    FeatureElement el;
+                                    if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+                                        int idx = atomicAdd(results.node_count, 1);
+                                        if (idx < results.max_nodes) results.nodes[idx] = el;
+                                    }
                                 }
                             }
                         }
@@ -305,33 +288,75 @@ __global__ void extraction_kernel(
                 if (d == 4) marching_pentatope_device<T>(cell, mesh, pred, data_views, results);
                 else if (d == 3) marching_tetrahedron_device<T>(cell, mesh, pred, data_views, results);
             } else {
-                uint64_t node_ids[32]; int node_count = 0;
-                // General manifold patching for k=1 (d-m=1)
-                if (d - m == 1) {
-                    for (int i=0; i<=d; ++i) {
-                        Simplex face; face.dimension = m;
-                        int fj = 0;
-                        for (int j=0; j<=d; ++j) if (i != j) face.vertices[fj++] = cell.vertices[j];
-                        face.sort_vertices();
-                        FeatureElement el;
-                        if (pred.extract_device(face, data_views, n_vars, mesh, el)) {
-                            node_ids[node_count++] = encode_simplex_id(face, mesh);
+                uint64_t node_ids[32]; int node_masks[32]; int node_count = 0;
+                int k = d - m; // resulting manifold dimension
+                
+                // Combination generator for (d+1) choose (m+1)
+                int p[8]; for (int i = 0; i <= m; ++i) p[i] = i;
+                while (p[0] <= d - m) {
+                    Simplex face; face.dimension = m;
+                    for (int i = 0; i <= m; ++i) face.vertices[i] = cell.vertices[p[i]];
+                    face.sort_vertices();
+                    
+                    FeatureElement el;
+                    if (pred.extract_device(face, data_views, n_vars, mesh, el)) {
+                        int mask = 0;
+                        for (int i = 0; i <= m; ++i) {
+                            for (int j = 0; j <= d; ++j) if (face.vertices[i] == cell.vertices[j]) mask |= (1 << j);
                         }
+                        node_masks[node_count] = mask;
+                        node_ids[node_count++] = encode_simplex_id(face, mesh);
                     }
-                    if (node_count >= 2) {
-                        // Canonical sort node_ids
-                        for (int i=0; i<node_count; ++i) {
-                            for (int j=i+1; j<node_count; ++j) {
-                                if (node_ids[i] > node_ids[j]) {
-                                    uint64_t tmp = node_ids[i]; node_ids[i] = node_ids[j]; node_ids[j] = tmp;
-                                }
+
+                    int i = m;
+                    while (i >= 0 && p[i] == d - m + i) i--;
+                    if (i < 0) break;
+                    p[i]++;
+                    for (int j = i + 1; j <= m; j++) p[j] = p[i] + j - i;
+                }
+
+                if (node_count >= 2) {
+                    // Sort node_ids for deterministic triangulation
+                    for (int i=0; i<node_count; ++i) {
+                        for (int j=i+1; j<node_count; ++j) {
+                            if (node_ids[i] > node_ids[j]) {
+                                uint64_t tmp = node_ids[i]; node_ids[i] = node_ids[j]; node_ids[j] = tmp;
+                                int tmp_m = node_masks[i]; node_masks[i] = node_masks[j]; node_masks[j] = tmp_m;
                             }
                         }
-                        for (int i=1; i<node_count; ++i) {
+                    }
+                    uint64_t h_S = node_ids[0];
+
+                    if (k == 1) {
+                        for (int i = 1; i < node_count; ++i) {
                             int idx = atomicAdd(results.edge_count, 1);
                             if (idx < results.max_conn) {
-                                results.edges[idx].nodes[0] = node_ids[0];
+                                results.edges[idx].nodes[0] = h_S;
                                 results.edges[idx].nodes[1] = node_ids[i];
+                            }
+                        }
+                    } else if (k == 2) {
+                        // Watertight star-fan for k=2
+                        for (int i = 0; i <= d; ++i) {
+                            int tet_mask = ((1 << (d + 1)) - 1) ^ (1 << i);
+                            uint64_t nodes_T[32]; int count_T = 0;
+                            for (int j = 0; j < node_count; ++j) {
+                                if ((node_masks[j] & tet_mask) == node_masks[j]) nodes_T[count_T++] = node_ids[j];
+                            }
+                            if (count_T < 2) continue;
+                            
+                            // nodes_T is already sorted because node_ids is sorted
+                            uint64_t h_T = nodes_T[0];
+                            for (int j = 1; j < count_T; ++j) {
+                                uint64_t n_id = nodes_T[j];
+                                if (h_S != h_T && h_S != n_id) {
+                                    int idx = atomicAdd(results.face_count, 1);
+                                    if (idx < results.max_conn) {
+                                        results.faces[idx].nodes[0] = h_S;
+                                        results.faces[idx].nodes[1] = h_T;
+                                        results.faces[idx].nodes[2] = n_id;
+                                    }
+                                }
                             }
                         }
                     }

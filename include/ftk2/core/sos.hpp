@@ -30,7 +30,10 @@ inline int det2(const T v0[2], const T v1[2], uint64_t i0, uint64_t i1) {
     __int128 det = a * d - b * c;
     if (det > 0) return 1;
     if (det < 0) return -1;
-    return (i0 < i1) ? 1 : -1; 
+    // Lexicographical tie-breaking for consistency
+    if (i0 < i1) return 1;
+    if (i0 > i1) return -1;
+    return 0;
 }
 
 template <typename T>

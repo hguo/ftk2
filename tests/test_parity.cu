@@ -172,4 +172,27 @@ void test_parity() {
         std::vector<std::string> vars = {"U", "V", "W", "S"};
         verify_parity<float, CriticalPointPredicate<3, float>>(mesh, pred, data, vars);
     }
+
+    // 5. Fiber 3D Parity (m=2, d=4)
+    {
+        std::cout << "Case 5: Fiber 3D" << std::endl;
+        const int DW = 16, DH = 16, DD = 16, DT = 5;
+        ftk::ndarray<double> s1({(size_t)DW, (size_t)DH, (size_t)DD, (size_t)DT});
+        ftk::ndarray<double> s2({(size_t)DW, (size_t)DH, (size_t)DD, (size_t)DT});
+        for (int t = 0; t < DT; ++t) {
+            double c1x = 8.0, c1y = 8.0, c1z = 8.0, r1 = 5.0;
+            double c2x = 11.0, c2y = 8.0 + t * 0.2, c2z = 8.0, r2 = 4.0;
+            for (int z = 0; z < DD; ++z) for (int y = 0; y < DH; ++y) for (int x = 0; x < DW; ++x) {
+                double d1 = std::sqrt(std::pow(x-c1x, 2) + std::pow(y-c1y, 2) + std::pow(z-c1z, 2));
+                double d2 = std::sqrt(std::pow(x-c2x, 2) + std::pow(y-c2y, 2) + std::pow(z-c2z, 2));
+                s1.f(x, y, z, t) = d1 - r1;
+                s2.f(x, y, z, t) = d2 - r2;
+            }
+        }
+        auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{(uint64_t)DW, (uint64_t)DH, (uint64_t)DD, (uint64_t)DT});
+        IsosurfaceIntersectionPredicate<double> pred; pred.var_names[0] = "S1"; pred.var_names[1] = "S2";
+        std::map<std::string, ftk::ndarray<double>> data = {{"S1", s1}, {"S2", s2}};
+        std::vector<std::string> vars = {"S1", "S2"};
+        verify_parity<double, IsosurfaceIntersectionPredicate<double>>(mesh, pred, data, vars);
+    }
 }
