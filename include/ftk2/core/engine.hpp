@@ -151,8 +151,8 @@ public:
                     for (int p_idx = 0; p_idx < n_p; ++p_idx) {
                         Simplex cell; reg_mesh->get_d_simplex(hc_idx, p_idx, cell);
                         if constexpr (m == 1) {
-                            if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0], local, reg_mesh.get());
-                            else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0], local, reg_mesh.get());
+                            if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0], local, mutex, reg_mesh.get());
+                            else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0], local, mutex, reg_mesh.get());
                             else form_general_manifold_patches(cell, data, local, mutex, reg_mesh.get());
                         } else form_general_manifold_patches(cell, data, local, mutex, reg_mesh.get());
                     }
@@ -162,8 +162,8 @@ public:
             slab_mesh->iterate_simplices(d_total, [&](const Simplex& cell) {
                 ThreadData local; 
                 if constexpr (m == 1) {
-                    if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0], local, slab_mesh.get());
-                    else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0], local, slab_mesh.get());
+                    if (d_total == 4) marching_pentatope(cell, data, resolved_vars[0], local, mutex, slab_mesh.get());
+                    else if (d_total == 3) marching_tetrahedron(cell, data, resolved_vars[0], local, mutex, slab_mesh.get());
                     else form_general_manifold_patches(cell, data, local, mutex, slab_mesh.get());
                 } else form_general_manifold_patches(cell, data, local, mutex, slab_mesh.get());
                 
@@ -470,7 +470,7 @@ private:
         std::vector<std::vector<IDType>> dim1, dim2, dim3;
     };
 
-    void marching_pentatope(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var, ThreadData& local, Mesh* mesh) {
+    void marching_pentatope(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var, ThreadData& local, std::mutex& mutex, Mesh* mesh) {
         T vals[5]; uint64_t idx[5]; std::vector<int> A, B; T threshold = 0;
         if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) threshold = predicate_.thresholds[0]; 
         else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) threshold = predicate_.threshold;
@@ -482,19 +482,55 @@ private:
         for (int i=0; i<5; ++i) {
             idx[i] = cell.vertices[i]; auto coords = mesh->get_vertex_coordinates(idx[i]);
             vals[i] = get_value(data.at(var), idx[i], coords, offset) - threshold;
-            if (sos::sign(vals[i], idx[i]) > 0) A.push_back(i); else B.push_back(i);
+            if (sos::sign(vals[i], idx[i], predicate_.sos_q) > 0) A.push_back(i); else B.push_back(i);
         }
         if (A.size() == 1 || B.size() == 1) {
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
-            for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); }
+            for (int o : others) { 
+                Simplex edge = make_edge(idx[single], idx[o]); 
+                if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); 
+                else {
+                    FeatureElement el;
+                    if (extract_simplex(edge, data, el, mesh)) {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge));
+                        else {
+                            IDType node_id = uf_.add();
+                            active_nodes_[edge] = node_id;
+                            node_elements_[node_id] = el;
+                            node_id_to_simplex_[node_id] = edge;
+                            nodes.push_back(node_id);
+                        }
+                    }
+                }
+            }
             if (nodes.size() == 4) { std::sort(nodes.begin(), nodes.end()); local.dim3.push_back(nodes); }
         } else if (A.size() == 2 || B.size() == 2) {
             const auto& two = (A.size() == 2) ? A : B; const auto& three = (A.size() == 2) ? B : A;
-            std::vector<uint64_t> T0, T1;
+            std::vector<IDType> T0, T1;
             for (int t : three) {
-                Simplex e0 = make_edge(idx[two[0]], idx[t]); Simplex e1 = make_edge(idx[two[1]], idx[t]);
-                if (active_nodes_.count(e0)) T0.push_back(active_nodes_.at(e0)); if (active_nodes_.count(e1)) T1.push_back(active_nodes_.at(e1));
+                Simplex e0 = make_edge(idx[two[0]], idx[t]); 
+                Simplex e1 = make_edge(idx[two[1]], idx[t]);
+                
+                auto ensure_node = [&](const Simplex& s, std::vector<IDType>& list) {
+                    if (active_nodes_.count(s)) list.push_back(active_nodes_.at(s));
+                    else {
+                        FeatureElement el;
+                        if (extract_simplex(s, data, el, mesh)) {
+                            std::lock_guard<std::mutex> lock(mutex);
+                            if (active_nodes_.count(s)) list.push_back(active_nodes_.at(s));
+                            else {
+                                IDType node_id = uf_.add();
+                                active_nodes_[s] = node_id;
+                                node_elements_[node_id] = el;
+                                node_id_to_simplex_[node_id] = s;
+                                list.push_back(node_id);
+                            }
+                        }
+                    }
+                };
+                ensure_node(e0, T0); ensure_node(e1, T1);
             }
             if (T0.size() == 3 && T1.size() == 3) {
                 std::vector<IDType> c0 = {T0[0], T0[1], T0[2], T1[2]}; std::sort(c0.begin(), c0.end());
@@ -505,7 +541,7 @@ private:
         }
     }
 
-    void marching_tetrahedron(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var, ThreadData& local, Mesh* mesh) {
+    void marching_tetrahedron(const Simplex& cell, const std::map<std::string, ftk::ndarray<T>>& data, const std::string& var, ThreadData& local, std::mutex& mutex, Mesh* mesh) {
         T vals[4]; uint64_t idx[4]; std::vector<int> A, B; T threshold = 0;
         if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { threshold = predicate_.threshold; } else return;
         
@@ -515,16 +551,50 @@ private:
         for (int i=0; i<4; ++i) {
             idx[i] = cell.vertices[i]; auto coords = mesh->get_vertex_coordinates(idx[i]);
             vals[i] = get_value(data.at(var), idx[i], coords, offset) - threshold;
-            if (sos::sign(vals[i], idx[i]) > 0) A.push_back(i); else B.push_back(i);
+            if (sos::sign(vals[i], idx[i], predicate_.sos_q) > 0) A.push_back(i); else B.push_back(i);
         }
         if (A.size() == 1 || B.size() == 1) {
             const auto& single = (A.size() == 1) ? A[0] : B[0]; const auto& others = (A.size() == 1) ? B : A;
             std::vector<IDType> nodes;
-            for (int o : others) { Simplex edge = make_edge(idx[single], idx[o]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); }
+            for (int o : others) { 
+                Simplex edge = make_edge(idx[single], idx[o]); 
+                if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); 
+                else {
+                    FeatureElement el;
+                    if (extract_simplex(edge, data, el, mesh)) {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge));
+                        else {
+                            IDType node_id = uf_.add();
+                            active_nodes_[edge] = node_id;
+                            node_elements_[node_id] = el;
+                            node_id_to_simplex_[node_id] = edge;
+                            nodes.push_back(node_id);
+                        }
+                    }
+                }
+            }
             if (nodes.size() == 3) { std::sort(nodes.begin(), nodes.end()); local.dim2.push_back(nodes); }
         } else if (A.size() == 2 && B.size() == 2) {
             std::vector<IDType> nodes;
-            for (int a : A) for (int b : B) { Simplex edge = make_edge(idx[a], idx[b]); if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); }
+            for (int a : A) for (int b : B) { 
+                Simplex edge = make_edge(idx[a], idx[b]); 
+                if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge)); 
+                else {
+                    FeatureElement el;
+                    if (extract_simplex(edge, data, el, mesh)) {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (active_nodes_.count(edge)) nodes.push_back(active_nodes_.at(edge));
+                        else {
+                            IDType node_id = uf_.add();
+                            active_nodes_[edge] = node_id;
+                            node_elements_[node_id] = el;
+                            node_id_to_simplex_[node_id] = edge;
+                            nodes.push_back(node_id);
+                        }
+                    }
+                }
+            }
             if (nodes.size() == 4) { 
                 std::sort(nodes.begin(), nodes.end());
                 local.dim2.push_back({nodes[0], nodes[1], nodes[2]}); local.dim2.push_back({nodes[0], nodes[2], nodes[3]}); 

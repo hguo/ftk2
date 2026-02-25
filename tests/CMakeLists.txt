@@ -7,6 +7,7 @@ add_executable(ftk2_tests
     test_parity.cu
     test_examples.cpp
     test_unstructured.cpp
+    test_3d_cp.cpp
 )
 target_link_libraries(ftk2_tests PRIVATE ftk2)
 add_test(NAME ftk2_tests COMMAND ftk2_tests)

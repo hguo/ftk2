@@ -81,6 +81,7 @@ public:
     virtual ~Mesh() = default;
     virtual int get_spatial_dimension() const = 0;
     virtual int get_total_dimension() const = 0;
+    virtual uint64_t get_num_vertices() const = 0;
     virtual void iterate_simplices(int k, std::function<void(const Simplex&)> callback) const = 0;
     virtual void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const = 0;
     virtual std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const = 0;
@@ -138,7 +139,7 @@ public:
         return coords;
     }
 
-    uint64_t get_num_vertices() const {
+    uint64_t get_num_vertices() const override {
         uint64_t n = 1; for (auto d : dims_) n *= d; return n;
     }
 
@@ -271,6 +272,7 @@ public:
 
     int get_spatial_dimension() const override { return base_mesh_->get_spatial_dimension(); }
     int get_total_dimension() const override { return base_mesh_->get_total_dimension() + 1; }
+    uint64_t get_num_vertices() const override { return n_spatial_verts_ * (n_layers_ + 1); }
 
     void iterate_simplices(int k, std::function<void(const Simplex&)> callback) const override {
         int d_spatial = base_mesh_->get_total_dimension();

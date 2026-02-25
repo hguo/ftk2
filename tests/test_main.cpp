@@ -38,10 +38,12 @@ void test_sos();
 void test_parity();
 void test_examples();
 void test_unstructured();
+void test_3d_cp_system();
 
 int main(int argc, char** argv) {
     std::cout << "Running FTK2 tests..." << std::endl;
     
+    test_3d_cp_system();
     test_unstructured();
     test_zero_crossing();
     test_mesh();
