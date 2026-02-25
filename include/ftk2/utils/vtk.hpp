@@ -112,24 +112,31 @@ inline void write_complex_to_vtu(const FeatureComplex& complex, const Mesh& mesh
     auto grid = vtkSmartPointer<vtkUnstructuredGrid>::New();
     grid->SetPoints(complex_to_vtk_points(complex, mesh, grid->GetPointData()));
 
-    for (auto const& conn : complex.connectivity) {
-        if (target_dim != -1 && conn.dimension != target_dim) continue;
-
-        int vtk_type = VTK_EMPTY_CELL;
-        int n_pts = conn.dimension + 1;
-
-        switch (conn.dimension) {
-            case 0: vtk_type = VTK_VERTEX; break;
-            case 1: vtk_type = VTK_LINE; break;
-            case 2: vtk_type = VTK_TRIANGLE; break;
-            case 3: vtk_type = VTK_TETRA; break;
-            default: continue; 
+    if (target_dim == 0) {
+        for (size_t i = 0; i < complex.vertices.size(); ++i) {
+            vtkIdType pts[1] = {(vtkIdType)i};
+            grid->InsertNextCell(VTK_VERTEX, 1, pts);
         }
+    } else {
+        for (auto const& conn : complex.connectivity) {
+            if (target_dim != -1 && conn.dimension != target_dim) continue;
 
-        for (size_t i = 0; i < conn.indices.size(); i += n_pts) {
-            std::vector<vtkIdType> cell_pts(n_pts);
-            for (int j = 0; j < n_pts; ++j) cell_pts[j] = conn.indices[i + j];
-            grid->InsertNextCell(vtk_type, n_pts, cell_pts.data());
+            int vtk_type = VTK_EMPTY_CELL;
+            int n_pts = conn.dimension + 1;
+
+            switch (conn.dimension) {
+                case 0: vtk_type = VTK_VERTEX; break;
+                case 1: vtk_type = VTK_LINE; break;
+                case 2: vtk_type = VTK_TRIANGLE; break;
+                case 3: vtk_type = VTK_TETRA; break;
+                default: continue; 
+            }
+
+            for (size_t i = 0; i < conn.indices.size(); i += n_pts) {
+                std::vector<vtkIdType> cell_pts(n_pts);
+                for (int j = 0; j < n_pts; ++j) cell_pts[j] = conn.indices[i + j];
+                grid->InsertNextCell(vtk_type, n_pts, cell_pts.data());
+            }
         }
     }
 

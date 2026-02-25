@@ -112,13 +112,17 @@ public:
         // 1. Discover all active nodes
         std::vector<FeatureElement> elements;
         std::mutex mutex;
+        std::atomic<uint64_t> visited(0), found(0);
         slab_mesh->iterate_simplices(m, [&](const Simplex& s) {
+            visited++;
             FeatureElement el;
             if (extract_simplex(s, data, el, slab_mesh.get())) {
+                found++;
                 std::lock_guard<std::mutex> lock(mutex);
                 elements.push_back(el);
             }
         });
+        std::cout << "  Extraction: visited=" << visited.load() << ", found=" << found.load() << " nodes." << std::endl;
         
         std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : elements) {
@@ -621,8 +625,12 @@ private:
         auto c_min = reg_mesh->id_to_grid_index(v_min);
         Simplex s; s.dimension = dim; s.vertices[0] = v_min;
         for (int i = 1; i <= dim; ++i) {
-            uint64_t mask = (combined_mask >> ((i - 1) * 4)) & 0xF;
-            std::vector<uint64_t> ci = c_min; for (int k = 0; k < 4; ++k) if ((mask >> k) & 1) ci[k]++;
+            uint64_t mask = (combined_mask >> ((dim - i) * 4)) & 0xF;
+            uint64_t ci[4] = {0};
+            for (int k = 0; k < 4 && k < c_min.size(); ++k) {
+                ci[k] = c_min[k];
+                if ((mask >> k) & 1) ci[k]++;
+            }
             s.vertices[i] = reg_mesh->grid_index_to_id(ci);
         }
         s.sort_vertices();
