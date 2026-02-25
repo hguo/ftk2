@@ -21,6 +21,7 @@ public:
         // Build dimension 0 (vertices)
         // VTK reader always gives 3 coordinates per point
         int n_verts = coords_.size() / 3;
+        std::cout << "UnstructuredMesh: building " << n_verts << " vertices." << std::endl;
         simplices_[0].resize(n_verts);
         for (int i = 0; i < n_verts; ++i) {
             simplices_[0][i].dimension = 0;
@@ -29,6 +30,7 @@ public:
 
         // Build top dimension cells
         int n_cells = cells.size() / (cell_dim + 1);
+        std::cout << "UnstructuredMesh: building " << n_cells << " cells of dim " << cell_dim << std::endl;
         simplices_[cell_dim].resize(n_cells);
         for (int i = 0; i < n_cells; ++i) {
             simplices_[cell_dim][i].dimension = cell_dim;
@@ -47,11 +49,13 @@ public:
                 });
             }
             simplices_[d].assign(face_set.begin(), face_set.end());
+            std::cout << "UnstructuredMesh: found " << simplices_[d].size() << " unique simplices of dim " << d << std::endl;
         }
     }
 
     int get_spatial_dimension() const override { return spatial_dim_; }
     int get_total_dimension() const override { return cell_dim_; }
+    uint64_t get_num_vertices() const override { return simplices_[0].size(); }
 
     void iterate_simplices(int k, std::function<void(const Simplex&)> callback) const override {
         if (k < 0 || k > cell_dim_) return;

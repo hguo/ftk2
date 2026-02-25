@@ -70,8 +70,9 @@ struct CriticalPointPredicate : public Predicate<M, T> {
         static constexpr int codimension = M;
         bool has_scalar;
         double sos_q;
+        template <typename DeviceMesh>
         __device__
-        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const RegularSimplicialMeshDevice& mesh, FeatureElement& el) const {
+        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const DeviceMesh& mesh, FeatureElement& el) const {
             T values[M + 1][M]; uint64_t indices[M + 1];
             for (int i = 0; i <= M; ++i) {
                 indices[i] = s.vertices[i]; uint64_t coords[4] = {0}; mesh.id_to_coords(indices[i], coords);
@@ -123,8 +124,9 @@ struct ContourPredicate : public Predicate<1, T> {
         static constexpr int codimension = 1;
         T threshold;
         double sos_q;
+        template <typename DeviceMesh>
         __device__
-        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const RegularSimplicialMeshDevice& mesh, FeatureElement& el) const {
+        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const DeviceMesh& mesh, FeatureElement& el) const {
             T values[2][1]; uint64_t indices[2];
             for (int i = 0; i <= 1; ++i) {
                 indices[i] = s.vertices[i]; uint64_t coords[4] = {0}; mesh.id_to_coords(indices[i], coords);
@@ -173,8 +175,9 @@ struct FiberPredicate : public Predicate<2, T> {
         static constexpr int codimension = 2;
         T thresholds[2];
         double sos_q;
+        template <typename DeviceMesh>
         __device__
-        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const RegularSimplicialMeshDevice& mesh, FeatureElement& el) const {
+        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const DeviceMesh& mesh, FeatureElement& el) const {
             T values[3][2]; uint64_t indices[3];
             for (int i = 0; i <= 2; ++i) {
                 indices[i] = s.vertices[i]; uint64_t coords[4] = {0}; mesh.id_to_coords(indices[i], coords);

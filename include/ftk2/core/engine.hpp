@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ftk2/core/mesh.hpp>
+#include <ftk2/core/unstructured_mesh.hpp>
 #include <ftk2/core/feature.hpp>
 #include <ftk2/core/predicate.hpp>
 #include <ftk2/core/complex.hpp>
@@ -82,11 +83,13 @@ public:
         : mesh_(mesh), predicate_(pred) {}
 
     void clear_results() {
+        std::cout << "  Engine: clearing results..." << std::endl;
         active_nodes_.clear();
         node_elements_.clear();
         node_id_to_simplex_.clear();
         manifold_simplices_.clear();
         uf_.clear();
+        std::cout << "  Engine: cleared." << std::endl;
     }
 
     void execute(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
@@ -97,6 +100,7 @@ public:
     void feed(std::shared_ptr<Mesh> slab_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
         auto t_start = std::chrono::high_resolution_clock::now();
         int d_total = slab_mesh->get_total_dimension();
+        std::cout << "  Engine: feeding mesh with dim " << d_total << std::endl;
         
         std::vector<std::string> resolved_vars = var_names;
         if (resolved_vars.empty()) {
@@ -246,15 +250,19 @@ public:
 
 #if FTK_HAVE_CUDA && defined(__CUDACC__)
     void execute_cuda(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
-        auto t_start = std::chrono::high_resolution_clock::now();
         auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(mesh_);
-        if (!reg_mesh) return;
+        if (reg_mesh) { execute_cuda_regular(reg_mesh, data, var_names); return; }
 
-        active_nodes_.clear();
-        node_elements_.clear();
-        node_id_to_simplex_.clear();
-        manifold_simplices_.clear();
-        uf_.clear();
+        auto unst_mesh = std::dynamic_pointer_cast<UnstructuredSimplicialMesh>(mesh_);
+        if (unst_mesh) { execute_cuda_unstructured(unst_mesh, data, var_names); return; }
+
+        auto ext_mesh = std::dynamic_pointer_cast<ExtrudedSimplicialMesh>(mesh_);
+        if (ext_mesh) { execute_cuda_extruded(ext_mesh, data, var_names); return; }
+    }
+
+    void execute_cuda_regular(std::shared_ptr<RegularSimplicialMesh> reg_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        clear_results();
 
         RegularSimplicialMeshDevice d_mesh; d_mesh.ndims = reg_mesh->get_total_dimension();
         auto l_dims = reg_mesh->get_local_dims(); auto off = reg_mesh->get_offset(); auto g_dims = reg_mesh->get_global_dims();
@@ -264,7 +272,6 @@ public:
             d_mesh.global_dims[i] = (i < d_mesh.ndims) ? g_dims[i] : 1; 
         }
 
-        auto t_setup = std::chrono::high_resolution_clock::now();
         std::vector<std::string> vars = var_names;
         if (vars.empty()) {
             if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { vars = {predicate_.var_name}; }
@@ -294,8 +301,6 @@ public:
         int max_nodes = 1000000; int max_conn = 3000000;
         bool buffer_overflow = true;
         CudaExtractionResult<IDType> res;
-        auto t_h2d = std::chrono::high_resolution_clock::now();
-        auto t_kernel = std::chrono::high_resolution_clock::now();
 
         while (buffer_overflow) {
             res.max_nodes = max_nodes; res.max_conn = max_conn;
@@ -308,11 +313,9 @@ public:
             CUDA_CHECK(cudaMalloc(&res.edge_count, sizeof(int))); CUDA_CHECK(cudaMalloc(&res.face_count, sizeof(int))); CUDA_CHECK(cudaMalloc(&res.volume_count, sizeof(int)));
             CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.edge_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.face_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.volume_count, 0, sizeof(int)));
 
-            t_h2d = std::chrono::high_resolution_clock::now();
             uint64_t n_v = d_mesh.get_num_vertices();
             extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
             CUDA_CHECK(cudaDeviceSynchronize());
-            t_kernel = std::chrono::high_resolution_clock::now();
 
             int h_n, h_e, h_f, h_v;
             CUDA_CHECK(cudaMemcpy(&h_n, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
@@ -333,14 +336,15 @@ public:
         std::vector<FeatureElement> h_elements(h_node_count);
         CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_node_count * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
 
-        auto t_d2h = std::chrono::high_resolution_clock::now();
         std::sort(h_elements.begin(), h_elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : h_elements) {
-            uint64_t node_id = uf_.add(); active_nodes_[el.simplex] = node_id;
-            node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
+            if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
+                uint64_t node_id = uf_.add(); active_nodes_[el.simplex] = node_id;
+                node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
+            }
         }
 
-        auto t_d2h_manifold = std::chrono::high_resolution_clock::now();
+        // Manifold results (regular only for now)
         for (int dim = 1; dim <= 3; ++dim) {
             int count = 0;
             if (dim == 1) { CUDA_CHECK(cudaMemcpy(&count, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
@@ -358,12 +362,200 @@ public:
             }}
         }
 
-        auto t_uf = std::chrono::high_resolution_clock::now();
         for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
         CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count)); CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count)); CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count)); CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
         auto t_end = std::chrono::high_resolution_clock::now();
         auto d_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
         std::cout << "CUDA Execution Total=" << d_total_ms << "ms" << std::endl;
+    }
+
+    void execute_cuda_unstructured(std::shared_ptr<UnstructuredSimplicialMesh> unst_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        std::cout << "  GPU: starting unstructured execution..." << std::endl;
+        clear_results();
+
+        UnstructuredSimplicialMeshDevice d_mesh;
+        d_mesh.spatial_dim = unst_mesh->get_spatial_dimension();
+        d_mesh.cell_dim = unst_mesh->get_total_dimension();
+        
+        for (int k = 0; k <= d_mesh.cell_dim; ++k) {
+            std::atomic<uint64_t> n_s(0); 
+            unst_mesh->iterate_simplices(k, [&](const Simplex& s) { n_s++; });
+            d_mesh.n_simplices[k] = n_s.load();
+            
+            std::vector<Simplex> h_simplices(d_mesh.n_simplices[k]);
+            std::atomic<uint64_t> counter(0);
+            unst_mesh->iterate_simplices(k, [&](const Simplex& s) { 
+                uint64_t idx = counter.fetch_add(1);
+                h_simplices[idx] = s; 
+            });
+            
+            std::cout << "  GPU: allocating " << d_mesh.n_simplices[k] << " simplices for dim " << k << std::endl;
+            CUDA_CHECK(cudaMalloc((void**)&d_mesh.simplices[k], d_mesh.n_simplices[k] * sizeof(Simplex)));
+            CUDA_CHECK(cudaMemcpy((void*)d_mesh.simplices[k], h_simplices.data(), d_mesh.n_simplices[k] * sizeof(Simplex), cudaMemcpyHostToDevice));
+        }
+
+        std::vector<std::string> vars = var_names;
+        if (vars.empty()) {
+            if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { vars = {predicate_.var_name}; }
+            else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
+                for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
+                if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
+            } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
+                vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            }
+        }
+
+        std::vector<CudaDataView<T>> h_views;
+        for (const auto& name : vars) {
+            const auto& arr = data.at(name);
+            CudaDataView<T> view;
+            CUDA_CHECK(cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T)));
+            CUDA_CHECK(cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            view.ndims = 1; view.dims[0] = arr.nelem(); view.s[0] = 1;
+            h_views.push_back(view);
+        }
+
+        CudaDataView<T>* d_views;
+        CUDA_CHECK(cudaMalloc(&d_views, h_views.size() * sizeof(CudaDataView<T>)));
+        CUDA_CHECK(cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice));
+
+        int max_nodes = 1000000;
+        CudaExtractionResult<IDType> res;
+        CUDA_CHECK(cudaMalloc(&res.nodes, max_nodes * sizeof(FeatureElement)));
+        CUDA_CHECK(cudaMalloc(&res.node_count, sizeof(int)));
+        CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int)));
+        res.max_nodes = max_nodes;
+
+        uint64_t n_total = std::max(d_mesh.n_simplices[m], d_mesh.n_simplices[d_mesh.cell_dim]);
+        std::cout << "  GPU: launching unstructured kernel with " << n_total << " threads..." << std::endl;
+        extraction_kernel_unstructured<<< (n_total+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        int h_n; CUDA_CHECK(cudaMemcpy(&h_n, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
+        std::cout << "  GPU: found " << h_n << " nodes." << std::endl;
+        std::vector<FeatureElement> h_elements(h_n);
+        if (h_n > 0) {
+            CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_n * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
+        }
+
+        for (const auto& el : h_elements) {
+            if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
+                uint64_t node_id = uf_.add(); active_nodes_[el.simplex] = node_id;
+                node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
+            }
+        }
+
+        std::cout << "  GPU: cleaning up unstructured resources..." << std::endl;
+        for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
+        CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
+        for (int k = 0; k <= d_mesh.cell_dim; ++k) CUDA_CHECK(cudaFree((void*)d_mesh.simplices[k]));
+        
+        auto t_end = std::chrono::high_resolution_clock::now();
+        std::cout << "CUDA Unstructured Total=" << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count() << "ms" << std::endl;
+    }
+
+    void execute_cuda_extruded(std::shared_ptr<ExtrudedSimplicialMesh> ext_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        std::cout << "  GPU: starting extruded execution..." << std::endl;
+        clear_results();
+
+        std::cout << "  GPU: casting base mesh..." << std::endl;
+        auto unst_base = std::dynamic_pointer_cast<UnstructuredSimplicialMesh>(ext_mesh->get_base_mesh());
+        if (!unst_base) { std::cerr << "CUDA Extruded requires Unstructured base mesh." << std::endl; return; }
+
+        ExtrudedSimplicialMeshDevice d_mesh;
+        for (int i=0; i<4; ++i) d_mesh.base_mesh.simplices[i] = nullptr; // Initialize
+        
+        d_mesh.n_layers = ext_mesh->get_n_layers();
+        d_mesh.n_spatial_verts = ext_mesh->get_n_spatial_verts();
+        d_mesh.base_mesh.spatial_dim = unst_base->get_spatial_dimension();
+        d_mesh.base_mesh.cell_dim = unst_base->get_total_dimension();
+        std::cout << "  GPU: base mesh cell_dim=" << d_mesh.base_mesh.cell_dim << std::endl;
+        
+        // Only need vertices (dim 0), m-1, and m for extraction
+        std::set<int> needed_dims = {0, m, m-1};
+        for (int k : needed_dims) {
+            if (k < 0 || k > d_mesh.base_mesh.cell_dim) continue;
+            std::atomic<uint64_t> n_s(0); unst_base->iterate_simplices(k, [&](const Simplex& s) { n_s++; });
+            d_mesh.base_mesh.n_simplices[k] = n_s.load();
+            
+            std::vector<Simplex> h_simplices(d_mesh.base_mesh.n_simplices[k]);
+            std::atomic<uint64_t> counter(0);
+            unst_base->iterate_simplices(k, [&](const Simplex& s) { 
+                uint64_t idx = counter.fetch_add(1);
+                h_simplices[idx] = s; 
+            });
+
+            std::cout << "  GPU: allocating " << d_mesh.base_mesh.n_simplices[k] << " spatial simplices for dim " << k << std::endl;
+            CUDA_CHECK(cudaMalloc((void**)&d_mesh.base_mesh.simplices[k], d_mesh.base_mesh.n_simplices[k] * sizeof(Simplex)));
+            CUDA_CHECK(cudaMemcpy((void*)d_mesh.base_mesh.simplices[k], h_simplices.data(), d_mesh.base_mesh.n_simplices[k] * sizeof(Simplex), cudaMemcpyHostToDevice));
+        }
+
+        std::vector<std::string> vars = var_names;
+        if (vars.empty()) {
+            if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) { vars = {predicate_.var_name}; }
+            else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
+                for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
+                if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
+            } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
+                vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            }
+        }
+
+        std::vector<CudaDataView<T>> h_views;
+        for (const auto& name : vars) {
+            const auto& arr = data.at(name);
+            CudaDataView<T> view;
+            CUDA_CHECK(cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T)));
+            CUDA_CHECK(cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            view.ndims = 1; view.dims[0] = arr.nelem(); view.s[0] = 1;
+            h_views.push_back(view);
+        }
+
+        CudaDataView<T>* d_views;
+        CUDA_CHECK(cudaMalloc(&d_views, h_views.size() * sizeof(CudaDataView<T>)));
+        CUDA_CHECK(cudaMemcpy(d_views, h_views.data(), h_views.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice));
+
+        int max_nodes = 2000000;
+        CudaExtractionResult<IDType> res;
+        CUDA_CHECK(cudaMalloc(&res.nodes, max_nodes * sizeof(FeatureElement)));
+        CUDA_CHECK(cudaMalloc(&res.node_count, sizeof(int)));
+        CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int)));
+        res.max_nodes = max_nodes;
+
+        uint64_t n_spatial_m = d_mesh.base_mesh.n_simplices[m];
+        uint64_t n_spatial_m_minus_1 = (m > 0) ? d_mesh.base_mesh.n_simplices[m-1] : 0;
+        uint64_t n_total = n_spatial_m * (d_mesh.n_layers + 1) + n_spatial_m_minus_1 * d_mesh.n_layers * m;
+
+        std::cout << "  GPU: launching extruded kernel with " << n_total << " threads..." << std::endl;
+        extraction_kernel_extruded<<< (n_total+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
+        CUDA_CHECK(cudaDeviceSynchronize());
+
+        int h_n; CUDA_CHECK(cudaMemcpy(&h_n, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
+        std::cout << "  GPU: found " << h_n << " nodes." << std::endl;
+        std::vector<FeatureElement> h_elements(h_n);
+        if (h_n > 0) {
+            CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_n * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
+        }
+
+        for (const auto& el : h_elements) {
+            if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
+                uint64_t node_id = uf_.add(); active_nodes_[el.simplex] = node_id;
+                node_elements_[node_id] = el; node_id_to_simplex_[node_id] = el.simplex;
+            }
+        }
+
+        std::cout << "  GPU: cleaning up extruded resources..." << std::endl;
+        for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
+        CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
+        for (int k : needed_dims) if (k >= 0 && k <= d_mesh.base_mesh.cell_dim) {
+            std::cout << "  GPU: freeing dim " << k << std::endl;
+            CUDA_CHECK(cudaFree((void*)d_mesh.base_mesh.simplices[k]));
+        }
+        
+        auto t_end = std::chrono::high_resolution_clock::now();
+        std::cout << "CUDA Extruded Total=" << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count() << "ms" << std::endl;
     }
 #endif
 

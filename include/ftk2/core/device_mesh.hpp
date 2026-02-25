@@ -172,4 +172,43 @@ private:
     }
 };
 
+/**
+ * @brief Lightweight, POD-compatible unstructured mesh for CUDA kernels.
+ */
+struct UnstructuredSimplicialMeshDevice {
+    const Simplex* simplices[4]; // Pointer to arrays of unique simplices for each dim 0..3
+    uint64_t n_simplices[4];
+    int spatial_dim;
+    int cell_dim;
+
+    FTK_HOST_DEVICE uint64_t get_num_vertices() const { return n_simplices[0]; }
+    FTK_HOST_DEVICE uint64_t get_num_simplices(int k) const { return (k >= 0 && k <= cell_dim) ? n_simplices[k] : 0; }
+    FTK_HOST_DEVICE const Simplex& get_simplex(int k, uint64_t idx) const { return simplices[k][idx]; }
+    FTK_HOST_DEVICE int get_total_dimension() const { return cell_dim; }
+
+    FTK_HOST_DEVICE void id_to_coords(uint64_t id, uint64_t coords[4]) const {
+        coords[0] = id; coords[1] = 0; coords[2] = 0; coords[3] = 0;
+    }
+    FTK_HOST_DEVICE uint64_t coords_to_id(const uint64_t coords[4]) const {
+        return coords[0];
+    }
+};
+
+/**
+ * @brief Lightweight representation of an extruded mesh on device.
+ */
+struct ExtrudedSimplicialMeshDevice {
+    UnstructuredSimplicialMeshDevice base_mesh;
+    uint64_t n_layers;
+    uint64_t n_spatial_verts;
+
+    FTK_HOST_DEVICE uint64_t get_num_vertices() const { return n_spatial_verts * (n_layers + 1); }
+    FTK_HOST_DEVICE void id_to_coords(uint64_t id, uint64_t coords[4]) const {
+        coords[0] = id; coords[1] = 0; coords[2] = 0; coords[3] = 0;
+    }
+    FTK_HOST_DEVICE uint64_t coords_to_id(const uint64_t coords[4]) const {
+        return coords[0];
+    }
+};
+
 } // namespace ftk2

@@ -317,6 +317,10 @@ public:
         return coords;
     }
 
+    std::shared_ptr<Mesh> get_base_mesh() const { return base_mesh_; }
+    uint64_t get_n_layers() const { return n_layers_; }
+    uint64_t get_n_spatial_verts() const { return n_spatial_verts_; }
+
 private:
     std::shared_ptr<Mesh> base_mesh_;
     uint64_t n_layers_;

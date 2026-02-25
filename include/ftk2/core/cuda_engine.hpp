@@ -392,6 +392,89 @@ __global__ void extraction_kernel(
     }
 }
 
+/**
+ * @brief CUDA kernel for parallel feature extraction on unstructured meshes.
+ */
+template <typename PredicateDevice, typename T, typename IDType>
+__global__ void extraction_kernel_unstructured(
+    UnstructuredSimplicialMeshDevice mesh, 
+    PredicateDevice pred, 
+    CudaDataView<T>* data_views,
+    int n_vars,
+    CudaExtractionResult<IDType> results) 
+{
+    int m = PredicateDevice::codimension;
+    uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // 1. Extract nodes
+    if (idx < mesh.get_num_simplices(m)) {
+        const Simplex& s = mesh.get_simplex(m, idx);
+        FeatureElement el;
+        if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+            int n_idx = atomicAdd(results.node_count, 1);
+            if (n_idx < results.max_nodes) results.nodes[n_idx] = el;
+        }
+    }
+}
+
+/**
+ * @brief CUDA kernel for parallel feature extraction on extruded meshes.
+ */
+template <typename PredicateDevice, typename T, typename IDType>
+__global__ void extraction_kernel_extruded(
+    ExtrudedSimplicialMeshDevice mesh, 
+    PredicateDevice pred, 
+    CudaDataView<T>* data_views,
+    int n_vars,
+    CudaExtractionResult<IDType> results) 
+{
+    int m = PredicateDevice::codimension;
+    uint64_t idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+
+    // A thread handles one spatial simplex and one layer
+    uint64_t n_spatial_m = mesh.base_mesh.get_num_simplices(m);
+    uint64_t n_spatial_m_minus_1 = (m > 0) ? mesh.base_mesh.get_num_simplices(m - 1) : 0;
+    
+    // 1. Discover nodes on spatial m-simplices at each timestep
+    uint64_t n_total_spatial = n_spatial_m * (mesh.n_layers + 1);
+    if (idx < n_total_spatial) {
+        uint64_t s_idx = idx % n_spatial_m;
+        uint64_t t = idx / n_spatial_m;
+        Simplex s = mesh.base_mesh.get_simplex(m, s_idx);
+        for (int i = 0; i <= m; ++i) s.vertices[i] += t * mesh.n_spatial_verts;
+        
+        FeatureElement el;
+        if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+            int n_idx = atomicAdd(results.node_count, 1);
+            if (n_idx < results.max_nodes) results.nodes[n_idx] = el;
+        }
+    }
+
+    // 2. Discover nodes on spacetime m-simplices connecting t and t+1
+    if (m > 0) {
+        uint64_t n_total_spacetime = n_spatial_m_minus_1 * mesh.n_layers * m;
+        if (idx >= n_total_spatial && idx < n_total_spatial + n_total_spacetime) {
+            uint64_t i = idx - n_total_spatial;
+            uint64_t s_idx = i % n_spatial_m_minus_1;
+            uint64_t rem = i / n_spatial_m_minus_1;
+            uint64_t t = rem / m;
+            int j = rem % m; // j-th spacetime simplex from Kuhn subdivision
+
+            Simplex base_s = mesh.base_mesh.get_simplex(m - 1, s_idx);
+            Simplex s; s.dimension = m;
+            for (int l = 0; l <= j; ++l) s.vertices[l] = base_s.vertices[l] + t * mesh.n_spatial_verts;
+            for (int l = j; l < m; ++l) s.vertices[l + 1] = base_s.vertices[l] + (t + 1) * mesh.n_spatial_verts;
+            s.sort_vertices();
+
+            FeatureElement el;
+            if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+                int n_idx = atomicAdd(results.node_count, 1);
+                if (n_idx < results.max_nodes) results.nodes[n_idx] = el;
+            }
+        }
+    }
+}
+
 } // namespace ftk2
 
 #endif
