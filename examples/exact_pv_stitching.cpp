@@ -118,6 +118,7 @@ int main() {
     int tets_with_punctures = 0;
     int tets_with_2_punctures = 0;
     int tets_with_more = 0;
+    std::map<int, int> puncture_count_histogram;
 
     mesh->iterate_simplices(3, [&](const Simplex& s) {
         tets_checked++;
@@ -145,6 +146,26 @@ int main() {
         }
 
         tets_with_punctures++;
+        puncture_count_histogram[tet_punctures.size()]++;
+
+        // Debug: check for odd counts
+        if (tet_punctures.size() % 2 == 1) {
+            if (puncture_count_histogram[tet_punctures.size()] <= 5) {
+                std::cout << "  ODD COUNT! Tet with " << tet_punctures.size() << " punctures:" << std::endl;
+                std::cout << "    Tet vertices: ";
+                for (int i = 0; i < 4; ++i) std::cout << s.vertices[i] << " ";
+                std::cout << std::endl;
+
+                // Show which faces have punctures
+                for (size_t f = 0; f < faces.size(); ++f) {
+                    if (face_to_punctures.count(faces[f])) {
+                        std::cout << "    Face " << f << ": {";
+                        for (auto v : faces[f]) std::cout << v << " ";
+                        std::cout << "} has " << face_to_punctures[faces[f]].size() << " puncture(s)" << std::endl;
+                    }
+                }
+            }
+        }
 
         // Stitch according to number of punctures
         if (tet_punctures.size() == 2) {
@@ -251,7 +272,15 @@ int main() {
     std::cout << "  " << tets_with_punctures << " tets have punctures on faces" << std::endl;
     std::cout << "  " << tets_with_2_punctures << " tets have exactly 2 punctures (unambiguous)" << std::endl;
     std::cout << "  " << tets_with_more << " tets have >2 punctures (ambiguous)" << std::endl;
-    std::cout << "Created " << connections.size() << " connections" << std::endl;
+
+    std::cout << "\nPuncture count histogram:" << std::endl;
+    for (const auto& pair : puncture_count_histogram) {
+        std::cout << "  " << pair.second << " tets with " << pair.first << " punctures";
+        if (pair.first % 2 == 1) std::cout << " <-- ODD (SHOULD NOT HAPPEN!)";
+        std::cout << std::endl;
+    }
+
+    std::cout << "\nCreated " << connections.size() << " connections" << std::endl;
 
     // Build adjacency graph from connections
     std::map<int, std::vector<int>> adjacency;
