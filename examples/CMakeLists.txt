@@ -102,3 +102,6 @@ else()
     message(STATUS "Skipping high-level API demo (yaml-cpp not found)")
 endif()
 
+
+add_executable(ftk2_check_punctures check_punctures.cpp)
+target_link_libraries(ftk2_check_punctures ftk2)
