@@ -442,12 +442,162 @@ void polynomial_scalar_multiply(T P[], int m, T scalar) {
         P[i] *= scalar;
 }
 
+// Forward declaration
+template <typename T>
+int solve_cubic_real(const T P[4], T roots[3], T epsilon = std::numeric_limits<T>::epsilon());
+
+/**
+ * @brief Solve cubic rational inequality P(λ)/Q(λ) ≥ 0
+ *
+ * Returns intervals where the rational function is non-negative.
+ * The rational function changes sign at:
+ * 1. Roots of P (numerator zeros)
+ * 2. Roots of Q (denominator poles)
+ *
+ * Algorithm:
+ * 1. Find all roots of P and Q
+ * 2. Sort roots to create test intervals
+ * 3. Test sign in each interval
+ * 4. Return intervals where sign is non-negative
+ */
+template <typename T>
+struct Interval {
+    T min, max;
+    bool min_inclusive, max_inclusive;
+
+    Interval() : min(0), max(0), min_inclusive(false), max_inclusive(false) {}
+    Interval(T a, T b, bool inc_a = true, bool inc_b = true)
+        : min(a), max(b), min_inclusive(inc_a), max_inclusive(inc_b) {}
+
+    bool contains(T x, T eps = std::numeric_limits<T>::epsilon()) const {
+        if (x < min - eps || x > max + eps) return false;
+        if (std::abs(x - min) < eps) return min_inclusive;
+        if (std::abs(x - max) < eps) return max_inclusive;
+        return true;
+    }
+
+    T length() const { return max - min; }
+};
+
+/**
+ * @brief Find valid parameter range for barycentric coordinates
+ *
+ * Computes intervals where all Pᵢ(λ)/Q(λ) ≥ 0.
+ * Note: We don't need to check ≤ 1 because barycentric coords sum to 1!
+ */
+template <typename T>
+std::vector<Interval<T>> solve_barycentric_inequalities(
+    const T P[4][4], const T Q[4],
+    T epsilon = std::numeric_limits<T>::epsilon())
+{
+    std::vector<T> critical_points;
+
+    // Find roots of Q (denominator) - these are poles
+    T q_roots[3];
+    int n_q_roots = solve_cubic_real(Q, q_roots, epsilon);
+    for (int i = 0; i < n_q_roots; ++i) {
+        critical_points.push_back(q_roots[i]);
+    }
+
+    // Find roots of each Pᵢ (numerators) - these are zeros
+    for (int i = 0; i < 4; ++i) {
+        T p_roots[3];
+        int n_p_roots = solve_cubic_real(P[i], p_roots, epsilon);
+        for (int j = 0; j < n_p_roots; ++j) {
+            critical_points.push_back(p_roots[j]);
+        }
+    }
+
+    // Sort critical points
+    std::sort(critical_points.begin(), critical_points.end());
+
+    // Remove duplicates
+    critical_points.erase(
+        std::unique(critical_points.begin(), critical_points.end(),
+                   [epsilon](T a, T b) { return std::abs(a - b) < epsilon; }),
+        critical_points.end()
+    );
+
+    // Test intervals between critical points
+    std::vector<Interval<T>> valid_intervals;
+
+    // Add boundary points for testing
+    std::vector<T> test_points = {-1e10}; // Start with -infinity
+    test_points.insert(test_points.end(), critical_points.begin(), critical_points.end());
+    test_points.push_back(1e10); // End with +infinity
+
+    for (size_t i = 0; i + 1 < test_points.size(); ++i) {
+        T left = test_points[i];
+        T right = test_points[i + 1];
+        T mid = (left + right) * 0.5;
+
+        // Evaluate P[i]/Q at midpoint
+        T q_val = Q[0] + Q[1]*mid + Q[2]*mid*mid + Q[3]*mid*mid*mid;
+
+        // Skip if Q is zero (pole)
+        if (std::abs(q_val) < epsilon) continue;
+
+        // Check if all barycentric coordinates are non-negative at midpoint
+        bool all_nonneg = true;
+        for (int j = 0; j < 4; ++j) {
+            T p_val = P[j][0] + P[j][1]*mid + P[j][2]*mid*mid + P[j][3]*mid*mid*mid;
+            T ratio = p_val / q_val;
+
+            if (ratio < -epsilon) {
+                all_nonneg = false;
+                break;
+            }
+        }
+
+        if (all_nonneg) {
+            // Determine if endpoints are inclusive
+            bool left_inc = false, right_inc = false;
+
+            // Check left endpoint
+            if (i > 0) {
+                T q_left = Q[0] + Q[1]*left + Q[2]*left*left + Q[3]*left*left*left;
+                if (std::abs(q_left) > epsilon) {
+                    bool left_valid = true;
+                    for (int j = 0; j < 4; ++j) {
+                        T p_left = P[j][0] + P[j][1]*left + P[j][2]*left*left + P[j][3]*left*left*left;
+                        if (p_left / q_left < -epsilon) {
+                            left_valid = false;
+                            break;
+                        }
+                    }
+                    left_inc = left_valid;
+                }
+            }
+
+            // Check right endpoint
+            if (i + 2 < test_points.size()) {
+                T q_right = Q[0] + Q[1]*right + Q[2]*right*right + Q[3]*right*right*right;
+                if (std::abs(q_right) > epsilon) {
+                    bool right_valid = true;
+                    for (int j = 0; j < 4; ++j) {
+                        T p_right = P[j][0] + P[j][1]*right + P[j][2]*right*right + P[j][3]*right*right*right;
+                        if (p_right / q_right < -epsilon) {
+                            right_valid = false;
+                            break;
+                        }
+                    }
+                    right_inc = right_valid;
+                }
+            }
+
+            valid_intervals.push_back(Interval<T>(left, right, left_inc, right_inc));
+        }
+    }
+
+    return valid_intervals;
+}
+
 /**
  * @brief Solve cubic equation: P[0] + P[1]x + P[2]x² + P[3]x³ = 0
  * Returns number of real roots
  */
 template <typename T>
-int solve_cubic_real(const T P[4], T roots[3], T epsilon = std::numeric_limits<T>::epsilon()) {
+int solve_cubic_real(const T P[4], T roots[3], T epsilon) {
     if (std::abs(P[3]) < epsilon) {
         // Degenerate to quadratic
         if (std::abs(P[2]) < epsilon) {
@@ -799,35 +949,24 @@ bool solve_pv_tetrahedron(const T V[4][3], const T W[4][3],
         segment.P[i].coeffs[3] = P[i][3];
     }
 
-    // TODO: Implement proper parameter range finding using cubic rational inequalities
-    // For now, use [0, 1] as placeholder
-    // The actual range should be computed by solving:
-    //   0 ≤ P[i](λ)/Q(λ) ≤ 1 for all i=0,1,2,3
-    segment.lambda_min = 0.0;
-    segment.lambda_max = 1.0;
+    // Find valid parameter ranges where all barycentric coordinates are non-negative
+    // Note: We don't need to check ≤ 1 because they sum to 1 by construction!
+    auto intervals = solve_barycentric_inequalities(P, Q, epsilon);
 
-    // Simple validation: check if curve intersects tetrahedron at a few sample points
-    bool found_valid = false;
-    for (int sample = 0; sample <= 10; ++sample) {
-        double lambda = sample * 0.1;
-        auto mu = segment.get_barycentric(lambda);
-
-        // Check if valid barycentric coordinates
-        bool valid = true;
-        for (int i = 0; i < 4; ++i) {
-            if (mu[i] < -epsilon || mu[i] > 1 + epsilon) {
-                valid = false;
-                break;
-            }
-        }
-
-        if (valid) {
-            found_valid = true;
-            break;
-        }
+    if (intervals.empty()) {
+        return false; // No valid parameter range
     }
 
-    return found_valid;
+    // Use the first (typically largest) valid interval
+    // In practice, there's usually only one interval for well-behaved cases
+    segment.lambda_min = intervals[0].min;
+    segment.lambda_max = intervals[0].max;
+
+    // Clamp to reasonable bounds if intervals extend to infinity
+    if (segment.lambda_min < -100) segment.lambda_min = -100;
+    if (segment.lambda_max > 100) segment.lambda_max = 100;
+
+    return true;
 }
 
 template <typename T>

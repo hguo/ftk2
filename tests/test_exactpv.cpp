@@ -433,6 +433,43 @@ TEST(solve_pv_tetrahedron_barycentric_sum) {
     }
 }
 
+TEST(solve_pv_tetrahedron_parameter_range) {
+    // Test that parameter range contains only valid barycentric coordinates
+    double V[4][3] = {
+        { 1.0,  0.0,  0.0},
+        { 0.0,  1.0,  0.0},
+        { 0.0,  0.0,  1.0},
+        { 0.2,  0.2,  0.2}
+    };
+    double W[4][3] = {
+        { 0.8,  0.1,  0.1},
+        { 0.1,  0.8,  0.1},
+        { 0.1,  0.1,  0.8},
+        {-0.2, -0.2, -0.2}
+    };
+
+    PVCurveSegment segment;
+    bool result = solve_pv_tetrahedron(V, W, segment);
+
+    if (result) {
+        // Sample within the computed parameter range
+        double lambda_range = segment.lambda_max - segment.lambda_min;
+        for (int i = 0; i <= 10; ++i) {
+            double lambda = segment.lambda_min + i * lambda_range * 0.1;
+            auto mu = segment.get_barycentric(lambda);
+
+            // All barycentric coordinates should be non-negative
+            for (int j = 0; j < 4; ++j) {
+                ASSERT_TRUE(mu[j] >= -1e-6);
+            }
+
+            // Sum should be 1
+            double sum = mu[0] + mu[1] + mu[2] + mu[3];
+            ASSERT_NEAR(sum, 1.0, 1e-6);
+        }
+    }
+}
+
 void test_exactpv() {
     // Test runner - the tests are automatically registered and run via static constructors
     std::cout << "ExactPV tests completed (polynomial utilities, data structures, triangle/tetrahedron solvers)" << std::endl;
