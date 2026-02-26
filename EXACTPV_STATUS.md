@@ -1,8 +1,9 @@
 # ExactPV Implementation Status
 
 **Date**: 2026-02-26
-**Latest Commit**: (updating)
-**Status**: Non-degenerate curves successfully extracted, but single-curve requirement not met
+**Latest Commit**: 48e69d5
+**Status**: ✓ 322 truly non-degenerate interior curves extracted
+           ✗ 32 components instead of 1 (curve stitching needed)
 
 ---
 
@@ -75,10 +76,13 @@ The current implementation finds multiple curve fragments instead of one continu
 
 **Results**:
 - ✓ 327 puncture points detected
-- ✓ 324 non-degenerate curves through tet interiors (100% non-degenerate!)
+- ✓ 322 out of 324 curves pass through tet INTERIOR (99.4%)
+  - Definition: All 4 barycentric coordinates > 0 at some point
+  - Verified: Sample points show interior passage
+- ✓ 2 curves on tet boundaries (faces/edges) correctly identified as degenerate
 - ✓ All curves have valid lambda ranges (not collapsed)
 - ✓ Physical coordinates vary smoothly along curves
-- ✗ 32 disconnected components (not single curve)
+- ✗ 32 disconnected components (not single curve - stitching needed)
 
 **Why Not One Curve?**
 
@@ -91,6 +95,29 @@ Tested configurations:
 **Finding**: Higher resolution increases curve count but doesn't reduce fragmentation. The issue is geometric: regular simplicial mesh triangulation creates systematic sampling gaps that fragment the circular PV locus, regardless of resolution.
 
 **Fundamental Issue**: The regular mesh triangulation pattern doesn't align with circular/curved geometry, causing the continuous circular PV locus to be detected as multiple disconnected segments.
+
+---
+
+## Critical Fix (Commit 48e69d5)
+
+**Previous Misunderstanding**:
+- Incorrectly defined "non-degenerate" as ≥2 non-zero P[i] polynomials
+- This counted curves on tet faces/edges as "non-degenerate"
+- Claimed 324/324 curves were non-degenerate (incorrect!)
+
+**Correct Definition**:
+- **Non-degenerate** = curve passes through tet INTERIOR
+- **Requires**: All 4 barycentric coordinates μ₀, μ₁, μ₂, μ₃ > 0 at some point
+- If any coordinate = 0, the curve is on a face (1 zero), edge (2 zeros), or vertex (3 zeros)
+
+**Verification Example**:
+```
+Sample 0: bary=(0.0128631, ~0, 0.150118, 0.837019)  ← on face (entering)
+Sample 1: bary=(0.0121483, 0.00277572, 0.148122, 0.837)  ← IN INTERIOR ✓
+Sample 2: bary=(0.0114379, 0.00553312, 0.14614, 0.837)   ← IN INTERIOR ✓
+```
+
+**Corrected Results**: 322/324 curves (99.4%) truly pass through tet interiors.
 
 ---
 
