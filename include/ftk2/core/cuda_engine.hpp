@@ -44,26 +44,6 @@ struct CudaExtractionResult {
 };
 
 /**
- * @brief Helper to encode a simplex into a unique ID on device.
- */
-template <typename DeviceMesh>
-__device__
-inline uint64_t encode_simplex_id(const Simplex& s, const DeviceMesh& mesh) {
-    uint64_t v_min = s.vertices[0];
-    for (int i = 1; i <= s.dimension; ++i) if (s.vertices[i] < v_min) v_min = s.vertices[i];
-    uint64_t c_min[4] = {0}; mesh.id_to_coords(v_min, c_min);
-    uint64_t combined_mask = 0;
-    for (int i = 0; i <= s.dimension; ++i) {
-        if (s.vertices[i] == v_min) continue;
-        uint64_t ci[4] = {0}; mesh.id_to_coords(s.vertices[i], ci);
-        uint64_t mask = 0;
-        for (int k = 0; k < 4 && k < 4; ++k) if (ci[k] > c_min[k]) mask |= (1 << k);
-        combined_mask = (combined_mask << 4) | (mask & 0xF);
-    }
-    return (v_min << 24) | (combined_mask & 0xFFFFFF);
-}
-
-/**
  * @brief CUDA implementation of Marching Tetrahedra logic.
  */
 template <typename T, typename DeviceMesh, typename PredicateDevice, typename IDType>

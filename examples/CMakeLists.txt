@@ -16,8 +16,38 @@ target_link_libraries(ftk2_fiber_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK:
 add_executable(ftk2_critical_point_unstructured_2d critical_point_unstructured_2d.cpp)
 target_link_libraries(ftk2_critical_point_unstructured_2d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
-add_executable(ftk2_unstructured_3d unstructured_3d.cpp)
+add_executable(ftk2_unstructured_3d unstructured_3d.cu)
 target_link_libraries(ftk2_unstructured_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_synthetic unstructured_3d_synthetic.cu)
+target_link_libraries(ftk2_unstructured_3d_synthetic PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_moving_maximum unstructured_3d_moving_maximum.cu)
+target_link_libraries(ftk2_unstructured_3d_moving_maximum PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_single_trajectory unstructured_3d_single_trajectory.cu)
+target_link_libraries(ftk2_unstructured_3d_single_trajectory PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_clean_test unstructured_3d_clean_test.cu)
+target_link_libraries(ftk2_unstructured_3d_clean_test PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_from_vtu unstructured_3d_from_vtu.cu)
+target_link_libraries(ftk2_unstructured_3d_from_vtu PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_stream_test unstructured_3d_stream_test.cu)
+target_link_libraries(ftk2_unstructured_3d_stream_test PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_extruded_test unstructured_3d_extruded_test.cu)
+target_link_libraries(ftk2_unstructured_3d_extruded_test PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_slow_trajectory unstructured_3d_slow_trajectory.cu)
+target_link_libraries(ftk2_unstructured_3d_slow_trajectory PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_pentatope_debug unstructured_3d_pentatope_debug.cu)
+target_link_libraries(ftk2_unstructured_3d_pentatope_debug PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+add_executable(ftk2_unstructured_3d_manifold_debug unstructured_3d_manifold_debug.cu)
+target_link_libraries(ftk2_unstructured_3d_manifold_debug PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
 if (CMAKE_CUDA_COMPILER)
     add_executable(ftk2_levelset_3d_cuda levelset_3d_cuda.cu)

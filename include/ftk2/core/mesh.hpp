@@ -131,7 +131,35 @@ public:
         });
     }
 
-    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
+    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {
+        // Find all (d+1)-simplices that contain simplex s (where d = s.dimension)
+        if (s.dimension >= get_total_dimension()) return;  // No cofaces for top-dimensional simplices
+
+        int target_dim = s.dimension + 1;
+
+        // Iterate over all simplices of dimension target_dim
+        iterate_simplices(target_dim, [&](const Simplex& candidate) {
+            // Check if candidate contains all vertices of s
+            bool contains_all = true;
+            for (int i = 0; i <= s.dimension; ++i) {
+                bool found = false;
+                for (int j = 0; j <= target_dim; ++j) {
+                    if (candidate.vertices[j] == s.vertices[i]) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    contains_all = false;
+                    break;
+                }
+            }
+
+            if (contains_all) {
+                callback(candidate);
+            }
+        });
+    }
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
         std::vector<uint64_t> grid_idx = id_to_grid_index(vertex_id);
@@ -307,7 +335,35 @@ public:
         }
     }
 
-    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
+    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {
+        // Find all (d+1)-simplices that contain simplex s
+        if (s.dimension >= get_total_dimension()) return;  // No cofaces for top-dimensional simplices
+
+        int target_dim = s.dimension + 1;
+
+        // Iterate over all simplices of dimension target_dim
+        iterate_simplices(target_dim, [&](const Simplex& candidate) {
+            // Check if candidate contains all vertices of s
+            bool contains_all = true;
+            for (int i = 0; i <= s.dimension; ++i) {
+                bool found = false;
+                for (int j = 0; j <= target_dim; ++j) {
+                    if (candidate.vertices[j] == s.vertices[i]) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    contains_all = false;
+                    break;
+                }
+            }
+
+            if (contains_all) {
+                callback(candidate);
+            }
+        });
+    }
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
         uint64_t t = vertex_id / n_spatial_verts_;

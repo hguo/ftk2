@@ -12,6 +12,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <queue>
 #include <unordered_set>
 #include <iostream>
 #include <algorithm>
@@ -83,13 +84,11 @@ public:
         : mesh_(mesh), predicate_(pred) {}
 
     void clear_results() {
-        std::cout << "  Engine: clearing results..." << std::endl;
         active_nodes_.clear();
         node_elements_.clear();
         node_id_to_simplex_.clear();
         manifold_simplices_.clear();
         uf_.clear();
-        std::cout << "  Engine: cleared." << std::endl;
     }
 
     void execute(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
@@ -100,7 +99,6 @@ public:
     void feed(std::shared_ptr<Mesh> slab_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
         auto t_start = std::chrono::high_resolution_clock::now();
         int d_total = slab_mesh->get_total_dimension();
-        std::cout << "  Engine: feeding mesh with dim " << d_total << std::endl;
         
         std::vector<std::string> resolved_vars = var_names;
         if (resolved_vars.empty()) {
@@ -126,7 +124,6 @@ public:
                 elements.push_back(el);
             }
         });
-        std::cout << "  Extraction: visited=" << visited.load() << ", found=" << found.load() << " nodes." << std::endl;
         
         std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : elements) {
@@ -334,7 +331,7 @@ public:
 
         int h_node_count; CUDA_CHECK(cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
         std::vector<FeatureElement> h_elements(h_node_count);
-        CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_node_count * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
+        if (h_node_count > 0) CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_node_count * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
 
         std::sort(h_elements.begin(), h_elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
         for (const auto& el : h_elements) {
@@ -344,20 +341,19 @@ public:
             }
         }
 
-        // Manifold results (regular only for now)
         for (int dim = 1; dim <= 3; ++dim) {
             int count = 0;
             if (dim == 1) { CUDA_CHECK(cudaMemcpy(&count, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
                 std::vector<DeviceManifoldSimplex<IDType, 1>> h_s(count); CUDA_CHECK(cudaMemcpy(h_s.data(), res.edges, count*sizeof(h_s[0]), cudaMemcpyDeviceToHost));
-                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
+                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node_regular(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
                 if(nodes.size()==dim+1) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[dim].push_back(nodes); } }
             }} else if (dim == 2) { CUDA_CHECK(cudaMemcpy(&count, res.face_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
                 std::vector<DeviceManifoldSimplex<IDType, 2>> h_s(count); CUDA_CHECK(cudaMemcpy(h_s.data(), res.faces, count*sizeof(h_s[0]), cudaMemcpyDeviceToHost));
-                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
+                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node_regular(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
                 if(nodes.size()==dim+1) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[dim].push_back(nodes); } }
             }} else if (dim == 3) { CUDA_CHECK(cudaMemcpy(&count, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost)); if (count > 0) {
                 std::vector<DeviceManifoldSimplex<IDType, 3>> h_s(count); CUDA_CHECK(cudaMemcpy(h_s.data(), res.volumes, count*sizeof(h_s[0]), cudaMemcpyDeviceToHost));
-                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
+                for (const auto& s : h_s) { std::vector<IDType> nodes; for(int i=0; i<=dim; ++i) { IDType nid; if(resolve_simplex_to_node_regular(s.nodes[i], reg_mesh, m, nid)) nodes.push_back(nid); }
                 if(nodes.size()==dim+1) { std::sort(nodes.begin(), nodes.end()); manifold_simplices_[dim].push_back(nodes); } }
             }}
         }
@@ -371,7 +367,6 @@ public:
 
     void execute_cuda_unstructured(std::shared_ptr<UnstructuredSimplicialMesh> unst_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
         auto t_start = std::chrono::high_resolution_clock::now();
-        std::cout << "  GPU: starting unstructured execution..." << std::endl;
         clear_results();
 
         UnstructuredSimplicialMeshDevice d_mesh;
@@ -379,18 +374,11 @@ public:
         d_mesh.cell_dim = unst_mesh->get_total_dimension();
         
         for (int k = 0; k <= d_mesh.cell_dim; ++k) {
-            std::atomic<uint64_t> n_s(0); 
-            unst_mesh->iterate_simplices(k, [&](const Simplex& s) { n_s++; });
+            std::atomic<uint64_t> n_s(0); unst_mesh->iterate_simplices(k, [&](const Simplex& s) { n_s++; });
             d_mesh.n_simplices[k] = n_s.load();
-            
             std::vector<Simplex> h_simplices(d_mesh.n_simplices[k]);
             std::atomic<uint64_t> counter(0);
-            unst_mesh->iterate_simplices(k, [&](const Simplex& s) { 
-                uint64_t idx = counter.fetch_add(1);
-                h_simplices[idx] = s; 
-            });
-            
-            std::cout << "  GPU: allocating " << d_mesh.n_simplices[k] << " simplices for dim " << k << std::endl;
+            unst_mesh->iterate_simplices(k, [&](const Simplex& s) { h_simplices[counter.fetch_add(1)] = s; });
             CUDA_CHECK(cudaMalloc((void**)&d_mesh.simplices[k], d_mesh.n_simplices[k] * sizeof(Simplex)));
             CUDA_CHECK(cudaMemcpy((void*)d_mesh.simplices[k], h_simplices.data(), d_mesh.n_simplices[k] * sizeof(Simplex), cudaMemcpyHostToDevice));
         }
@@ -428,16 +416,12 @@ public:
         res.max_nodes = max_nodes;
 
         uint64_t n_total = std::max(d_mesh.n_simplices[m], d_mesh.n_simplices[d_mesh.cell_dim]);
-        std::cout << "  GPU: launching unstructured kernel with " << n_total << " threads..." << std::endl;
         extraction_kernel_unstructured<<< (n_total+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         int h_n; CUDA_CHECK(cudaMemcpy(&h_n, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
-        std::cout << "  GPU: found " << h_n << " nodes." << std::endl;
         std::vector<FeatureElement> h_elements(h_n);
-        if (h_n > 0) {
-            CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_n * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
-        }
+        if (h_n > 0) CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_n * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
 
         for (const auto& el : h_elements) {
             if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
@@ -446,7 +430,6 @@ public:
             }
         }
 
-        std::cout << "  GPU: cleaning up unstructured resources..." << std::endl;
         for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
         CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
         for (int k = 0; k <= d_mesh.cell_dim; ++k) CUDA_CHECK(cudaFree((void*)d_mesh.simplices[k]));
@@ -457,37 +440,25 @@ public:
 
     void execute_cuda_extruded(std::shared_ptr<ExtrudedSimplicialMesh> ext_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
         auto t_start = std::chrono::high_resolution_clock::now();
-        std::cout << "  GPU: starting extruded execution..." << std::endl;
         clear_results();
 
-        std::cout << "  GPU: casting base mesh..." << std::endl;
         auto unst_base = std::dynamic_pointer_cast<UnstructuredSimplicialMesh>(ext_mesh->get_base_mesh());
         if (!unst_base) { std::cerr << "CUDA Extruded requires Unstructured base mesh." << std::endl; return; }
 
         ExtrudedSimplicialMeshDevice d_mesh;
-        for (int i=0; i<4; ++i) d_mesh.base_mesh.simplices[i] = nullptr; // Initialize
-        
         d_mesh.n_layers = ext_mesh->get_n_layers();
         d_mesh.n_spatial_verts = ext_mesh->get_n_spatial_verts();
         d_mesh.base_mesh.spatial_dim = unst_base->get_spatial_dimension();
         d_mesh.base_mesh.cell_dim = unst_base->get_total_dimension();
-        std::cout << "  GPU: base mesh cell_dim=" << d_mesh.base_mesh.cell_dim << std::endl;
         
-        // Only need vertices (dim 0), m-1, and m for extraction
         std::set<int> needed_dims = {0, m, m-1};
         for (int k : needed_dims) {
             if (k < 0 || k > d_mesh.base_mesh.cell_dim) continue;
             std::atomic<uint64_t> n_s(0); unst_base->iterate_simplices(k, [&](const Simplex& s) { n_s++; });
             d_mesh.base_mesh.n_simplices[k] = n_s.load();
-            
             std::vector<Simplex> h_simplices(d_mesh.base_mesh.n_simplices[k]);
             std::atomic<uint64_t> counter(0);
-            unst_base->iterate_simplices(k, [&](const Simplex& s) { 
-                uint64_t idx = counter.fetch_add(1);
-                h_simplices[idx] = s; 
-            });
-
-            std::cout << "  GPU: allocating " << d_mesh.base_mesh.n_simplices[k] << " spatial simplices for dim " << k << std::endl;
+            unst_base->iterate_simplices(k, [&](const Simplex& s) { h_simplices[counter.fetch_add(1)] = s; });
             CUDA_CHECK(cudaMalloc((void**)&d_mesh.base_mesh.simplices[k], d_mesh.base_mesh.n_simplices[k] * sizeof(Simplex)));
             CUDA_CHECK(cudaMemcpy((void*)d_mesh.base_mesh.simplices[k], h_simplices.data(), d_mesh.base_mesh.n_simplices[k] * sizeof(Simplex), cudaMemcpyHostToDevice));
         }
@@ -528,16 +499,12 @@ public:
         uint64_t n_spatial_m_minus_1 = (m > 0) ? d_mesh.base_mesh.n_simplices[m-1] : 0;
         uint64_t n_total = n_spatial_m * (d_mesh.n_layers + 1) + n_spatial_m_minus_1 * d_mesh.n_layers * m;
 
-        std::cout << "  GPU: launching extruded kernel with " << n_total << " threads..." << std::endl;
         extraction_kernel_extruded<<< (n_total+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
         CUDA_CHECK(cudaDeviceSynchronize());
 
         int h_n; CUDA_CHECK(cudaMemcpy(&h_n, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
-        std::cout << "  GPU: found " << h_n << " nodes." << std::endl;
         std::vector<FeatureElement> h_elements(h_n);
-        if (h_n > 0) {
-            CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_n * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
-        }
+        if (h_n > 0) CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes, h_n * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
 
         for (const auto& el : h_elements) {
             if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
@@ -546,13 +513,9 @@ public:
             }
         }
 
-        std::cout << "  GPU: cleaning up extruded resources..." << std::endl;
         for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
         CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
-        for (int k : needed_dims) if (k >= 0 && k <= d_mesh.base_mesh.cell_dim) {
-            std::cout << "  GPU: freeing dim " << k << std::endl;
-            CUDA_CHECK(cudaFree((void*)d_mesh.base_mesh.simplices[k]));
-        }
+        for (int k : needed_dims) if (k >= 0 && k <= d_mesh.base_mesh.cell_dim) CUDA_CHECK(cudaFree((void*)d_mesh.base_mesh.simplices[k]));
         
         auto t_end = std::chrono::high_resolution_clock::now();
         std::cout << "CUDA Extruded Total=" << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count() << "ms" << std::endl;
@@ -571,31 +534,146 @@ public:
         std::vector<Simplex> sorted_active_simplices;
         for (auto const& [s, _] : active_nodes_) sorted_active_simplices.push_back(s);
         std::sort(sorted_active_simplices.begin(), sorted_active_simplices.end());
-        
-        std::map<Simplex, IDType> canonical_active_nodes;
-        for (const auto& s : sorted_active_simplices) canonical_active_nodes[s] = uf_.add();
 
-        for (int dim = 1; dim <= 3; ++dim) {
-            for (const auto& nodes : manifold_simplices_[dim]) {
-                for (size_t i = 1; i < nodes.size(); ++i) uf_.unite(nodes[0], nodes[i]);
-            }
+        std::map<Simplex, IDType> canonical_active_nodes;
+        std::map<IDType, IDType> old_to_canonical;  // Map original IDs to canonical IDs
+        for (const auto& s : sorted_active_simplices) {
+            IDType original_id = active_nodes_.at(s);
+            IDType canonical_id = uf_.add();
+            canonical_active_nodes[s] = canonical_id;
+            old_to_canonical[original_id] = canonical_id;
         }
 
-        std::map<uint64_t, Simplex> root_to_min_simplex;
+        // Original manifold stitching within each pentatope (using mapped IDs)
+        int n_manifold_unions = 0;
+        for (int dim = 1; dim <= 3; ++dim) {
+            for (const auto& nodes : manifold_simplices_[dim]) {
+                for (size_t i = 1; i < nodes.size(); ++i) {
+                    if (old_to_canonical.count(nodes[0]) && old_to_canonical.count(nodes[i])) {
+                        uf_.unite(old_to_canonical.at(nodes[0]), old_to_canonical.at(nodes[i]));
+                        n_manifold_unions++;
+                    }
+                }
+            }
+        }
+        std::cout << "Manifold stitching: " << n_manifold_unions << " unions from manifold simplices" << std::endl;
+
+        // Debug: count roots after manifold stitching only and check timestep connectivity
+        {
+            std::set<uint64_t> roots_after_manifold;
+            std::map<uint64_t, std::set<int>> root_to_timesteps;
+
+            for (const auto& [s, _] : active_nodes_) {
+                if (canonical_active_nodes.count(s)) {
+                    IDType id = canonical_active_nodes.at(s);
+                    uint64_t root = uf_.find(id);
+                    roots_after_manifold.insert(root);
+
+                    // Find timestep of this CP
+                    auto c0 = mesh_->get_vertex_coordinates(s.vertices[0]);
+                    int t = (int)(c0[3] + 0.5);
+                    root_to_timesteps[root].insert(t);
+                }
+            }
+
+            std::cout << "  Unique roots after manifold only: " << roots_after_manifold.size() << std::endl;
+
+            // Check how many components span multiple timesteps
+            int n_cross_timestep_components = 0;
+            for (const auto& [root, timesteps] : root_to_timesteps) {
+                if (timesteps.size() > 1) n_cross_timestep_components++;
+            }
+            std::cout << "  Components spanning multiple timesteps: " << n_cross_timestep_components << " / " << roots_after_manifold.size() << std::endl;
+        }
+
+        // ADDITIONAL CONNECTIVITY: For 4D spacetime, use cofaces/faces like old FTK
+        // This matches the approach in ftk/filters/critical_point_tracker_3d_unstructured.hh
+        if (mesh_ && mesh_->get_total_dimension() == 4) {
+            std::cout << "Connecting CPs via cofaces/faces (FTK-style)..." << std::endl;
+
+            int n_unions_cofaces = 0;
+            int total_cofaces_found = 0;
+            int cps_with_no_cofaces = 0;
+
+            // For each CP, find its neighbors through cofaces/faces and unite with CP neighbors
+            // This matches FTK's approach: neighbors(f) returns all tets in shared pentatopes,
+            // then we filter to only unite with CPs
+            for (const auto& [cp_tet, _] : active_nodes_) {
+                if (!canonical_active_nodes.count(cp_tet)) continue;
+
+                IDType cp_id = canonical_active_nodes.at(cp_tet);
+                auto cp_c0 = mesh_->get_vertex_coordinates(cp_tet.vertices[0]);
+                int cp_t = (int)(cp_c0[3] + 0.5);
+
+                // Find all neighbor tets through cofaces (pentatopes) -> faces (tets)
+                std::set<Simplex> neighbor_tets;
+                int n_cofaces = 0;
+
+                mesh_->cofaces(cp_tet, [&](const Simplex& pent) {
+                    if (pent.dimension == 4) {
+                        n_cofaces++;
+                        mesh_->faces(pent, [&](const Simplex& neighbor_tet) {
+                            if (neighbor_tet.dimension == 3) {
+                                Simplex sorted = neighbor_tet;
+                                sorted.sort_vertices();
+                                neighbor_tets.insert(sorted);
+                            }
+                        });
+                    }
+                });
+
+                total_cofaces_found += n_cofaces;
+                if (n_cofaces == 0) cps_with_no_cofaces++;
+
+                // Unite this CP with all neighbor tets that are also CPs
+                for (const auto& neigh : neighbor_tets) {
+                    if (canonical_active_nodes.count(neigh)) {
+                        IDType neigh_id = canonical_active_nodes.at(neigh);
+
+                        // Check if this union actually merges different components
+                        IDType root1 = uf_.find(cp_id);
+                        IDType root2 = uf_.find(neigh_id);
+                        if (root1 != root2) {
+                            uf_.unite(cp_id, neigh_id);
+                            n_unions_cofaces++;
+                        }
+                    }
+                }
+            }
+
+            std::cout << "  Cofaces found: total=" << total_cofaces_found
+                      << " avg=" << (total_cofaces_found / (double)active_nodes_.size())
+                      << " CPs with no cofaces=" << cps_with_no_cofaces << std::endl;
+            std::cout << "  Cofaces connectivity: " << n_unions_cofaces << " unions" << std::endl;
+
+            // Count unique roots after cofaces
+            std::set<uint64_t> roots_after_cofaces;
+            for (const auto& [s, _] : active_nodes_) {
+                if (canonical_active_nodes.count(s)) {
+                    IDType id = canonical_active_nodes.at(s);
+                    roots_after_cofaces.insert(uf_.find(id));
+                }
+            }
+            std::cout << "  Unique roots after cofaces: " << roots_after_cofaces.size() << std::endl;
+        }
+
+        // Assign unique track_id per root (use root ID directly)
+        std::set<uint64_t> unique_roots;
         for (auto const& [s, original_id] : active_nodes_) {
             IDType canonical_id = canonical_active_nodes.at(s);
             uint64_t root = uf_.find(canonical_id);
-            if (root_to_min_simplex.find(root) == root_to_min_simplex.end() || s < root_to_min_simplex[root]) root_to_min_simplex[root] = s;
+            unique_roots.insert(root);
         }
+        std::cout << "Final connected components: " << unique_roots.size() << " (from " << active_nodes_.size() << " nodes)" << std::endl;
 
         std::map<IDType, uint32_t> node_to_stable_idx;
         for (const auto& s : sorted_active_simplices) {
             IDType original_id = active_nodes_.at(s);
             IDType canonical_id = canonical_active_nodes.at(s);
             uint64_t root = uf_.find(canonical_id);
-            FeatureElement el = node_elements_.at(original_id); 
-            el.track_id = root_to_min_simplex[root].vertices[0];
-            node_to_stable_idx[original_id] = complex.vertices.size(); 
+            FeatureElement el = node_elements_.at(original_id);
+            el.track_id = root;  // Use root ID as track_id
+            node_to_stable_idx[original_id] = complex.vertices.size();
             complex.vertices.push_back(el);
         }
         
@@ -873,6 +951,230 @@ private:
 
     Simplex make_edge(uint64_t v0, uint64_t v1) { Simplex s; s.dimension = 1; s.vertices[0] = std::min(v0, v1); s.vertices[1] = std::max(v0, v1); return s; }
 
+    // OLD CODE - REMOVED
+    void connect_cps_via_bfs_OLD(const std::map<Simplex, IDType>& canonical_active_nodes) {
+        // Direct approach: Unite CPs that are reachable within a small neighborhood
+        // For each tet with CP, look at surrounding pentatopes and unite with other CPs found there
+
+        int n_unions_cofaces = 0;
+        int n_cofaces_calls = 0;
+        for (const auto& [cp_tet, _] : active_nodes_) {
+            if (!canonical_active_nodes.count(cp_tet)) continue;
+            IDType cp_id = canonical_active_nodes.at(cp_tet);
+
+            int n_pents_for_this_tet = 0;
+            // Find pentatopes containing this tet
+            mesh_->cofaces(cp_tet, [&](const Simplex& pent) {
+                n_pents_for_this_tet++;
+                // Unite with all CPs in this pentatope
+                mesh_->faces(pent, [&](const Simplex& other_tet) {
+                    if (other_tet.dimension == 3) {
+                        Simplex sorted_other = other_tet;
+                        sorted_other.sort_vertices();
+                        if (canonical_active_nodes.count(sorted_other)) {
+                            IDType other_id = canonical_active_nodes.at(sorted_other);
+                            uf_.unite(cp_id, other_id);
+                            n_unions_cofaces++;
+                        }
+                    }
+                });
+            });
+            n_cofaces_calls++;
+            if (n_pents_for_this_tet == 0 && n_cofaces_calls <= 5) {
+                // Debug: tet with no cofaces
+                auto coords = mesh_->get_vertex_coordinates(cp_tet.vertices[0]);
+                std::cout << "  WARNING: Tet with CP has 0 cofaces! First vertex at t=" << coords[coords.size()-1] << std::endl;
+            }
+        }
+
+        // Count components after cofaces unions
+        std::set<uint64_t> roots_after_cofaces;
+        for (const auto& [s, _] : active_nodes_) {
+            if (canonical_active_nodes.count(s)) {
+                IDType id = canonical_active_nodes.at(s);
+                roots_after_cofaces.insert(uf_.find(id));
+            }
+        }
+
+        std::cout << "Direct cofaces: " << n_unions_cofaces << " unions via cofaces" << std::endl;
+        std::cout << "Components after cofaces: " << roots_after_cofaces.size() << std::endl;
+        return;  // Skip the BFS part
+
+        // (old BFS code follows but is not reached)
+        std::map<Simplex, std::set<Simplex>> adjacency;
+
+        // Count edges in adjacency graph
+        int n_edges = 0;
+        for (const auto& [tet, neighbors] : adjacency) {
+            n_edges += neighbors.size();
+        }
+        n_edges /= 2;  // Each edge counted twice
+        std::cout << "  Adjacency graph: " << adjacency.size() << " nodes, " << n_edges << " edges" << std::endl;
+
+        // BFS to find connected components and unite them
+        std::set<Simplex> visited;
+        int n_components_before = 0;
+        for (const auto& [start_tet, _] : active_nodes_) {
+            if (visited.count(start_tet)) continue;
+
+            // BFS from start_tet
+            std::vector<Simplex> component;
+            std::queue<Simplex> q;
+            q.push(start_tet);
+            visited.insert(start_tet);
+
+            while (!q.empty()) {
+                Simplex current = q.front();
+                q.pop();
+                component.push_back(current);
+
+                for (const auto& neighbor : adjacency[current]) {
+                    if (!visited.count(neighbor)) {
+                        visited.insert(neighbor);
+                        q.push(neighbor);
+                    }
+                }
+            }
+
+            // Unite all tets in this component
+            if (component.size() > 0 && canonical_active_nodes.count(component[0])) {
+                IDType root_id = canonical_active_nodes.at(component[0]);
+                for (size_t i = 1; i < component.size(); ++i) {
+                    if (canonical_active_nodes.count(component[i])) {
+                        IDType id = canonical_active_nodes.at(component[i]);
+                        uf_.unite(root_id, id);
+                    }
+                }
+            }
+            n_components_before++;
+        }
+
+        std::cout << "BFS connectivity: Found " << n_components_before << " components via BFS" << std::endl;
+    }
+
+    void connect_cps_across_pentatopes_OLD(const std::map<Simplex, IDType>& canonical_active_nodes) {
+        // First, analyze which kinds of tets have CPs
+        int n_spatial_tets = 0, n_spacetime_tets = 0;
+        std::map<int, int> cps_by_time;  // time -> count
+        for (const auto& [tet_simplex, _] : active_nodes_) {
+            auto c0 = mesh_->get_vertex_coordinates(tet_simplex.vertices[0]);
+            auto c1 = mesh_->get_vertex_coordinates(tet_simplex.vertices[1]);
+            auto c2 = mesh_->get_vertex_coordinates(tet_simplex.vertices[2]);
+            auto c3 = mesh_->get_vertex_coordinates(tet_simplex.vertices[3]);
+            int d = c0.size() - 1;  // time is last coordinate
+            double t0 = c0[d], t1 = c1[d], t2 = c2[d], t3 = c3[d];
+            double tmin = std::min({t0, t1, t2, t3});
+            double tmax = std::max({t0, t1, t2, t3});
+            if (tmin == tmax) {
+                n_spatial_tets++;
+                cps_by_time[(int)tmin]++;
+            } else {
+                n_spacetime_tets++;
+                // Count as both timesteps for spacetime tets
+                cps_by_time[(int)tmin]++;
+                cps_by_time[(int)tmax]++;
+            }
+        }
+        std::cout << "CP tet types: " << n_spatial_tets << " pure spatial, " << n_spacetime_tets << " spacetime" << std::endl;
+        std::cout << "CPs by timestep: ";
+        for (const auto& [t, count] : cps_by_time) {
+            std::cout << "t=" << t << ":" << count << " ";
+        }
+        std::cout << std::endl;
+
+        // Build map: tet -> list of pentatopes containing it
+        std::map<Simplex, std::vector<Simplex>> tet_to_pentatopes;
+        int n_pents = 0;
+        int n_pents_with_multiple_cps = 0;
+        int max_cps_in_pent = 0;
+
+        mesh_->iterate_simplices(4, [&](const Simplex& pent) {
+            n_pents++;
+            // Find all 3-simplices (tets) in this pentatope that contain CPs
+            std::vector<Simplex> tets_with_cps;
+            find_m_subsimplices(pent, 3, [&](const Simplex& tet) {
+                Simplex sorted_tet = tet;
+                sorted_tet.sort_vertices();
+                if (active_nodes_.count(sorted_tet)) {
+                    tets_with_cps.push_back(sorted_tet);
+                }
+            });
+
+            if (tets_with_cps.size() > 1) n_pents_with_multiple_cps++;
+            if ((int)tets_with_cps.size() > max_cps_in_pent) max_cps_in_pent = tets_with_cps.size();
+
+            // Record that these tets are in this pentatope
+            for (const auto& tet : tets_with_cps) {
+                tet_to_pentatopes[tet].push_back(pent);
+            }
+        });
+
+        std::cout << "  Pentatopes with multiple CPs: " << n_pents_with_multiple_cps << ", max CPs in one pent: " << max_cps_in_pent << std::endl;
+
+        // For each tet, unite it with all other tets in the same pentatopes
+        int n_unions = 0;
+        int n_spatial_with_spacetime_neighbors = 0;
+        for (const auto& tet_pents_pair : tet_to_pentatopes) {
+            const Simplex& tet = tet_pents_pair.first;
+            const std::vector<Simplex>& pents = tet_pents_pair.second;
+
+            if (!canonical_active_nodes.count(tet)) continue;
+            IDType tet_id = canonical_active_nodes.at(tet);
+
+            // Check if this is spatial tet
+            auto tc0 = mesh_->get_vertex_coordinates(tet.vertices[0]);
+            bool is_spatial = true;
+            double t0 = tc0[tc0.size()-1];
+            for (int j = 1; j < 4; ++j) {
+                auto tcj = mesh_->get_vertex_coordinates(tet.vertices[j]);
+                if (tcj[tcj.size()-1] != t0) { is_spatial = false; break; }
+            }
+
+            std::set<Simplex> neighbor_tets;
+            bool has_spacetime_neighbor = false;
+            for (const auto& pent : pents) {
+                // Find all tets with CPs in this pentatope
+                find_m_subsimplices(pent, 3, [&](const Simplex& neighbor_tet) {
+                    Simplex sorted_neighbor = neighbor_tet;
+                    sorted_neighbor.sort_vertices();
+                    bool is_same = (sorted_neighbor.dimension == tet.dimension);
+                    for (int k = 0; k <= sorted_neighbor.dimension && is_same; ++k) {
+                        if (sorted_neighbor.vertices[k] != tet.vertices[k]) is_same = false;
+                    }
+                    if (active_nodes_.count(sorted_neighbor) && !is_same) {
+                        neighbor_tets.insert(sorted_neighbor);
+
+                        // Check if neighbor is spacetime
+                        auto nc0 = mesh_->get_vertex_coordinates(sorted_neighbor.vertices[0]);
+                        double nt0 = nc0[nc0.size()-1];
+                        for (int j = 1; j < 4; ++j) {
+                            auto ncj = mesh_->get_vertex_coordinates(sorted_neighbor.vertices[j]);
+                            if (ncj[ncj.size()-1] != nt0) {
+                                has_spacetime_neighbor = true;
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+
+            if (is_spatial && has_spacetime_neighbor) n_spatial_with_spacetime_neighbors++;
+
+            // Unite this tet with all its neighbors
+            for (const auto& neighbor : neighbor_tets) {
+                if (canonical_active_nodes.count(neighbor)) {
+                    IDType neighbor_id = canonical_active_nodes.at(neighbor);
+                    uf_.unite(tet_id, neighbor_id);
+                    n_unions++;
+                }
+            }
+        }
+
+        std::cout << "CP Connectivity: Checked " << n_pents << " pentatopes, found "
+                  << tet_to_pentatopes.size() << " tets with CPs, performed " << n_unions << " unions" << std::endl;
+        std::cout << "  Spatial tets with spacetime neighbors: " << n_spatial_with_spacetime_neighbors << "/" << n_spatial_tets << std::endl;
+    }
+
     void find_m_subsimplices(const Simplex& s, int target_m, std::function<void(const Simplex&)> callback) {
         int n = s.dimension + 1; int r = target_m + 1; std::vector<int> p(r); std::iota(p.begin(), p.end(), 0);
         while (p[0] <= n - r) {
@@ -882,17 +1184,14 @@ private:
         }
     }
 
-    bool resolve_simplex_to_node(uint64_t encoded_id, const std::shared_ptr<RegularSimplicialMesh>& reg_mesh, int dim, IDType& nid) {
+    bool resolve_simplex_to_node_regular(uint64_t encoded_id, const std::shared_ptr<RegularSimplicialMesh>& reg_mesh, int dim, IDType& nid) {
         uint64_t v_min = encoded_id >> 24; uint64_t combined_mask = encoded_id & 0xFFFFFF;
         auto c_min = reg_mesh->id_to_grid_index(v_min);
         Simplex s; s.dimension = dim; s.vertices[0] = v_min;
         for (int i = 1; i <= dim; ++i) {
             uint64_t mask = (combined_mask >> ((dim - i) * 4)) & 0xF;
             uint64_t ci[4] = {0};
-            for (int k = 0; k < 4 && k < c_min.size(); ++k) {
-                ci[k] = c_min[k];
-                if ((mask >> k) & 1) ci[k]++;
-            }
+            for (int k = 0; k < 4 && k < c_min.size(); ++k) { ci[k] = c_min[k]; if ((mask >> k) & 1) ci[k]++; }
             s.vertices[i] = reg_mesh->grid_index_to_id(ci);
         }
         s.sort_vertices();
