@@ -181,6 +181,36 @@ TrackingResults FeatureTrackerImpl<T>::execute() {
     std::cout << "[2/5] Loading data..." << std::endl;
     auto raw_data = create_data();
 
+    // Auto-derive mesh dimensions from data if not specified
+    if (config_.mesh.type == MeshType::Regular &&
+        config_.mesh.dimensions.empty() &&
+        !raw_data.empty()) {
+        const auto& first_var = raw_data.begin()->second;
+        std::cout << "  Auto-deriving mesh dimensions from data..." << std::endl;
+
+        // Assume last dimension is time, others are spatial
+        int nd = first_var.nd();
+        std::vector<uint64_t> inferred_dims;
+
+        // For static data: all dimensions are spatial
+        // For temporal data: last dimension is time
+        int spatial_dims = (nd >= 4) ? (nd - 1) : nd;
+
+        for (int d = 0; d < spatial_dims; ++d) {
+            inferred_dims.push_back(first_var.dimf(d));
+        }
+
+        std::cout << "  Inferred dimensions: [";
+        for (size_t i = 0; i < inferred_dims.size(); ++i) {
+            std::cout << inferred_dims[i];
+            if (i < inferred_dims.size() - 1) std::cout << ", ";
+        }
+        std::cout << "]" << std::endl;
+
+        // Create new spatial mesh with inferred dimensions
+        spatial_mesh = std::make_shared<RegularSimplicialMesh>(inferred_dims);
+    }
+
     // Infer timesteps from data
     int num_timesteps = 1;
     if (!raw_data.empty()) {
@@ -190,14 +220,17 @@ TrackingResults FeatureTrackerImpl<T>::execute() {
         }
     }
 
-    // Create spacetime mesh if temporal data
+    std::cout << "  Data has " << num_timesteps << " timestep(s)" << std::endl;
+
+    // Always create spacetime mesh (even for static data with 1 timestep)
+    // This simplifies the core - it always handles time-varying data
     std::shared_ptr<Mesh> mesh;
     if (num_timesteps > 1) {
         std::cout << "  Creating spacetime mesh (" << num_timesteps << " timesteps)..." << std::endl;
-        mesh = std::make_shared<ExtrudedSimplicialMesh>(spatial_mesh, num_timesteps - 1);
     } else {
-        mesh = spatial_mesh;
+        std::cout << "  Creating spacetime mesh (static data, 1 timestep)..." << std::endl;
     }
+    mesh = std::make_shared<ExtrudedSimplicialMesh>(spatial_mesh, num_timesteps - 1);
 
     // 3. Preprocess data
     std::cout << "[3/5] Preprocessing data..." << std::endl;

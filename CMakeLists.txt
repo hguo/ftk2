@@ -29,6 +29,9 @@ target_include_directories(ftk2 PUBLIC
 )
 target_link_libraries(ftk2 PUBLIC ndarray::ndarray OpenMP::OpenMP_CXX)
 
+# High-level API (Layer 2)
+add_subdirectory(src/high_level)
+
 # Tests
 enable_testing()
 add_subdirectory(tests)

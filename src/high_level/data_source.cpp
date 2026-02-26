@@ -126,12 +126,41 @@ std::map<std::string, ftk::ndarray<T>> load_stream_data(const DataConfig& config
 
     // Handle multi-component arrays: decompose into separate component arrays
     // Example: "velocity" with shape [3, nx, ny, nz, nt] -> u, v, w with shape [nx, ny, nz, nt]
+    // Also ensure all data has a time dimension (add singleton if needed)
     std::map<std::string, ftk::ndarray<T>> decomposed_data;
     for (const auto& kv : data) {
         const auto& name = kv.first;
-        const auto& arr = kv.second;
+        auto arr = kv.second;  // Non-const copy for potential modification
 
-        // Check if first dimension is 2 or 3 (likely vector components)
+        // First, ensure data has time dimension
+        // For 2D/3D data without time: add singleton time dimension
+        bool needs_time_dim = false;
+        if (arr.nd() == 2 || arr.nd() == 3) {
+            // Spatial-only data (2D or 3D), no time dimension
+            needs_time_dim = true;
+        } else if (arr.nd() == 3 && arr.dimf(0) == 2) {
+            // 2D vector field without time: [2, nx, ny]
+            needs_time_dim = true;
+        } else if (arr.nd() == 4 && arr.dimf(0) == 3) {
+            // 3D vector field without time: [3, nx, ny, nz]
+            needs_time_dim = true;
+        }
+
+        if (needs_time_dim) {
+            std::cout << "  Adding singleton time dimension to " << name << std::endl;
+            std::vector<size_t> new_dims;
+            for (int d = 0; d < arr.nd(); ++d) {
+                new_dims.push_back(arr.dimf(d));
+            }
+            new_dims.push_back(1);  // Add time dimension
+
+            ftk::ndarray<T> arr_with_time;
+            arr_with_time.reshapef(new_dims);
+            std::copy(arr.data(), arr.data() + arr.size(), arr_with_time.data());
+            arr = std::move(arr_with_time);
+        }
+
+        // Now check if first dimension is 2 or 3 (vector components)
         if (arr.nd() >= 4 && (arr.dimf(0) == 2 || arr.dimf(0) == 3)) {
             size_t num_components = arr.dimf(0);
             std::vector<size_t> spatial_dims;
