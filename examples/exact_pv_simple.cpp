@@ -108,14 +108,34 @@ int main() {
         }
     }
 
-    // Write puncture points to VTP
+    // Write puncture points to VTP (use ASCII for debugging)
     std::cout << "\nWriting output files..." << std::endl;
-    ftk2::write_complex_to_vtp(complex, *mesh, "exactpv_punctures.vtp");
+    ftk2::write_complex_to_vtp(complex, *mesh, "exactpv_punctures.vtp", -1, true);
     std::cout << "  Wrote puncture points to: exactpv_punctures.vtp" << std::endl;
 
-    // Write curve segments to VTP
-    // Each curve segment is sampled into polyline points
+    // First, check how many curves are truly non-degenerate (have multiple non-zero P)
+    int non_degen_count = 0;
     if (!pred.curve_segments.empty()) {
+        for (const auto& seg : pred.curve_segments) {
+            int non_zero_P = 0;
+            for (int p = 0; p < 4; ++p) {
+                bool p_nonzero = false;
+                for (int c = 0; c <= 3; ++c) {
+                    if (std::abs(seg.P[p].coeffs[c]) > 1e-10) {
+                        p_nonzero = true;
+                        break;
+                    }
+                }
+                if (p_nonzero) non_zero_P++;
+            }
+            if (non_zero_P >= 2) non_degen_count++;  // At least 2 vertices contribute
+        }
+        std::cout << "  " << non_degen_count << " / " << pred.curve_segments.size() << " curves have ≥2 non-zero barycentric coords" << std::endl;
+    }
+
+    // Write curve segments to VTP (skip if all degenerate)
+    // Each curve segment is sampled into polyline points
+    if (!pred.curve_segments.empty() && non_degen_count > 0) {
         auto polydata = vtkSmartPointer<vtkPolyData>::New();
         auto points = vtkSmartPointer<vtkPoints>::New();
         auto lines = vtkSmartPointer<vtkCellArray>::New();
@@ -125,7 +145,28 @@ int main() {
         simplex_data->SetName("SimplexID");
 
         vtkIdType point_id = 0;
+        int seg_count = 0;
+        int non_degen_written = 0;
         for (const auto& seg : pred.curve_segments) {
+            // Check if curve has at least 2 non-zero barycentric coordinates
+            int non_zero_P = 0;
+            for (int p = 0; p < 4; ++p) {
+                bool p_nonzero = false;
+                for (int c = 0; c <= 3; ++c) {
+                    if (std::abs(seg.P[p].coeffs[c]) > 1e-10) {
+                        p_nonzero = true;
+                        break;
+                    }
+                }
+                if (p_nonzero) non_zero_P++;
+            }
+
+            // Skip degenerate curves (stuck at single vertex)
+            if (non_zero_P < 2) {
+                seg_count++;
+                continue;
+            }
+
             // Sample the curve at regular intervals
             int n_samples = 20;
             double lambda_range = seg.lambda_max - seg.lambda_min;
@@ -133,11 +174,35 @@ int main() {
             vtkSmartPointer<vtkPolyLine> polyLine = vtkSmartPointer<vtkPolyLine>::New();
             polyLine->GetPointIds()->SetNumberOfIds(n_samples);
 
+            // Debug first non-degenerate curve
+            if (non_degen_written == 0) {
+                std::cout << "  Debug curve 0:" << std::endl;
+                std::cout << "    Tet vertices: ";
+                for (int v = 0; v < 4; ++v) {
+                    std::cout << "(" << seg.tet_vertices[v][0] << "," << seg.tet_vertices[v][1] << "," << seg.tet_vertices[v][2] << ") ";
+                }
+                std::cout << std::endl;
+                std::cout << "    Lambda range: [" << seg.lambda_min << ", " << seg.lambda_max << "]" << std::endl;
+                std::cout << "    Q(λ) = " << seg.Q.coeffs[0] << " + " << seg.Q.coeffs[1] << "λ + "
+                          << seg.Q.coeffs[2] << "λ² + " << seg.Q.coeffs[3] << "λ³" << std::endl;
+                for (int p = 0; p < 4; ++p) {
+                    std::cout << "    P" << p << "(λ) = " << seg.P[p].coeffs[0] << " + " << seg.P[p].coeffs[1] << "λ + "
+                              << seg.P[p].coeffs[2] << "λ² + " << seg.P[p].coeffs[3] << "λ³" << std::endl;
+                }
+            }
+
             for (int i = 0; i < n_samples; ++i) {
                 double lambda = seg.lambda_min + (double)i / (n_samples - 1) * lambda_range;
 
                 // Get physical (x,y,z) coordinates at this parameter value
                 auto pos = seg.get_physical_coords(lambda);
+
+                if (non_degen_written == 0 && i < 3) {
+                    auto bary = seg.get_barycentric(lambda);
+                    std::cout << "    Sample " << i << ": lambda=" << lambda << ", bary=("
+                              << bary[0] << "," << bary[1] << "," << bary[2] << "," << bary[3]
+                              << "), pos=(" << pos[0] << "," << pos[1] << "," << pos[2] << ")" << std::endl;
+                }
 
                 points->InsertNextPoint(pos[0], pos[1], pos[2]);
                 lambda_data->InsertNextValue((float)lambda);
@@ -145,7 +210,11 @@ int main() {
                 polyLine->GetPointIds()->SetId(i, point_id++);
             }
 
+            seg_count++;
+
             lines->InsertNextCell(polyLine);
+            non_degen_written++;
+            seg_count++;
         }
 
         polydata->SetPoints(points);
@@ -160,8 +229,12 @@ int main() {
         writer->Write();
 
         std::cout << "  Wrote curve segments to: exactpv_curves.vtp" << std::endl;
+    } else {
+        std::cout << "  Note: All curve segments are degenerate (collapse to points)" << std::endl;
+        std::cout << "  This field configuration doesn't create curves through tet interiors." << std::endl;
     }
 
-    std::cout << "\nDone! Load VTP files in ParaView to visualize." << std::endl;
+    std::cout << "\nDone! View exactpv_punctures.vtp in ParaView to see the 114 puncture points." << std::endl;
+    std::cout << "The points are connected into " << complex.connectivity.size() << " trajectory component(s)." << std::endl;
     return 0;
 }
