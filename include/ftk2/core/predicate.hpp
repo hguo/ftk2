@@ -514,7 +514,7 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
     }
 
     // Extract curves from all tetrahedra in a mesh
-    void extract_curves_from_tets(const Mesh* mesh, const std::map<std::string, ftk::ndarray<T>>& data, bool verbose = false) {
+    void extract_curves_from_tets(const Mesh* mesh, const std::map<std::string, ftk::ndarray<T>>& data) {
         curve_segments.clear();
 
         if (!use_multicomponent || vector_var_name.empty()) {
@@ -550,15 +550,7 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
 
             // Extract curve
             PVCurveSegment segment;
-            bool success = extract_tetrahedron(s, values, segment);
-
-            if (verbose && visited <= 3) {
-                std::cout << "  Tet " << visited << ": vertices=[" << s.vertices[0] << "," << s.vertices[1]
-                          << "," << s.vertices[2] << "," << s.vertices[3] << "] -> "
-                          << (success ? "FOUND" : "none") << std::endl;
-            }
-
-            if (success) {
+            if (extract_tetrahedron(s, values, segment)) {
                 found++;
                 std::lock_guard<std::mutex> lock(mutex);
                 curve_segments.push_back(segment);
