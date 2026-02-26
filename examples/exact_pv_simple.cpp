@@ -16,9 +16,9 @@ int main() {
     // Create combined vector field: [ux, uy, uz, vx, vy, vz]
     ftk::ndarray<double> uv({6, 4, 4, 4});  // [6 components][x][y][z]
 
-    // Generate synthetic fields with isolated parallel vector points
+    // Generate synthetic fields with isolated parallel vector line
     // U = (1, 0, 0) everywhere
-    // V = (1, y-1.5, z-1.5) - parallel to U only where y=1.5 and z=1.5
+    // V varies to create PV line at y-0.5*x=1, z-0.3*x=1
     for (int z = 0; z < 4; ++z) {
         for (int y = 0; y < 4; ++y) {
             for (int x = 0; x < 4; ++x) {
@@ -27,16 +27,16 @@ int main() {
                 uv.f(1, x, y, z) = 0.0;   // uy
                 uv.f(2, x, y, z) = 0.0;   // uz
 
-                // V components (3-5) - parallel to U only at y=1.5, z=1.5
-                uv.f(3, x, y, z) = 1.0;               // vx
-                uv.f(4, x, y, z) = (double)y - 1.5;   // vy
-                uv.f(5, x, y, z) = (double)z - 1.5;   // vz
+                // V components (3-5) - creates tilted PV line
+                uv.f(3, x, y, z) = 1.0;                           // vx
+                uv.f(4, x, y, z) = (double)y - 0.5*x - 1.0;      // vy
+                uv.f(5, x, y, z) = (double)z - 0.3*x - 1.0;      // vz
             }
         }
     }
 
-    std::cout << "Fields generated: U=(1,0,0), V=(1,y-1.5,z-1.5)" << std::endl;
-    std::cout << "Parallel vectors occur near y=1.5, z=1.5 (line through the mesh)" << std::endl;
+    std::cout << "Fields generated: U=(1,0,0), V=(1, y-0.5x-1, z-0.3x-1)" << std::endl;
+    std::cout << "Parallel vectors occur along tilted line y-0.5x=1, z-0.3x=1" << std::endl;
 
     // Prepare data map
     std::map<std::string, ftk::ndarray<double>> data;
@@ -49,16 +49,20 @@ int main() {
     // Create engine
     SimplicialEngine<double, ExactPVPredicate<double>> engine(mesh, pred);
 
-    // Execute extraction
-    std::cout << "Extracting parallel vector features..." << std::endl;
+    // Execute extraction for puncture points (from triangles)
+    std::cout << "Extracting parallel vector puncture points from triangles..." << std::endl;
     engine.execute(data, {"uv"});
 
-    // Get results
+    // Get puncture point results
     auto complex = engine.get_complex();
 
+    // Extract parametric curves from tetrahedra
+    std::cout << "\nExtracting parallel vector curves from tetrahedra..." << std::endl;
+    pred.extract_curves_from_tets(mesh.get(), data, true);  // verbose=true
+
     std::cout << "\nResults:" << std::endl;
-    std::cout << "  Found " << complex.vertices.size() << " parallel vector puncture points" << std::endl;
-    std::cout << "  Found " << pred.curve_segments.size() << " parametric curve segments" << std::endl;
+    std::cout << "  Found " << complex.vertices.size() << " parallel vector puncture points (from triangles)" << std::endl;
+    std::cout << "  Found " << pred.curve_segments.size() << " parametric curve segments (from tetrahedra)" << std::endl;
 
     // Display first few puncture points
     int display_count = std::min(5, (int)complex.vertices.size());
@@ -74,12 +78,15 @@ int main() {
     }
 
     // Display curve segment info
-    display_count = std::min(3, (int)pred.curve_segments.size());
-    for (int i = 0; i < display_count; ++i) {
-        const auto& seg = pred.curve_segments[i];
-        std::cout << "  Curve " << i << ": simplex=" << seg.simplex_id
-                  << ", lambda_range=[" << seg.lambda_min << ", " << seg.lambda_max << "]"
-                  << ", critical_points=" << seg.critical_points.size() << std::endl;
+    if (!pred.curve_segments.empty()) {
+        std::cout << "\nCurve segments:" << std::endl;
+        display_count = std::min(3, (int)pred.curve_segments.size());
+        for (int i = 0; i < display_count; ++i) {
+            const auto& seg = pred.curve_segments[i];
+            std::cout << "  Curve " << i << ": simplex=" << seg.simplex_id
+                      << ", lambda_range=[" << seg.lambda_min << ", " << seg.lambda_max << "]"
+                      << ", critical_points=" << seg.critical_points.size() << std::endl;
+        }
     }
 
     std::cout << "\nDone!" << std::endl;

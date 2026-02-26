@@ -513,6 +513,61 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
         return found;
     }
 
+    // Extract curves from all tetrahedra in a mesh
+    void extract_curves_from_tets(const Mesh* mesh, const std::map<std::string, ftk::ndarray<T>>& data, bool verbose = false) {
+        curve_segments.clear();
+
+        if (!use_multicomponent || vector_var_name.empty()) {
+            std::cerr << "ExactPV: extract_curves_from_tets requires multi-component mode" << std::endl;
+            return;
+        }
+
+        const auto& vec_array = data.at(vector_var_name);
+        auto reg_mesh = dynamic_cast<const RegularSimplicialMesh*>(mesh);
+        std::vector<uint64_t> offset = reg_mesh ? reg_mesh->get_offset() : std::vector<uint64_t>{0,0,0,0};
+
+        std::mutex mutex;
+        std::atomic<uint64_t> visited(0), found(0);
+
+        // Iterate over all 3-simplices (tetrahedra)
+        const_cast<Mesh*>(mesh)->iterate_simplices(3, [&](const Simplex& s) {
+            visited++;
+
+            // Extract values at 4 vertices
+            T values[4][6];
+            for (int i = 0; i < 4; ++i) {
+                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                for (int j = 0; j < 6; ++j) {
+                    if (coords.size() == 3) {
+                        // 3D spatial: [6, nx, ny, nz]
+                        values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2]);
+                    } else if (coords.size() == 4) {
+                        // 3D spatial + time: [6, nx, ny, nz, nt]
+                        values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2], coords[3]);
+                    }
+                }
+            }
+
+            // Extract curve
+            PVCurveSegment segment;
+            bool success = extract_tetrahedron(s, values, segment);
+
+            if (verbose && visited <= 3) {
+                std::cout << "  Tet " << visited << ": vertices=[" << s.vertices[0] << "," << s.vertices[1]
+                          << "," << s.vertices[2] << "," << s.vertices[3] << "] -> "
+                          << (success ? "FOUND" : "none") << std::endl;
+            }
+
+            if (success) {
+                found++;
+                std::lock_guard<std::mutex> lock(mutex);
+                curve_segments.push_back(segment);
+            }
+        });
+
+        std::cout << "Extracted " << found << " curves from " << visited << " tetrahedra" << std::endl;
+    }
+
 #ifdef __CUDACC__
     struct Device {
         static constexpr int codimension = 2;
