@@ -177,16 +177,39 @@ struct ExecutionConfig {
 };
 
 /**
+ * @brief Output types
+ */
+enum class OutputType {
+    Discrete,   // Discrete and untraced feature points
+    Traced,     // Feature trajectories (default)
+    Sliced,     // Trajectories sliced into individual timesteps
+    Intercepted // Intercepted features
+};
+
+/**
  * @brief Output configuration
  */
 struct OutputConfig {
-    std::string trajectories;  // VTP file path
-    std::string statistics;    // JSON file path
-    std::string format = "vtp";  // vtp, json, hdf5
+    // Output type: discrete, traced, sliced, or intercepted
+    OutputType type = OutputType::Traced;
+
+    // Output filename or pattern
+    // For sliced: use pattern like "slice-%04d.vtp"
+    // For traced: use single filename like "trajectories.vtp"
+    std::string filename;
+
+    // Legacy field (for backwards compatibility, will be removed)
+    std::string trajectories;
+
+    // Format: auto, text, vtp, pvtp, json, binary, hdf5
+    std::string format = "auto";
+
+    // Optional: separate statistics file
+    std::string statistics;
 
     void validate() const {
-        if (trajectories.empty()) {
-            throw std::invalid_argument("trajectories output path required");
+        if (filename.empty() && trajectories.empty()) {
+            throw std::invalid_argument("Output filename cannot be empty");
         }
     }
 };
@@ -282,6 +305,9 @@ public:
 
     static MeshType parse_mesh_type(const std::string& str);
     static std::string mesh_type_to_string(MeshType type);
+
+    static OutputType parse_output_type(const std::string& str);
+    static std::string output_type_to_string(OutputType type);
 };
 
 } // namespace ftk2
