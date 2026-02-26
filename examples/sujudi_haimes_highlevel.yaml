@@ -1,0 +1,39 @@
+tracking:
+  feature: sujudi_haimes
+  dimension: 3
+
+  input:
+    type: vector
+    variables: [u, v, w]
+    field_type: flow
+
+  data:
+    source: synthetic
+    generator: tornado
+    generator_params:
+      nx: 32
+      ny: 32
+      nz: 32
+      nt: 10
+
+  options:
+    auto_compute_vorticity: true
+    w2_threshold: 0.1
+    filter_mode: absolute
+
+  output:
+    filename: sujudi_haimes_vortices.vtp
+    attributes:
+      - name: w2
+        source: w2
+        type: scalar
+      - name: velocity_magnitude
+        source: velocity
+        type: magnitude
+      - name: vorticity_magnitude
+        source: vorticity
+        type: magnitude
+
+  execution:
+    backend: cpu
+    precision: double

@@ -18,11 +18,13 @@ enum class FeatureType {
     CriticalPoints,
     Levelsets,
     Fibers,
+    TDGLVortex,
+    ApproxParallelVectors,  // General U × V approach
+    SujadiHaimes,           // velocity × vorticity (vortex cores)
+    LevyDeganiSeginer,      // velocity × (∇×velocity - velocity·∇velocity)
     // Future features (see FEATURE_GAP_ANALYSIS.md):
-    // ParallelVectors,
     // CriticalLines,
-    // Particles,
-    // TDGLVortex
+    // Particles
 };
 
 /**
@@ -33,7 +35,8 @@ enum class InputType {
     Vector,           // Vector field (u, v, w)
     GradientVector,   // Pre-computed gradient
     MultiScalar,      // Multiple scalar fields (e.g., for fibers)
-    Complex           // Complex field (re, im) for TDGL
+    Complex,          // Complex field (re, im) for TDGL
+    PairedVectors     // Two vector fields (U, V) for approximate PV
 };
 
 /**
@@ -89,6 +92,10 @@ struct InputConfig {
 
     // For MultiScalar: map of field names
     std::map<std::string, std::string> field_map;
+
+    // For PairedVectors: two vector field names
+    std::string vector_u;  // First vector field (e.g., "velocity")
+    std::string vector_v;  // Second vector field (e.g., "vorticity")
 
     void validate() const {
         if (variables.empty()) {
@@ -261,6 +268,12 @@ struct FeatureOptions {
 
     // For Levelsets
     double threshold = 0.0;
+
+    // For ApproxParallelVectors and derived descriptors
+    double w2_threshold = 0.1;  // Filter by |W_2| < threshold
+    bool auto_compute_vorticity = false;  // Auto-compute curl for Sujudi-Haimes
+    std::string filter_mode = "absolute";  // absolute, relative, percentile
+    double filter_percentile = 0.1;  // For percentile mode (top 10%)
 };
 
 /**

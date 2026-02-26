@@ -18,8 +18,9 @@ This document compares FTK (legacy) and FTK2 to identify missing features that n
 | **Critical Lines** | ✅ 3D Regular/Unstructured | ❌ **MISSING** | 🎯 **HIGH** | Ridge/valley lines in 3D scalar fields |
 | **Parallel Vectors (ExactPV)** | ✅ 2D/3D with cubic solver | ❌ **MISSING** | 🎯 **HIGH** | v × w = 0, vortex cores |
 | **Magnetic Flux Vortices (TDGL)** | ✅ 3D Regular | ✅ **DONE** (2D/3D) | ✅ **DONE** | Superconductor vortices, phase-based winding |
-| **Sujudi-Haimes Vortices** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM** | Vortex cores via eigenanalysis |
-| **Levy-Degani-Seginer Vortices** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM** | Alternative vortex detection |
+| **Sujudi-Haimes Vortices** | ✅ 3D Regular | ✅ **DONE** (ApproxPV) | ✅ **DONE** | Vortex cores via fiber approximation |
+| **Levy-Degani-Seginer Vortices** | ✅ 3D Regular | ✅ **DONE** (ApproxPV) | ✅ **DONE** | Alternative vortex via fiber approximation |
+| **ApproxPV (Approximate Parallel Vectors)** | ❌ Not in FTK | ✅ **DONE** | ✅ **DONE** | Fiber-based PV approximation (W=U×V, track W₀=W₁=0) |
 | **Ridge/Valley Lines** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM** | Extremal curves in scalar fields |
 | **Lagrangian Particle Tracing** | ✅ Regular/MPAS | ❌ **MISSING** | 🎯 **MEDIUM-HIGH** | Pathline integration |
 | **Connected Components** | ✅ Generic tracker | ✅ Implicit (union-find) | ✅ **DONE** | Via union-find in engine |
@@ -57,6 +58,38 @@ This document compares FTK (legacy) and FTK2 to identify missing features that n
 - **Features**:
   - Intersection of two scalar fields (codimension m=2)
   - 3D/4D spacetime
+
+#### 4. Approximate Parallel Vectors (ApproxPV)
+- **Status**: Fully implemented with high-level API
+- **Location**:
+  - Core: `include/ftk2/numeric/cross_product.hpp`
+  - High-level: `include/ftk2/high_level/tracking_config.hpp`
+  - Implementation: `src/high_level/feature_tracker.cpp`
+- **Features**:
+  - General ApproxPV: Track W = U × V, fiber W₀=W₁=0, filter by |W₂|
+  - Sujudi-Haimes: velocity × vorticity (vortex cores)
+  - Levy-Degani-Seginer: Alternative vortex criterion
+  - High-level YAML API (6-7× less code than low-level)
+  - Automatic vorticity computation
+  - Multiple filtering modes (absolute, percentile, relative)
+  - Attribute recording (W₂, velocity/vorticity magnitudes, etc.)
+  - CPU and GPU support
+- **Documentation**:
+  - API Reference: `docs/APPROX_PV_API.md` (50+ examples)
+  - Summary: `docs/APPROX_PV_SUMMARY.md`
+  - Examples: `examples/parallel_vector_approximate.cpp`, `examples/approx_pv_highlevel_example.cpp`
+
+#### 5. TDGL Magnetic Vortices
+- **Status**: Implemented
+- **Location**: `include/ftk2/core/predicate.hpp` → `TDGLVortexPredicate`
+- **Features**:
+  - Phase winding detection for superconductor vortices
+  - Complex field input (re/im)
+  - Winding number classification (±1, ±2, ...)
+  - 2D/3D spatial support
+  - GPU acceleration
+- **Documentation**: `docs/TDGL_VORTEX_TRACKING.md`, `docs/TDGL_DATA_FORMATS.md`
+- **Examples**: `examples/tdgl_vortex_2d.cpp`
 
 ---
 

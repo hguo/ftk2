@@ -21,6 +21,10 @@ FeatureType TrackingConfig::parse_feature_type(const std::string& str) {
     if (lower == "critical_points" || lower == "cp") return FeatureType::CriticalPoints;
     if (lower == "levelsets" || lower == "contour" || lower == "iso") return FeatureType::Levelsets;
     if (lower == "fibers") return FeatureType::Fibers;
+    if (lower == "tdgl_vortex" || lower == "tdgl") return FeatureType::TDGLVortex;
+    if (lower == "approx_parallel_vectors" || lower == "approx_pv" || lower == "apv") return FeatureType::ApproxParallelVectors;
+    if (lower == "sujudi_haimes" || lower == "sujudi-haimes" || lower == "sh") return FeatureType::SujadiHaimes;
+    if (lower == "levy_degani_seginer" || lower == "levy-degani-seginer" || lower == "lds") return FeatureType::LevyDeganiSeginer;
     throw std::invalid_argument("Unknown feature type: " + str);
 }
 
@@ -29,6 +33,10 @@ std::string TrackingConfig::feature_type_to_string(FeatureType type) {
         case FeatureType::CriticalPoints: return "critical_points";
         case FeatureType::Levelsets: return "levelsets";
         case FeatureType::Fibers: return "fibers";
+        case FeatureType::TDGLVortex: return "tdgl_vortex";
+        case FeatureType::ApproxParallelVectors: return "approx_parallel_vectors";
+        case FeatureType::SujadiHaimes: return "sujudi_haimes";
+        case FeatureType::LevyDeganiSeginer: return "levy_degani_seginer";
         default: return "unknown";
     }
 }
@@ -40,6 +48,7 @@ InputType TrackingConfig::parse_input_type(const std::string& str) {
     if (lower == "gradient_vector") return InputType::GradientVector;
     if (lower == "multi_scalar") return InputType::MultiScalar;
     if (lower == "complex") return InputType::Complex;
+    if (lower == "paired_vectors" || lower == "paired") return InputType::PairedVectors;
     throw std::invalid_argument("Unknown input type: " + str);
 }
 
@@ -50,6 +59,7 @@ std::string TrackingConfig::input_type_to_string(InputType type) {
         case InputType::GradientVector: return "gradient_vector";
         case InputType::MultiScalar: return "multi_scalar";
         case InputType::Complex: return "complex";
+        case InputType::PairedVectors: return "paired_vectors";
         default: return "unknown";
     }
 }
@@ -190,6 +200,15 @@ TrackingConfig TrackingConfig::from_yaml_node(const YAML::Node& node) {
 
         if (input_node["field_map"]) {
             config.input.field_map = input_node["field_map"].as<std::map<std::string, std::string>>();
+        }
+
+        // For PairedVectors input type
+        if (input_node["vector_u"]) {
+            config.input.vector_u = input_node["vector_u"].as<std::string>();
+        }
+
+        if (input_node["vector_v"]) {
+            config.input.vector_v = input_node["vector_v"].as<std::string>();
         }
     }
 
@@ -358,6 +377,23 @@ TrackingConfig TrackingConfig::from_yaml_node(const YAML::Node& node) {
 
         if (opts["seeding"]) {
             config.options.seeding = opts["seeding"].as<std::map<std::string, std::string>>();
+        }
+
+        // ApproxPV options
+        if (opts["w2_threshold"]) {
+            config.options.w2_threshold = opts["w2_threshold"].as<double>();
+        }
+
+        if (opts["auto_compute_vorticity"]) {
+            config.options.auto_compute_vorticity = opts["auto_compute_vorticity"].as<bool>();
+        }
+
+        if (opts["filter_mode"]) {
+            config.options.filter_mode = opts["filter_mode"].as<std::string>();
+        }
+
+        if (opts["filter_percentile"]) {
+            config.options.filter_percentile = opts["filter_percentile"].as<double>();
         }
     }
 

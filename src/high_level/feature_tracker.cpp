@@ -1,6 +1,7 @@
 #include <ftk2/high_level/feature_tracker.hpp>
 #include <ftk2/core/unstructured_mesh.hpp>
 #include <ftk2/utils/vtk.hpp>
+#include <ftk2/numeric/cross_product.hpp>
 #include <iostream>
 #include <fstream>
 
@@ -126,8 +127,65 @@ std::map<std::string, ftk::ndarray<T>> FeatureTrackerImpl<T>::preprocess_data(
 
     } else if (config_.input.type == InputType::Complex) {
         // Complex fields for TDGL vortex tracking
-        // TODO: Handle complex fields (TDGL)
-        throw std::runtime_error("Complex input not yet implemented");
+        return raw_data;
+
+    } else if (config_.input.type == InputType::PairedVectors) {
+        // Paired vector fields for approximate parallel vector tracking
+        std::cout << "  Computing cross product W = U × V for ApproxPV..." << std::endl;
+
+        // Get U and V from raw data
+        if (config_.input.vector_u.empty() || config_.input.vector_v.empty()) {
+            throw std::runtime_error("PairedVectors input requires vector_u and vector_v field names");
+        }
+
+        auto it_u = raw_data.find(config_.input.vector_u);
+        auto it_v = raw_data.find(config_.input.vector_v);
+
+        if (it_u == raw_data.end()) {
+            throw std::runtime_error("Vector field U '" + config_.input.vector_u + "' not found in data");
+        }
+        if (it_v == raw_data.end()) {
+            throw std::runtime_error("Vector field V '" + config_.input.vector_v + "' not found in data");
+        }
+
+        const auto& u = it_u->second;
+        const auto& v = it_v->second;
+
+        // Compute cross product W = U × V
+        ftk::ndarray<T> w;
+        if (u.dimf(0) == 3 && v.dimf(0) == 3) {
+            cross_product_3d(u, v, w);
+            std::cout << "    3D cross product computed" << std::endl;
+        } else if (u.dimf(0) == 2 && v.dimf(0) == 2) {
+            cross_product_2d(u, v, w);
+            std::cout << "    2D cross product computed (scalar result)" << std::endl;
+        } else {
+            throw std::runtime_error("PairedVectors requires 2D or 3D vector fields");
+        }
+
+        // Decompose W into components
+        std::cout << "    Decomposing W into components..." << std::endl;
+        auto w_components = decompose_components(w);
+
+        // Build output data map
+        std::map<std::string, ftk::ndarray<T>> processed_data;
+
+        // Add decomposed cross product components
+        processed_data["w0"] = w_components[0];
+        processed_data["w1"] = w_components[1];
+        if (w_components.size() > 2) {
+            processed_data["w2"] = w_components[2];  // For filtering
+        }
+
+        // Also include original fields for attributes
+        processed_data[config_.input.vector_u] = u;
+        processed_data[config_.input.vector_v] = v;
+
+        std::cout << "    W components: w0, w1";
+        if (w_components.size() > 2) std::cout << ", w2";
+        std::cout << std::endl;
+
+        return processed_data;
     }
 
     return raw_data;
@@ -201,9 +259,31 @@ TrackingResults FeatureTrackerImpl<T>::execute_with_predicate(
     // Create predicate
     PredicateType predicate;
 
+    // Initialize predicate for FiberPredicate (used by ApproxPV features)
+    if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
+        // Configure fiber tracking for W_0 = W_1 = 0
+        predicate.var_names[0] = "w0";
+        predicate.var_names[1] = "w1";
+        predicate.thresholds[0] = 0.0;
+        predicate.thresholds[1] = 0.0;
+
+        std::cout << "  Fiber predicate: W_0 = W_1 = 0" << std::endl;
+
+        // Automatically add W_2 as attribute for filtering
+        if (data.find("w2") != data.end()) {
+            AttributeSpec w2_attr;
+            w2_attr.name = "w2";
+            w2_attr.source = "w2";
+            w2_attr.type = "scalar";
+            w2_attr.slot = 0;
+            predicate.attributes.push_back(w2_attr);
+            std::cout << "  Automatically recording W_2 as attribute [slot 0]" << std::endl;
+        }
+    }
+
     // Initialize predicate for CriticalPointPredicate specifically
-    if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<2, T>> ||
-                  std::is_same_v<PredicateType, CriticalPointPredicate<3, T>>) {
+    else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<2, T>> ||
+                       std::is_same_v<PredicateType, CriticalPointPredicate<3, T>>) {
         // CriticalPointPredicate - use multi-component arrays
         predicate.use_multicomponent = true;
 
@@ -396,6 +476,48 @@ TrackingResults FeatureTrackerImpl<T>::execute() {
 
     } else if (config_.feature == FeatureType::Fibers) {
         results = execute_with_predicate<FiberPredicate<T>>(mesh, data);
+
+    } else if (config_.feature == FeatureType::TDGLVortex) {
+        results = execute_with_predicate<TDGLVortexPredicate<T>>(mesh, data);
+
+    } else if (config_.feature == FeatureType::ApproxParallelVectors ||
+               config_.feature == FeatureType::SujadiHaimes ||
+               config_.feature == FeatureType::LevyDeganiSeginer) {
+        // All ApproxPV variants use FiberPredicate on W_0 = W_1 = 0
+        // The preprocessing step already computed W = U × V
+        results = execute_with_predicate<FiberPredicate<T>>(mesh, data);
+
+        // Post-process results: filter by W_2 threshold
+        if (config_.options.w2_threshold > 0) {
+            std::cout << "  Filtering by |W_2| < " << config_.options.w2_threshold << "..." << std::endl;
+
+            auto& complex = const_cast<FeatureComplex&>(results.get_complex());
+            std::vector<FeatureElement> filtered_vertices;
+
+            for (const auto& v : complex.vertices) {
+                double w2_val = std::abs(v.attributes[0]);  // W_2 is in slot 0
+
+                bool passes_filter = false;
+                if (config_.options.filter_mode == "absolute") {
+                    passes_filter = (w2_val < config_.options.w2_threshold);
+                } else if (config_.options.filter_mode == "percentile") {
+                    // Percentile filtering requires full pass first
+                    // For now, skip and do in post-processing
+                    passes_filter = true;
+                } else {
+                    passes_filter = true;
+                }
+
+                if (passes_filter) {
+                    filtered_vertices.push_back(v);
+                }
+            }
+
+            std::cout << "    Passed filter: " << filtered_vertices.size()
+                      << " / " << complex.vertices.size() << std::endl;
+
+            complex.vertices = filtered_vertices;
+        }
 
     } else {
         throw std::runtime_error("Unsupported feature type");

@@ -16,6 +16,9 @@ target_link_libraries(ftk2_fiber_3d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK:
 add_executable(ftk2_tdgl_vortex_2d tdgl_vortex_2d.cpp)
 target_link_libraries(ftk2_tdgl_vortex_2d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
+add_executable(ftk2_parallel_vector_approximate parallel_vector_approximate.cpp)
+target_link_libraries(ftk2_parallel_vector_approximate PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
 add_executable(ftk2_critical_point_unstructured_2d critical_point_unstructured_2d.cpp)
 target_link_libraries(ftk2_critical_point_unstructured_2d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
@@ -88,7 +91,10 @@ if(yaml-cpp_FOUND)
     add_executable(ftk2_high_level_tracking_test high_level_tracking_test.cpp)
     target_link_libraries(ftk2_high_level_tracking_test PRIVATE ftk2_high_level ftk2)
 
-    message(STATUS "Building high-level API demo and tracking test")
+    add_executable(ftk2_approx_pv_highlevel_example approx_pv_highlevel_example.cpp)
+    target_link_libraries(ftk2_approx_pv_highlevel_example PRIVATE ftk2_high_level ftk2)
+
+    message(STATUS "Building high-level API demo, tracking test, and ApproxPV example")
 else()
     message(STATUS "Skipping high-level API demo (yaml-cpp not found)")
 endif()
