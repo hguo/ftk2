@@ -173,13 +173,13 @@ TrackingResults FeatureTrackerImpl<T>::execute() {
     std::cout << "  Backend: " << TrackingConfig::backend_to_string(config_.execution.backend) << std::endl;
     std::cout << std::endl;
 
-    // 1. Create mesh
-    std::cout << "[1/5] Creating mesh..." << std::endl;
-    auto spatial_mesh = create_mesh();
-
-    // 2. Load data
-    std::cout << "[2/5] Loading data..." << std::endl;
+    // 1. Load data first (needed for auto-deriving mesh dimensions)
+    std::cout << "[1/5] Loading data..." << std::endl;
     auto raw_data = create_data();
+
+    // 2. Create mesh (with auto-derived dimensions if needed)
+    std::cout << "[2/5] Creating mesh..." << std::endl;
+    std::shared_ptr<Mesh> spatial_mesh;
 
     // Auto-derive mesh dimensions from data if not specified
     if (config_.mesh.type == MeshType::Regular &&
@@ -209,6 +209,9 @@ TrackingResults FeatureTrackerImpl<T>::execute() {
 
         // Create new spatial mesh with inferred dimensions
         spatial_mesh = std::make_shared<RegularSimplicialMesh>(inferred_dims);
+    } else {
+        // Dimensions provided in config or not a regular mesh
+        spatial_mesh = create_mesh();
     }
 
     // Infer timesteps from data

@@ -152,10 +152,8 @@ struct MeshConfig {
 
     void validate() const {
         if (type == MeshType::Regular) {
-            if (dimensions.empty()) {
-                throw std::invalid_argument("dimensions required for Regular mesh");
-            }
-            if (dimensions.size() < 2 || dimensions.size() > 3) {
+            // Dimensions can be empty - will be auto-derived from data
+            if (!dimensions.empty() && (dimensions.size() < 2 || dimensions.size() > 3)) {
                 throw std::invalid_argument("dimensions must be 2D or 3D");
             }
         }
