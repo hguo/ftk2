@@ -367,6 +367,17 @@ inline T trace3(const T a[3][3]) {
 }
 
 /**
+ * @brief Compute characteristic polynomial for generalized eigenvalue problem (2x2)
+ * det(A - λB) = P[0] + P[1]λ + P[2]λ²
+ */
+template <typename T>
+void characteristic_polynomial_2x2(T a00, T a01, T a10, T a11, T b00, T b01, T b10, T b11, T P[3]) {
+    P[2] = b00 * b11 - b10 * b01;
+    P[1] = -(a00 * b11 - a10 * b01 + b00 * a11 - b10 * a01);
+    P[0] = a00 * a11 - a10 * a01;
+}
+
+/**
  * @brief Compute characteristic polynomial for generalized eigenvalue problem (3x3)
  * det(A - λB) = P[0] + P[1]λ + P[2]λ² + P[3]λ³
  */
@@ -386,6 +397,49 @@ void characteristic_polynomial_3x3(const T A[3][3], const T B[3][3], T P[4]) {
           +A[0][2] * B[1][0] * B[2][1] - A[0][0] * B[1][2] * B[2][1] + A[1][1] * B[0][0] * B[2][2]
           -A[1][0] * B[0][1] * B[2][2] - A[0][1] * B[1][0] * B[2][2] + A[0][0] * B[1][1] * B[2][2];
     P[3] = -det3(B);
+}
+
+/**
+ * @brief Multiply two polynomials: R = P * Q
+ * P has degree m, Q has degree n, R has degree m+n
+ */
+template <typename T>
+void polynomial_multiply(const T P[], int m, const T Q[], int n, T R[]) {
+    for (int i = 0; i <= m + n; ++i) R[i] = T(0);
+    for (int i = 0; i <= m; ++i)
+        for (int j = 0; j <= n; ++j)
+            R[i + j] += P[i] * Q[j];
+}
+
+/**
+ * @brief Add polynomial Q to P in place
+ */
+template <typename T>
+void polynomial_add_inplace(T P[], int m, const T Q[], int n) {
+    for (int i = 0; i <= n && i <= m; ++i)
+        P[i] += Q[i];
+}
+
+/**
+ * @brief Subtract polynomial Q from P: R = P - Q
+ */
+template <typename T>
+void polynomial_subtract(const T P[], int m, const T Q[], int n, T R[]) {
+    int maxd = std::max(m, n);
+    for (int i = 0; i <= maxd; ++i) {
+        T p_val = (i <= m) ? P[i] : T(0);
+        T q_val = (i <= n) ? Q[i] : T(0);
+        R[i] = p_val - q_val;
+    }
+}
+
+/**
+ * @brief Multiply polynomial by scalar
+ */
+template <typename T>
+void polynomial_scalar_multiply(T P[], int m, T scalar) {
+    for (int i = 0; i <= m; ++i)
+        P[i] *= scalar;
 }
 
 /**
@@ -513,7 +567,7 @@ T vector_norm3(const T v[3]) {
 }
 
 /**
- * @brief Verify that v and w are parallel at given barycentric coordinates
+ * @brief Verify that v and w are parallel at given barycentric coordinates (triangle)
  */
 template <typename T>
 bool verify_parallel(const T V[3][3], const T W[3][3],
@@ -524,6 +578,79 @@ bool verify_parallel(const T V[3][3], const T W[3][3],
     lerp_s2v3(W, mu, w);
     cross_product3(v, w, cross);
     return vector_norm3(cross) <= epsilon;
+}
+
+/**
+ * @brief Compute characteristic polynomials for tetrahedron PV problem
+ *
+ * For a tetrahedron with vectors V and W at 4 vertices, computes:
+ * - Q[4]: denominator polynomial (degree 3)
+ * - P[4][4]: numerator polynomials for 4 barycentric coordinates (each degree 3)
+ *
+ * Barycentric coordinates are: μᵢ(λ) = Pᵢ(λ) / Q(λ)
+ */
+template <typename T>
+void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3], T Q[4], T P[4][4]) {
+    // Linear transformation: map first 3 vertices to axes, 4th vertex to origin
+    T A[3][3] = {
+        {V[0][0] - V[3][0], V[1][0] - V[3][0], V[2][0] - V[3][0]},
+        {V[0][1] - V[3][1], V[1][1] - V[3][1], V[2][1] - V[3][1]},
+        {V[0][2] - V[3][2], V[1][2] - V[3][2], V[2][2] - V[3][2]}
+    };
+    T B[3][3] = {
+        {W[0][0] - W[3][0], W[1][0] - W[3][0], W[2][0] - W[3][0]},
+        {W[0][1] - W[3][1], W[1][1] - W[3][1], W[2][1] - W[3][1]},
+        {W[0][2] - W[3][2], W[1][2] - W[3][2], W[2][2] - W[3][2]}
+    };
+    T a[3] = {V[3][0], V[3][1], V[3][2]};
+    T b[3] = {W[3][0], W[3][1], W[3][2]};
+
+    // Right-hand side polynomials: rhs[i] = -a[i] + b[i]*λ
+    T rhs[3][2] = {
+        {-a[0], b[0]},
+        {-a[1], b[1]},
+        {-a[2], b[2]}
+    };
+
+    // Compute denominator Q: det(A - λB)
+    characteristic_polynomial_3x3(A, B, Q);
+
+    // Build adjugate matrix of (A - λB)
+    // Each entry is a polynomial of degree 2
+    T adj[3][3][3];
+    characteristic_polynomial_2x2(A[1][1], A[1][2], A[2][1], A[2][2], B[1][1], B[1][2], B[2][1], B[2][2], adj[0][0]);
+    characteristic_polynomial_2x2(A[1][0], A[1][2], A[2][0], A[2][2], B[1][0], B[1][2], B[2][0], B[2][2], adj[1][0]);
+    characteristic_polynomial_2x2(A[1][0], A[1][1], A[2][0], A[2][1], B[1][0], B[1][1], B[2][0], B[2][1], adj[2][0]);
+    characteristic_polynomial_2x2(A[0][1], A[0][2], A[2][1], A[2][2], B[0][1], B[0][2], B[2][1], B[2][2], adj[0][1]);
+    characteristic_polynomial_2x2(A[0][0], A[0][2], A[2][0], A[2][2], B[0][0], B[0][2], B[2][0], B[2][2], adj[1][1]);
+    characteristic_polynomial_2x2(A[0][0], A[0][1], A[2][0], A[2][1], B[0][0], B[0][1], B[2][0], B[2][1], adj[2][1]);
+    characteristic_polynomial_2x2(A[0][1], A[0][2], A[1][1], A[1][2], B[0][1], B[0][2], B[1][1], B[1][2], adj[0][2]);
+    characteristic_polynomial_2x2(A[0][0], A[0][2], A[1][0], A[1][2], B[0][0], B[0][2], B[1][0], B[1][2], adj[1][2]);
+    characteristic_polynomial_2x2(A[0][0], A[0][1], A[1][0], A[1][1], B[0][0], B[0][1], B[1][0], B[1][1], adj[2][2]);
+
+    // Fix signs for adjugate matrix
+    polynomial_scalar_multiply(adj[0][1], 2, T(-1));
+    polynomial_scalar_multiply(adj[1][0], 2, T(-1));
+    polynomial_scalar_multiply(adj[1][2], 2, T(-1));
+    polynomial_scalar_multiply(adj[2][1], 2, T(-1));
+
+    // Compute P[i] = adj[i]^T * rhs
+    // P[i] = sum_j adj[i][j] * rhs[j]
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 4; ++j) P[i][j] = T(0);
+
+        for (int j = 0; j < 3; ++j) {
+            T poly[4] = {0};
+            polynomial_multiply(adj[i][j], 2, rhs[j], 1, poly);
+            polynomial_add_inplace(P[i], 3, poly, 3);
+        }
+    }
+
+    // Fourth coordinate: P[3] = Q - P[0] - P[1] - P[2]
+    P[3][0] = Q[0] - P[0][0] - P[1][0] - P[2][0];
+    P[3][1] = Q[1] - P[0][1] - P[1][1] - P[2][1];
+    P[3][2] = Q[2] - P[0][2] - P[1][2] - P[2][2];
+    P[3][3] = Q[3] - P[0][3] - P[1][3] - P[2][3];
 }
 
 // ============================================================================
@@ -629,9 +756,78 @@ template <typename T>
 bool solve_pv_tetrahedron(const T V[4][3], const T W[4][3],
                          PVCurveSegment& segment,
                          T epsilon) {
-    // TODO (Week 2): Implement tetrahedron solver
-    // This will compute characteristic polynomials and solve inequalities
-    return false;
+    // Check for degenerate case: all vectors parallel at vertices
+    bool all_parallel = true;
+    for (int i = 0; i < 4; ++i) {
+        T cross[3];
+        cross_product3(V[i], W[i], cross);
+        if (vector_norm3(cross) > epsilon) {
+            all_parallel = false;
+            break;
+        }
+    }
+
+    if (all_parallel) {
+        // Entire tetrahedron is a PV region - this is degenerate
+        return false;
+    }
+
+    // Compute characteristic polynomials
+    T Q[4], P[4][4];
+    characteristic_polynomials_pv_tetrahedron(V, W, Q, P);
+
+    // Check if Q is zero (degenerate)
+    bool q_zero = true;
+    for (int i = 0; i <= 3; ++i) {
+        if (std::abs(Q[i]) > epsilon) {
+            q_zero = false;
+            break;
+        }
+    }
+    if (q_zero) return false;
+
+    // Store polynomials in segment
+    segment.Q.coeffs[0] = Q[0];
+    segment.Q.coeffs[1] = Q[1];
+    segment.Q.coeffs[2] = Q[2];
+    segment.Q.coeffs[3] = Q[3];
+
+    for (int i = 0; i < 4; ++i) {
+        segment.P[i].coeffs[0] = P[i][0];
+        segment.P[i].coeffs[1] = P[i][1];
+        segment.P[i].coeffs[2] = P[i][2];
+        segment.P[i].coeffs[3] = P[i][3];
+    }
+
+    // TODO: Implement proper parameter range finding using cubic rational inequalities
+    // For now, use [0, 1] as placeholder
+    // The actual range should be computed by solving:
+    //   0 ≤ P[i](λ)/Q(λ) ≤ 1 for all i=0,1,2,3
+    segment.lambda_min = 0.0;
+    segment.lambda_max = 1.0;
+
+    // Simple validation: check if curve intersects tetrahedron at a few sample points
+    bool found_valid = false;
+    for (int sample = 0; sample <= 10; ++sample) {
+        double lambda = sample * 0.1;
+        auto mu = segment.get_barycentric(lambda);
+
+        // Check if valid barycentric coordinates
+        bool valid = true;
+        for (int i = 0; i < 4; ++i) {
+            if (mu[i] < -epsilon || mu[i] > 1 + epsilon) {
+                valid = false;
+                break;
+            }
+        }
+
+        if (valid) {
+            found_valid = true;
+            break;
+        }
+    }
+
+    return found_valid;
 }
 
 template <typename T>
