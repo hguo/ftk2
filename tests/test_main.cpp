@@ -39,10 +39,12 @@ void test_parity();
 void test_examples();
 void test_unstructured();
 void test_3d_cp_system();
+void test_exactpv();
 
 int main(int argc, char** argv) {
     std::cout << "Running FTK2 tests..." << std::endl;
-    
+
+    test_exactpv();
     test_3d_cp_system();
     test_unstructured();
     test_zero_crossing();
@@ -51,7 +53,7 @@ int main(int argc, char** argv) {
     test_sos();
     test_parity();
     test_examples();
-    
+
     std::cout << "\nSummary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
     return (passed_tests == total_tests) ? 0 : 1;
 }

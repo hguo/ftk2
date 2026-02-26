@@ -19,6 +19,9 @@ target_link_libraries(ftk2_tdgl_vortex_2d PRIVATE ftk2 VTK::IOXML VTK::CommonCor
 add_executable(ftk2_parallel_vector_approximate parallel_vector_approximate.cpp)
 target_link_libraries(ftk2_parallel_vector_approximate PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 
+add_executable(ftk2_exact_pv_simple exact_pv_simple.cpp)
+target_link_libraries(ftk2_exact_pv_simple PRIVATE ftk2)
+
 add_executable(ftk2_critical_point_unstructured_2d critical_point_unstructured_2d.cpp)
 target_link_libraries(ftk2_critical_point_unstructured_2d PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 

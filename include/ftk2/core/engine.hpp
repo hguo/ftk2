@@ -1011,6 +1011,32 @@ private:
                 values[i][0] = get_value(data.at(predicate_.var_name), s.vertices[i], coords, offset);
             }
             success = predicate_.extract_it(s, values, el);
+        } else if constexpr (std::is_same_v<PredicateType, ExactPVPredicate<T>>) {
+            // ExactPV: 2-simplex (triangle) with two 3D vector fields (6 components total)
+            T values[3][6];
+            num_vertices = 3;
+            std::vector<const ftk::ndarray<T>*> arrays_ptrs;
+
+            if (predicate_.use_multicomponent && !predicate_.vector_var_name.empty()) {
+                // Multi-component mode: single array with shape [6, spatial..., time]
+                const auto& vec_array = data.at(predicate_.vector_var_name);
+                arrays_ptrs.push_back(&vec_array);
+
+                // Extract all 6 components
+                for (int i = 0; i < 3; ++i) {
+                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                    for (int j = 0; j < 6; ++j) {
+                        if (coords.size() == 3) {
+                            // 3D spatial: [6, nx, ny, nz]
+                            values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2]);
+                        } else if (coords.size() == 4) {
+                            // 3D spatial + time: [6, nx, ny, nz, nt]
+                            values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2], coords[3]);
+                        }
+                    }
+                }
+            }
+            success = predicate_.extract_it(s, values, el, arrays_ptrs, mesh);
         } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             T values[m+1][m];
             num_vertices = m + 1;

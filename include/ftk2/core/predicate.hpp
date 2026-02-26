@@ -4,6 +4,7 @@
 #include <ftk2/core/zero_crossing.hpp>
 #include <ftk2/core/sos.hpp>
 #include <ftk2/core/feature.hpp>
+#include <ftk2/numeric/parallel_vector_solver.hpp>
 #include <ndarray/ndarray.hh>
 #include <vector>
 #include <string>
@@ -14,10 +15,6 @@
 #endif
 
 namespace ftk2 {
-
-// Forward declarations for ExactPV
-struct PVCurveSegment;
-struct PVSurfacePatch;
 
 /**
  * @brief Base class for feature predicates.
@@ -402,11 +399,16 @@ struct FiberPredicate : public Predicate<2, T> {
  * - 4D spacetime: Parallel vectors form surfaces (2D manifolds in 4D space)
  */
 template <typename T = double>
-struct ExactPVPredicate : public Predicate<2, T> {
+struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 for v
     static constexpr int codimension = 2;
 
-    std::string vector_u_name = "u";  // First vector field
-    std::string vector_v_name = "v";  // Second vector field
+    // Multi-component mode (preferred): single array with 6 components [ux, uy, uz, vx, vy, vz]
+    std::string vector_var_name = "uv";  // Combined vector field
+
+    // Legacy mode: separate vector fields
+    std::string vector_u_name = "u";  // First vector field (3D)
+    std::string vector_v_name = "v";  // Second vector field (3D)
+    bool use_multicomponent = true;  // Default to multi-component
 
     // Attributes to record at feature locations
     std::vector<AttributeSpec> attributes;
@@ -431,13 +433,84 @@ struct ExactPVPredicate : public Predicate<2, T> {
                         const std::map<std::string, ftk::ndarray<T>>& data,
                         std::vector<FeatureElement>& elements) const;
 
-    // CPU implementation
-    bool extract_it(const Simplex& s, const T values[3][2], FeatureElement& el,
+    // CPU implementation for triangles (3 vertices, 2 vector fields of 3 components each)
+    bool extract_it(const Simplex& s, const T values[3][6], FeatureElement& el,
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const
     {
-        // TODO: Implement extraction logic
-        // For now, return false (not implemented)
+        // values layout: [3 vertices][6 components: ux, uy, uz, vx, vy, vz]
+        T V[3][3], W[3][3];
+        for (int i = 0; i < 3; ++i) {
+            V[i][0] = values[i][0];  // u_x
+            V[i][1] = values[i][1];  // u_y
+            V[i][2] = values[i][2];  // u_z
+            W[i][0] = values[i][3];  // v_x
+            W[i][1] = values[i][4];  // v_y
+            W[i][2] = values[i][5];  // v_z
+        }
+
+        // Solve for parallel vector puncture points
+        std::vector<PuncturePoint> punctures;
+        int n = solve_pv_triangle(V, W, punctures);
+
+        // Handle degenerate case (entire triangle is PV surface)
+        if (n == std::numeric_limits<int>::max()) {
+            // Store a single point at barycenter for degenerate case
+            el = FeatureElement();
+            el.simplex = s;
+            el.geometry_type = FeatureGeometryType::Point;
+            el.barycentric_coords[0][0] = 1.0f / 3.0f;
+            el.barycentric_coords[0][1] = 1.0f / 3.0f;
+            el.barycentric_coords[0][2] = 1.0f / 3.0f;
+            el.type = -1;  // Mark as degenerate
+            el.scalar = 0.0f;
+            for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+            return true;
+        }
+
+        // Return first puncture if any exist
+        if (n > 0) {
+            el = FeatureElement();
+            el.simplex = s;
+            el.geometry_type = FeatureGeometryType::Point;
+            el.barycentric_coords[0][0] = (float)punctures[0].barycentric[0];
+            el.barycentric_coords[0][1] = (float)punctures[0].barycentric[1];
+            el.barycentric_coords[0][2] = (float)punctures[0].barycentric[2];
+            el.type = 0;
+            el.scalar = (float)punctures[0].lambda;  // Store lambda value
+            for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+
+            // TODO: Handle multiple punctures (n > 1) - need to return multiple elements
+            // For now, only return the first one
+
+            return true;
+        }
+
         return false;
+    }
+
+    // Extraction for tetrahedra (4 vertices, 2 vector fields)
+    bool extract_tetrahedron(const Simplex& s, const T values[4][6],
+                            PVCurveSegment& segment) const
+    {
+        // values layout: [4 vertices][6 components: ux, uy, uz, vx, vy, vz]
+        T V[4][3], W[4][3];
+        for (int i = 0; i < 4; ++i) {
+            V[i][0] = values[i][0];  // u_x
+            V[i][1] = values[i][1];  // u_y
+            V[i][2] = values[i][2];  // u_z
+            W[i][0] = values[i][3];  // v_x
+            W[i][1] = values[i][4];  // v_y
+            W[i][2] = values[i][5];  // v_z
+        }
+
+        // Solve for parametric PV curve
+        bool found = solve_pv_tetrahedron(V, W, segment);
+        if (found) {
+            // Compute a hash for the simplex as an ID
+            SimplexHash hasher;
+            segment.simplex_id = (int)(hasher(s) % INT_MAX);
+        }
+        return found;
     }
 
 #ifdef __CUDACC__
