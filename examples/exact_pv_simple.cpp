@@ -132,24 +132,38 @@ int main() {
     ftk2::write_complex_to_vtp(complex, *mesh, "exactpv_punctures.vtp", -1, true);
     std::cout << "  Wrote puncture points to: exactpv_punctures.vtp" << std::endl;
 
-    // First, check how many curves are truly non-degenerate (have multiple non-zero P)
+    // Check how many curves truly pass through tet INTERIOR (all 4 barycentric coords > 0)
     int non_degen_count = 0;
     if (!pred.curve_segments.empty()) {
         for (const auto& seg : pred.curve_segments) {
-            int non_zero_P = 0;
-            for (int p = 0; p < 4; ++p) {
-                bool p_nonzero = false;
-                for (int c = 0; c <= 3; ++c) {
-                    if (std::abs(seg.P[p].coeffs[c]) > 1e-10) {
-                        p_nonzero = true;
+            // Sample curve at multiple points to check if any point is in tet interior
+            bool has_interior_point = false;
+            int n_samples = 10;
+            double lambda_range = seg.lambda_max - seg.lambda_min;
+
+            for (int i = 0; i < n_samples; ++i) {
+                double lambda = seg.lambda_min + (double)i / (n_samples - 1) * lambda_range;
+                auto bary = seg.get_barycentric(lambda);
+
+                // Check if all 4 barycentric coords are positive (in interior)
+                bool all_positive = true;
+                for (int j = 0; j < 4; ++j) {
+                    if (bary[j] <= 1e-10) {  // Essentially zero or negative
+                        all_positive = false;
                         break;
                     }
                 }
-                if (p_nonzero) non_zero_P++;
+
+                if (all_positive) {
+                    has_interior_point = true;
+                    break;
+                }
             }
-            if (non_zero_P >= 2) non_degen_count++;  // At least 2 vertices contribute
+
+            if (has_interior_point) non_degen_count++;
         }
-        std::cout << "  " << non_degen_count << " / " << pred.curve_segments.size() << " curves have ≥2 non-zero barycentric coords" << std::endl;
+        std::cout << "  " << non_degen_count << " / " << pred.curve_segments.size()
+                  << " curves pass through tet INTERIOR (all 4 bary coords > 0)" << std::endl;
     }
 
     // Write curve segments to VTP (only if non-degenerate curves exist)
@@ -166,28 +180,38 @@ int main() {
         int seg_count = 0;
         int non_degen_written = 0;
         for (const auto& seg : pred.curve_segments) {
-            // Check if curve has at least 2 non-zero barycentric coordinates
-            int non_zero_P = 0;
-            for (int p = 0; p < 4; ++p) {
-                bool p_nonzero = false;
-                for (int c = 0; c <= 3; ++c) {
-                    if (std::abs(seg.P[p].coeffs[c]) > 1e-10) {
-                        p_nonzero = true;
+            // Check if curve passes through tet interior (all 4 bary coords > 0)
+            bool has_interior_point = false;
+            int n_check = 10;
+            double lambda_range = seg.lambda_max - seg.lambda_min;
+
+            for (int i = 0; i < n_check; ++i) {
+                double lambda = seg.lambda_min + (double)i / (n_check - 1) * lambda_range;
+                auto bary = seg.get_barycentric(lambda);
+
+                bool all_positive = true;
+                for (int j = 0; j < 4; ++j) {
+                    if (bary[j] <= 1e-10) {
+                        all_positive = false;
                         break;
                     }
                 }
-                if (p_nonzero) non_zero_P++;
+
+                if (all_positive) {
+                    has_interior_point = true;
+                    break;
+                }
             }
 
-            // Skip degenerate curves (stuck at single vertex)
-            if (non_zero_P < 2) {
+            // Skip curves on tet boundary (not in interior)
+            if (!has_interior_point) {
                 seg_count++;
                 continue;
             }
 
             // Sample the curve at regular intervals
             int n_samples = 20;
-            double lambda_range = seg.lambda_max - seg.lambda_min;
+            // lambda_range already computed above
 
             vtkSmartPointer<vtkPolyLine> polyLine = vtkSmartPointer<vtkPolyLine>::New();
             polyLine->GetPointIds()->SetNumberOfIds(n_samples);
@@ -246,10 +270,10 @@ int main() {
         writer->SetDataModeToAscii();
         writer->Write();
 
-        std::cout << "  Wrote curve segments to: exactpv_curves.vtp" << std::endl;
+        std::cout << "  Wrote " << non_degen_written << " interior curves to: exactpv_curves.vtp" << std::endl;
     } else {
-        std::cout << "  Note: All curve segments are degenerate (collapse to points)" << std::endl;
-        std::cout << "  This field configuration doesn't create curves through tet interiors." << std::endl;
+        std::cout << "  Note: No curves pass through tet interiors (all on boundaries)" << std::endl;
+        std::cout << "  This field configuration only creates PV curves on tet faces/edges." << std::endl;
     }
 
     std::cout << "\nDone!" << std::endl;
