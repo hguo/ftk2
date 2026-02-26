@@ -1,0 +1,41 @@
+# FTK2 Example: Inline ndarray stream with tornado synthetic data
+# This follows the ndarray stream YAML format
+
+tracking:
+  feature: critical_points
+  dimension: 3
+
+  input:
+    type: vector
+    variables: [u, v, w]
+    field_type: flow  # Non-gradient flow field (Jacobian classification)
+
+  data:
+    source: stream
+    # Inline ndarray stream configuration
+    stream:
+      # ndarray stream format - dimensions at stream level
+      dimensions: [32, 32, 32]
+      substreams:
+        - name: tornado
+          format: synthetic
+          synthetic:
+            name: tornado
+            n_timesteps: 5
+          vars:
+            - name: velocity
+              components: [u, v, w]
+
+  mesh:
+    type: regular
+    dimensions: [32, 32, 32]
+    spacing: [1.0, 1.0, 1.0]
+
+  execution:
+    backend: cpu
+    precision: double
+    threads: 4
+
+  output:
+    trajectories: tornado_results.txt
+    statistics: tornado_stats.json

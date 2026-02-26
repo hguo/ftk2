@@ -1,0 +1,35 @@
+# FTK2 Example: Tracking with Synthetic Stream Data
+# This demonstrates inline stream configuration with synthetic data
+
+tracking:
+  feature: critical_points
+  dimension: 3
+
+  input:
+    type: vector
+    variables: [u, v, w]
+    field_type: gradient  # Gradient field (Hessian classification)
+
+  data:
+    source: stream
+    # Inline stream configuration with synthetic moving maximum
+    stream:
+      # Dimensions at stream level for ndarray compatibility
+      dimensions: [32, 32, 32]
+      synthetic:
+        name: moving_maximum
+        n_timesteps: 5
+        # Moving maximum creates a gradient field with one CP trajectory
+
+  mesh:
+    type: regular
+    dimensions: [32, 32, 32]
+    spacing: [1.0, 1.0, 1.0]
+
+  execution:
+    backend: cpu
+    precision: double
+
+  output:
+    trajectories: synthetic_results.txt
+    statistics: synthetic_stats.json

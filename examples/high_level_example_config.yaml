@@ -1,0 +1,46 @@
+# Example FTK2 High-Level API Configuration
+# This shows both separate and inline stream configs
+
+tracking:
+  feature: critical_points
+  dimension: 3
+
+  input:
+    type: vector  # Direct vector field (u, v, w)
+    variables: [U, V, W]
+    field_type: flow  # Non-gradient field (Jacobian classification)
+
+  data:
+    source: arrays  # For this example, data provided programmatically
+
+    # ========== Alternative 1: Reference external stream YAML ==========
+    # source: stream
+    # stream_config: data_stream.yaml
+
+    # ========== Alternative 2: Inline stream config (user requested) ==========
+    # source: stream
+    # stream:
+    #   path_prefix: /data/simulation
+    #   substreams:
+    #     - name: input
+    #       format: netcdf
+    #       filenames: "timestep_*.nc"
+    #       vars:
+    #         - name: velocity
+    #           components: [U, V, W]
+
+  mesh:
+    type: regular
+    dimensions: [32, 32, 32]
+    spacing: [1.0, 1.0, 1.0]
+    origin: [0.0, 0.0, 0.0]
+
+  execution:
+    backend: cpu
+    precision: double
+    threads: 4
+
+  output:
+    trajectories: results.txt
+    statistics: stats.json
+    format: text

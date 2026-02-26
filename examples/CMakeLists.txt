@@ -68,3 +68,18 @@ if (CMAKE_CUDA_COMPILER)
     add_executable(ftk2_critical_point_2d_cuda critical_point_2d_cuda.cu)
     target_link_libraries(ftk2_critical_point_2d_cuda PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
 endif()
+
+# High-level API demo (Layer 2)
+find_package(yaml-cpp QUIET)
+if(yaml-cpp_FOUND)
+    add_executable(ftk2_high_level_api_demo high_level_api_demo.cpp)
+    target_link_libraries(ftk2_high_level_api_demo PRIVATE ftk2_high_level ftk2)
+
+    add_executable(ftk2_high_level_tracking_test high_level_tracking_test.cpp)
+    target_link_libraries(ftk2_high_level_tracking_test PRIVATE ftk2_high_level ftk2)
+
+    message(STATUS "Building high-level API demo and tracking test")
+else()
+    message(STATUS "Skipping high-level API demo (yaml-cpp not found)")
+endif()
+
