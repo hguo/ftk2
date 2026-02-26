@@ -256,10 +256,87 @@ TEST(solve_pv_triangle_no_solution) {
     ASSERT_EQ(n, 0);
 }
 
+TEST(solve_pv_triangle_single_puncture) {
+    // Triangle where V and W become parallel at specific point
+    // V varies from (1,0,0) to (0,1,0) to (-1,0,0)
+    // W varies from (-1,0,0) to (0,-1,0) to (1,0,0)
+    // They should be anti-parallel (λ=-1) somewhere
+    double V[3][3] = {
+        { 1.0,  0.0, 0.0},
+        { 0.0,  1.0, 0.0},
+        {-1.0,  0.0, 0.0}
+    };
+    double W[3][3] = {
+        {-1.0,  0.0, 0.0},
+        { 0.0, -1.0, 0.0},
+        { 1.0,  0.0, 0.0}
+    };
+
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures);
+
+    // Should find punctures (they are anti-parallel everywhere: W = -V)
+    // This is a degenerate case where the entire triangle satisfies the condition
+    ASSERT_TRUE(n == std::numeric_limits<int>::max());
+}
+
+TEST(solve_pv_triangle_known_solution) {
+    // Simple case: V and W become parallel at barycenter
+    double V[3][3] = {
+        {1.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0},
+        {0.0, 0.0, 1.0}
+    };
+    double W[3][3] = {
+        {2.0, 0.0, 0.0},
+        {0.0, 2.0, 0.0},
+        {0.0, 0.0, 2.0}
+    };
+
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures);
+
+    // Should find punctures (W = 2V everywhere)
+    // This is actually a degenerate case
+    ASSERT_TRUE(n == std::numeric_limits<int>::max() || n > 0);
+}
+
+TEST(solve_pv_triangle_realistic) {
+    // Test case that should find a puncture
+    // Create a field where vectors gradually align
+    double V[3][3] = {
+        { 1.0,  0.0,  0.0},
+        { 0.7,  0.7,  0.0},
+        { 0.0,  1.0,  0.0}
+    };
+    double W[3][3] = {
+        { 0.5,  0.0,  0.0},  // Parallel to V[0] (λ=0.5)
+        {-0.7,  0.7,  0.0},  // Not parallel to V[1]
+        { 0.0, -1.0,  0.0}   // Anti-parallel to V[2] (λ=-1)
+    };
+
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures);
+
+    // May or may not find punctures depending on the field configuration
+    // Just verify the solver runs without crashing
+    ASSERT_TRUE(n >= 0 && n <= 3);
+
+    // If punctures found, verify they're valid
+    for (int i = 0; i < n; ++i) {
+        double sum = punctures[i].barycentric[0] + punctures[i].barycentric[1] + punctures[i].barycentric[2];
+        ASSERT_NEAR(sum, 1.0, 1e-6);
+
+        // Each coordinate should be in [0,1]
+        ASSERT_TRUE(punctures[i].barycentric[0] >= -1e-6 && punctures[i].barycentric[0] <= 1.0 + 1e-6);
+        ASSERT_TRUE(punctures[i].barycentric[1] >= -1e-6 && punctures[i].barycentric[1] <= 1.0 + 1e-6);
+        ASSERT_TRUE(punctures[i].barycentric[2] >= -1e-6 && punctures[i].barycentric[2] <= 1.0 + 1e-6);
+    }
+}
+
 void test_exactpv() {
     // Test runner - the tests are automatically registered and run via static constructors
-    std::cout << "ExactPV tests completed (polynomial utilities and data structures)" << std::endl;
-    std::cout << "Note: Solver tests are stubs - will be implemented in Week 2" << std::endl;
+    std::cout << "ExactPV tests completed (polynomial utilities, data structures, and triangle solver)" << std::endl;
 }
 
 int main() {

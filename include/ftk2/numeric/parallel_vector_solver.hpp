@@ -341,31 +341,189 @@ bool solve_pv_pentatope(const T V[5][3], const T W[5][3],
 // ============================================================================
 
 /**
+ * @brief Compute 2x2 determinant
+ */
+template <typename T>
+inline T det2(const T a[2][2]) {
+    return a[0][0] * a[1][1] - a[1][0] * a[0][1];
+}
+
+/**
+ * @brief Compute 3x3 determinant
+ */
+template <typename T>
+inline T det3(const T a[3][3]) {
+    return a[0][0] * (a[1][1] * a[2][2] - a[2][1] * a[1][2])
+         - a[0][1] * (a[1][0] * a[2][2] - a[2][0] * a[1][2])
+         + a[0][2] * (a[1][0] * a[2][1] - a[2][0] * a[1][1]);
+}
+
+/**
+ * @brief Compute 3x3 matrix trace
+ */
+template <typename T>
+inline T trace3(const T a[3][3]) {
+    return a[0][0] + a[1][1] + a[2][2];
+}
+
+/**
+ * @brief Compute characteristic polynomial for generalized eigenvalue problem (3x3)
+ * det(A - λB) = P[0] + P[1]λ + P[2]λ² + P[3]λ³
+ */
+template <typename T>
+void characteristic_polynomial_3x3(const T A[3][3], const T B[3][3], T P[4]) {
+    P[0] = det3(A);
+    P[1] = A[1][2] * A[2][1] * B[0][0] - A[1][1] * A[2][2] * B[0][0] - A[1][2] * A[2][0] * B[0][1]
+          +A[1][0] * A[2][2] * B[0][1] + A[1][1] * A[2][0] * B[0][2] - A[1][0] * A[2][1] * B[0][2]
+          -A[0][2] * A[2][1] * B[1][0] + A[0][1] * A[2][2] * B[1][0] + A[0][2] * A[2][0] * B[1][1]
+          -A[0][0] * A[2][2] * B[1][1] - A[0][1] * A[2][0] * B[1][2] + A[0][0] * A[2][1] * B[1][2]
+          +A[0][2] * A[1][1] * B[2][0] - A[0][1] * A[1][2] * B[2][0] - A[0][2] * A[1][0] * B[2][1]
+          +A[0][0] * A[1][2] * B[2][1] + A[0][1] * A[1][0] * B[2][2] - A[0][0] * A[1][1] * B[2][2];
+    P[2] =-A[2][2] * B[0][1] * B[1][0] + A[2][1] * B[0][2] * B[1][0] + A[2][2] * B[0][0] * B[1][1]
+          -A[2][0] * B[0][2] * B[1][1] - A[2][1] * B[0][0] * B[1][2] + A[2][0] * B[0][1] * B[1][2]
+          +A[1][2] * B[0][1] * B[2][0] - A[1][1] * B[0][2] * B[2][0] - A[0][2] * B[1][1] * B[2][0]
+          +A[0][1] * B[1][2] * B[2][0] - A[1][2] * B[0][0] * B[2][1] + A[1][0] * B[0][2] * B[2][1]
+          +A[0][2] * B[1][0] * B[2][1] - A[0][0] * B[1][2] * B[2][1] + A[1][1] * B[0][0] * B[2][2]
+          -A[1][0] * B[0][1] * B[2][2] - A[0][1] * B[1][0] * B[2][2] + A[0][0] * B[1][1] * B[2][2];
+    P[3] = -det3(B);
+}
+
+/**
+ * @brief Solve cubic equation: P[0] + P[1]x + P[2]x² + P[3]x³ = 0
+ * Returns number of real roots
+ */
+template <typename T>
+int solve_cubic_real(const T P[4], T roots[3], T epsilon = std::numeric_limits<T>::epsilon()) {
+    if (std::abs(P[3]) < epsilon) {
+        // Degenerate to quadratic
+        if (std::abs(P[2]) < epsilon) {
+            // Linear equation
+            if (std::abs(P[1]) < epsilon) return 0;
+            roots[0] = -P[0] / P[1];
+            return 1;
+        }
+        // Quadratic: P[2]x² + P[1]x + P[0] = 0
+        T disc = P[1] * P[1] - 4 * P[2] * P[0];
+        if (disc < 0) return 0;
+        if (std::abs(disc) < epsilon) {
+            roots[0] = -P[1] / (2 * P[2]);
+            return 1;
+        }
+        T sqrt_disc = std::sqrt(disc);
+        roots[0] = (-P[1] + sqrt_disc) / (2 * P[2]);
+        roots[1] = (-P[1] - sqrt_disc) / (2 * P[2]);
+        return 2;
+    }
+
+    // Normalize to x³ + bx² + cx + d = 0
+    T b = P[2] / P[3];
+    T c = P[1] / P[3];
+    T d = P[0] / P[3];
+
+    T q = (3 * c - b * b) / 9;
+    T r = (-(27 * d) + b * (9 * c - 2 * b * b)) / 54;
+    T disc = q * q * q + r * r;
+    T term1 = b / 3;
+
+    if (disc > 0) {
+        // One real root
+        T s = r + std::sqrt(disc);
+        s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
+        T t = r - std::sqrt(disc);
+        t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
+        roots[0] = -term1 + s + t;
+        return 1;
+    } else if (std::abs(disc) < epsilon) {
+        // Two or three equal roots
+        T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
+        roots[0] = -term1 + 2 * r13;
+        roots[1] = -(r13 + term1);
+        if (std::abs(roots[0] - roots[1]) < epsilon) return 1;
+        return 2;
+    } else {
+        // Three distinct real roots
+        q = -q;
+        T dum1 = std::acos(r / std::sqrt(q * q * q));
+        T r13 = 2 * std::sqrt(q);
+        roots[0] = -term1 + r13 * std::cos(dum1 / 3);
+        roots[1] = -term1 + r13 * std::cos((dum1 + 2 * M_PI) / 3);
+        roots[2] = -term1 + r13 * std::cos((dum1 + 4 * M_PI) / 3);
+        return 3;
+    }
+}
+
+/**
+ * @brief Solve 3x2 least squares system Mx = b
+ * Returns condition number estimate
+ */
+template <typename T>
+T solve_least_square3x2(const T M[3][2], const T b[3], T x[2], T epsilon = std::numeric_limits<T>::epsilon()) {
+    // M^T M x = M^T b
+    T MTM[2][2] = {
+        {M[0][0]*M[0][0] + M[1][0]*M[1][0] + M[2][0]*M[2][0],
+         M[0][0]*M[0][1] + M[1][0]*M[1][1] + M[2][0]*M[2][1]},
+        {M[0][1]*M[0][0] + M[1][1]*M[1][0] + M[2][1]*M[2][0],
+         M[0][1]*M[0][1] + M[1][1]*M[1][1] + M[2][1]*M[2][1]}
+    };
+    T MTb[2] = {
+        M[0][0]*b[0] + M[1][0]*b[1] + M[2][0]*b[2],
+        M[0][1]*b[0] + M[1][1]*b[1] + M[2][1]*b[2]
+    };
+
+    T det = MTM[0][0] * MTM[1][1] - MTM[0][1] * MTM[1][0];
+    if (std::abs(det) < epsilon) {
+        x[0] = x[1] = 0;
+        return std::numeric_limits<T>::infinity();
+    }
+
+    x[0] = (MTM[1][1] * MTb[0] - MTM[0][1] * MTb[1]) / det;
+    x[1] = (MTM[0][0] * MTb[1] - MTM[1][0] * MTb[0]) / det;
+
+    // Estimate condition number (very rough)
+    T trace = MTM[0][0] + MTM[1][1];
+    return trace / std::abs(det);
+}
+
+/**
+ * @brief Linear interpolation on triangle (3 vertices, 3D vectors)
+ */
+template <typename T>
+void lerp_s2v3(const T V[3][3], const T mu[3], T result[3]) {
+    result[0] = mu[0] * V[0][0] + mu[1] * V[1][0] + mu[2] * V[2][0];
+    result[1] = mu[0] * V[0][1] + mu[1] * V[1][1] + mu[2] * V[2][1];
+    result[2] = mu[0] * V[0][2] + mu[1] * V[1][2] + mu[2] * V[2][2];
+}
+
+/**
+ * @brief Compute 3D cross product
+ */
+template <typename T>
+void cross_product3(const T a[3], const T b[3], T result[3]) {
+    result[0] = a[1] * b[2] - a[2] * b[1];
+    result[1] = a[2] * b[0] - a[0] * b[2];
+    result[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+/**
+ * @brief Compute 3D vector norm
+ */
+template <typename T>
+T vector_norm3(const T v[3]) {
+    return std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+}
+
+/**
  * @brief Verify that v and w are parallel at given barycentric coordinates
  */
 template <typename T>
 bool verify_parallel(const T V[3][3], const T W[3][3],
                     const T mu[3],
                     T epsilon = std::numeric_limits<T>::epsilon()) {
-    // Interpolate v and w
-    T v[3] = {0, 0, 0};
-    T w[3] = {0, 0, 0};
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            v[j] += mu[i] * V[i][j];
-            w[j] += mu[i] * W[i][j];
-        }
-    }
-
-    // Compute cross product
-    T cross[3];
-    cross[0] = v[1] * w[2] - v[2] * w[1];
-    cross[1] = v[2] * w[0] - v[0] * w[2];
-    cross[2] = v[0] * w[1] - v[1] * w[0];
-
-    // Check if cross product is near zero
-    T norm = std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
-    return norm <= epsilon;
+    T v[3], w[3], cross[3];
+    lerp_s2v3(V, mu, v);
+    lerp_s2v3(W, mu, w);
+    cross_product3(v, w, cross);
+    return vector_norm3(cross) <= epsilon;
 }
 
 // ============================================================================
@@ -376,29 +534,95 @@ template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
                      T epsilon) {
-    // Check for degenerate case: all vectors parallel
+    punctures.clear();
+
+    // Check for degenerate case: all vectors parallel at vertices
     bool all_parallel = true;
     for (int i = 0; i < 3; ++i) {
         T cross[3];
-        cross[0] = V[i][1] * W[i][2] - V[i][2] * W[i][1];
-        cross[1] = V[i][2] * W[i][0] - V[i][0] * W[i][2];
-        cross[2] = V[i][0] * W[i][1] - V[i][1] * W[i][0];
-
-        T norm = std::sqrt(cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]);
-        if (norm > epsilon) {
+        cross_product3(V[i], W[i], cross);
+        if (vector_norm3(cross) > epsilon) {
             all_parallel = false;
             break;
         }
     }
 
     if (all_parallel) {
-        return std::numeric_limits<int>::max();  // Degenerate case
+        return std::numeric_limits<int>::max();  // Entire triangle is PV surface
     }
 
-    // TODO (Week 2): Implement actual cubic solver
-    // For now, return 0 (no punctures found)
-    punctures.clear();
-    return 0;
+    // Transpose matrices for characteristic polynomial computation
+    T VT[3][3], WT[3][3];
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            VT[i][j] = V[j][i];
+            WT[i][j] = W[j][i];
+        }
+    }
+
+    // Compute characteristic polynomial: det(V - λW) = 0
+    T P[4];
+    characteristic_polynomial_3x3(VT, WT, P);
+
+    // Solve cubic equation for λ values
+    T lambda[3];
+    int n_roots = solve_cubic_real(P, lambda, epsilon);
+
+    // For each root, compute barycentric coordinates and verify
+    for (int i = 0; i < n_roots; ++i) {
+        if (std::abs(lambda[i]) <= epsilon) continue;  // Skip λ ≈ 0
+
+        // Set up least squares system: (V - λW)μ = 0
+        // We solve for first two barycentric coords; third is 1 - μ₀ - μ₁
+        const T M[3][2] = {
+            {(VT[0][0] - VT[0][2]) - lambda[i] * (WT[0][0] - WT[0][2]),
+             (VT[0][1] - VT[0][2]) - lambda[i] * (WT[0][1] - WT[0][2])},
+            {(VT[1][0] - VT[1][2]) - lambda[i] * (WT[1][0] - WT[1][2]),
+             (VT[1][1] - VT[1][2]) - lambda[i] * (WT[1][1] - WT[1][2])},
+            {(VT[2][0] - VT[2][2]) - lambda[i] * (WT[2][0] - WT[2][2]),
+             (VT[2][1] - VT[2][2]) - lambda[i] * (WT[2][1] - WT[2][2])}
+        };
+        const T b[3] = {
+            -(VT[0][2] - lambda[i] * WT[0][2]),
+            -(VT[1][2] - lambda[i] * WT[1][2]),
+            -(VT[2][2] - lambda[i] * WT[2][2])
+        };
+
+        T nu[3];
+        T cond = solve_least_square3x2(M, b, nu, epsilon);
+        nu[2] = T(1) - nu[0] - nu[1];
+
+        // Check if barycentric coordinates are valid (within [0,1])
+        if (nu[0] >= -epsilon && nu[0] <= 1 + epsilon &&
+            nu[1] >= -epsilon && nu[1] <= 1 + epsilon &&
+            nu[2] >= -epsilon && nu[2] <= 1 + epsilon)
+        {
+            // Verify solution by checking cross product
+            T v[3], w[3], cross[3];
+            lerp_s2v3(V, nu, v);
+            lerp_s2v3(W, nu, w);
+            cross_product3(v, w, cross);
+            T norm = vector_norm3(cross);
+
+            if (norm > 1e-2) {
+                // Reject due to large residual
+                continue;
+            }
+
+            // Valid puncture point found
+            PuncturePoint p;
+            p.lambda = lambda[i];
+            p.barycentric[0] = nu[0];
+            p.barycentric[1] = nu[1];
+            p.barycentric[2] = nu[2];
+            // Note: 3D coords would be computed from mesh coordinates
+            p.coords_3d[0] = p.coords_3d[1] = p.coords_3d[2] = 0;
+
+            punctures.push_back(p);
+        }
+    }
+
+    return punctures.size();
 }
 
 template <typename T>
