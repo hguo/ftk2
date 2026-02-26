@@ -470,6 +470,119 @@ TEST(solve_pv_tetrahedron_parameter_range) {
     }
 }
 
+TEST(solve_pv_tetrahedron_cross_product_verification) {
+    // Test that v × w is actually zero along the computed curve
+    double V[4][3] = {
+        { 1.0,  0.0,  0.0},
+        { 0.0,  1.0,  0.0},
+        { 0.0,  0.0,  1.0},
+        { 0.1,  0.1,  0.1}
+    };
+    double W[4][3] = {
+        { 0.5,  0.0,  0.0},
+        { 0.0,  0.5,  0.0},
+        { 0.0,  0.0,  0.5},
+        {-0.1, -0.1, -0.1}
+    };
+
+    PVCurveSegment segment;
+    bool result = solve_pv_tetrahedron(V, W, segment);
+
+    if (result) {
+        // Sample curve and verify v × w ≈ 0
+        double lambda_range = segment.lambda_max - segment.lambda_min;
+        for (int i = 0; i <= 10; ++i) {
+            double lambda = segment.lambda_min + i * lambda_range * 0.1;
+            auto mu = segment.get_barycentric(lambda);
+
+            // Interpolate V and W at barycentric coordinates
+            double v[3] = {0, 0, 0};
+            double w[3] = {0, 0, 0};
+            for (int j = 0; j < 4; ++j) {
+                for (int k = 0; k < 3; ++k) {
+                    v[k] += mu[j] * V[j][k];
+                    w[k] += mu[j] * W[j][k];
+                }
+            }
+
+            // Compute cross product
+            double cross[3];
+            cross[0] = v[1] * w[2] - v[2] * w[1];
+            cross[1] = v[2] * w[0] - v[0] * w[2];
+            cross[2] = v[0] * w[1] - v[1] * w[0];
+
+            // Verify cross product is near zero
+            double norm = std::sqrt(cross[0]*cross[0] + cross[1]*cross[1] + cross[2]*cross[2]);
+            ASSERT_TRUE(norm < 1e-2); // Relaxed tolerance for numerical stability
+        }
+    }
+}
+
+TEST(solve_pv_tetrahedron_realistic_field) {
+    // Test with more realistic vector field that should have PV curve
+    // V rotates around z-axis, W has varying magnitude
+    double V[4][3] = {
+        { 1.0,  0.0,  0.5},
+        {-0.5,  0.866, 0.3},  // 120 degrees
+        {-0.5, -0.866, 0.3},  // 240 degrees
+        { 0.0,  0.0,  1.0}
+    };
+    double W[4][3] = {
+        { 2.0,  0.0,  1.0},
+        {-1.0,  1.732, 0.6},  // Parallel to V[1]
+        {-1.0, -1.732, 0.6},  // Parallel to V[2]
+        { 0.0,  0.0,  2.0}
+    };
+
+    PVCurveSegment segment;
+    bool result = solve_pv_tetrahedron(V, W, segment);
+
+    if (result) {
+        // Sample curve and verify parallelism
+        double lambda_range = segment.lambda_max - segment.lambda_min;
+        int valid_samples = 0;
+
+        for (int i = 0; i <= 20; ++i) {
+            double lambda = segment.lambda_min + i * lambda_range * 0.05;
+            auto mu = segment.get_barycentric(lambda);
+
+            // Check barycentric validity
+            bool valid_mu = true;
+            for (int j = 0; j < 4; ++j) {
+                if (mu[j] < -1e-6 || mu[j] > 1.0 + 1e-6) {
+                    valid_mu = false;
+                    break;
+                }
+            }
+            if (!valid_mu) continue;
+
+            // Interpolate vectors
+            double v[3] = {0, 0, 0};
+            double w[3] = {0, 0, 0};
+            for (int j = 0; j < 4; ++j) {
+                for (int k = 0; k < 3; ++k) {
+                    v[k] += mu[j] * V[j][k];
+                    w[k] += mu[j] * W[j][k];
+                }
+            }
+
+            // Check cross product
+            double cross[3];
+            cross[0] = v[1] * w[2] - v[2] * w[1];
+            cross[1] = v[2] * w[0] - v[0] * w[2];
+            cross[2] = v[0] * w[1] - v[1] * w[0];
+
+            double norm = std::sqrt(cross[0]*cross[0] + cross[1]*cross[1] + cross[2]*cross[2]);
+            if (norm < 0.1) {
+                valid_samples++;
+            }
+        }
+
+        // Should have at least some valid samples along the curve
+        ASSERT_TRUE(valid_samples > 0);
+    }
+}
+
 void test_exactpv() {
     // Test runner - the tests are automatically registered and run via static constructors
     std::cout << "ExactPV tests completed (polynomial utilities, data structures, triangle/tetrahedron solvers)" << std::endl;
