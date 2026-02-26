@@ -5,6 +5,7 @@
 #include <ndarray/ndarray.hh>
 #include <iostream>
 #include <cmath>
+#include <filesystem>
 #include <vtkPolyData.h>
 #include <vtkPoints.h>
 #include <vtkCellArray.h>
@@ -20,40 +21,44 @@ using namespace ftk2;
 int main() {
     std::cout << "ExactPV Simple Example - Parallel Vector Detection" << std::endl;
 
-    // Create a 3D mesh: 8x8x8 for better tet interior coverage
-    const int N = 8;
+    // Create a 3D mesh
+    const int N = 6;  // Medium size for better interior coverage
     auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{N, N, N});
 
     // Create combined vector field: [ux, uy, uz, vx, vy, vz]
     ftk::ndarray<double> uv({6, N, N, N});  // [6 components][x][y][z]
 
-    // Generate fields with simple rotating vectors
-    // U rotates with position, V is offset copy
-    // This should create a volumetric PV region
-    double cx = N / 2.0, cy = N / 2.0, cz = N / 2.0;
+    // Generate field with simple known PV curve
+    // Approach: Create u and v that are nearly parallel everywhere,
+    // but exactly parallel along a specific curve
+    double cx = N / 2.0, cy = N / 2.0;
+
     for (int z = 0; z < N; ++z) {
         for (int y = 0; y < N; ++y) {
             for (int x = 0; x < N; ++x) {
-                double dx = x - cx, dy = y - cy, dz = z - cz;
-                double r = std::sqrt(dx*dx + dy*dy + dz*dz) + 0.1;
+                double dx = x - cx;
+                double dy = y - cy;
+                double dz = z - N/2.0;
 
-                // U points radially outward from center
-                uv.f(0, x, y, z) = dx / r;
-                uv.f(1, x, y, z) = dy / r;
-                uv.f(2, x, y, z) = dz / r;
+                // Base field U - varies smoothly
+                double r_xy = std::sqrt(dx*dx + dy*dy) + 0.1;
+                uv.f(0, x, y, z) = dx / r_xy;
+                uv.f(1, x, y, z) = dy / r_xy;
+                uv.f(2, x, y, z) = (double)z / N;
 
-                // V is similar but with a twist - parallel when twist angle matches
-                double theta = std::atan2(dy, dx);
-                double phi = 0.3;  // Twist angle
-                uv.f(3, x, y, z) = (dx * std::cos(phi) - dy * std::sin(phi)) / r;
-                uv.f(4, x, y, z) = (dx * std::sin(phi) + dy * std::cos(phi)) / r;
-                uv.f(5, x, y, z) = dz / r;
+                // V = U + small perpendicular perturbation
+                // The perturbation vanishes at a specific curve
+                double perturb_x = dy * (dx*dx + dy*dy - 1.0) * 0.1;
+                double perturb_y = -dx * (dx*dx + dy*dy - 1.0) * 0.1;
+                uv.f(3, x, y, z) = uv.f(0, x, y, z) + perturb_x;
+                uv.f(4, x, y, z) = uv.f(1, x, y, z) + perturb_y;
+                uv.f(5, x, y, z) = uv.f(2, x, y, z);
             }
         }
     }
 
-    std::cout << "Fields generated: radial U, twisted V" << std::endl;
-    std::cout << "Parallel vectors should occur in a volumetric region" << std::endl;
+    std::cout << "Fields generated: U radial, V = U + perturbation" << std::endl;
+    std::cout << "PV locus is a circle at radius ~1 in x-y plane" << std::endl;
 
     // Prepare data map
     std::map<std::string, ftk::ndarray<double>> data;
@@ -133,9 +138,8 @@ int main() {
         std::cout << "  " << non_degen_count << " / " << pred.curve_segments.size() << " curves have ≥2 non-zero barycentric coords" << std::endl;
     }
 
-    // Write curve segments to VTP (skip if all degenerate)
-    // Each curve segment is sampled into polyline points
-    if (!pred.curve_segments.empty() && non_degen_count > 0) {
+    // Write curve segments to VTP (only if non-degenerate curves exist)
+    if (non_degen_count > 0) {
         auto polydata = vtkSmartPointer<vtkPolyData>::New();
         auto points = vtkSmartPointer<vtkPoints>::New();
         auto lines = vtkSmartPointer<vtkCellArray>::New();
@@ -234,7 +238,15 @@ int main() {
         std::cout << "  This field configuration doesn't create curves through tet interiors." << std::endl;
     }
 
-    std::cout << "\nDone! View exactpv_punctures.vtp in ParaView to see the 114 puncture points." << std::endl;
-    std::cout << "The points are connected into " << complex.connectivity.size() << " trajectory component(s)." << std::endl;
+    std::cout << "\nDone!" << std::endl;
+    std::cout << "Output files generated in: " << std::filesystem::current_path() << std::endl;
+    if (non_degen_count > 0) {
+        std::cout << "  - exactpv_punctures.vtp: " << complex.vertices.size() << " puncture points, "
+                  << complex.connectivity.size() << " trajectory component(s)" << std::endl;
+        std::cout << "  - exactpv_curves.vtp: " << non_degen_count << " non-degenerate PV curves through tet interiors" << std::endl;
+    } else {
+        std::cout << "  - exactpv_punctures.vtp: " << complex.vertices.size() << " puncture points" << std::endl;
+        std::cout << "  - Note: No non-degenerate curves (PV locus only touches tet boundaries)" << std::endl;
+    }
     return 0;
 }

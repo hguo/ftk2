@@ -51,7 +51,13 @@ inline vtkSmartPointer<vtkPoints> complex_to_vtk_points(const FeatureComplex& co
         scalar_data->InsertNextValue(el.scalar);
         track_id_data->InsertNextValue((int)el.track_id);
         type_data->InsertNextValue((int)el.type);
-        time_data->InsertNextValue((float)phys_pos.back());
+        // Only use last coordinate as "Time" if mesh has time dimension (total_dim > spatial_dim)
+        // For purely spatial meshes (3D), this would incorrectly use z-coordinate as time
+        if (mesh.get_total_dimension() > mesh.get_spatial_dimension()) {
+            time_data->InsertNextValue((float)phys_pos.back());
+        } else {
+            time_data->InsertNextValue(0.0f);  // No time dimension - set to 0
+        }
     }
 
     if (pointData) {
