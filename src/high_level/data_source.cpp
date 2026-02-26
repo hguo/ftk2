@@ -13,10 +13,88 @@
 namespace ftk2 {
 
 /**
+ * @brief Streaming data loader - yields consecutive timestep pairs
+ * Only holds 2 timesteps in memory at once for memory efficiency
+ */
+template <typename T>
+class StreamingDataLoader {
+public:
+    using stream_type = ftk::stream<ftk::native_storage>;
+
+    StreamingDataLoader(stream_type& stream) : stream_(stream), current_t_(0) {
+        total_timesteps_ = stream_.total_timesteps();
+
+        // Get variable names from first timestep
+        if (total_timesteps_ > 0) {
+            auto group = stream_.read(0);
+            for (const auto& kv : *group) {
+                var_names_.push_back(kv.first);
+            }
+        }
+    }
+
+    // Get next pair of consecutive timesteps
+    bool next_pair(std::map<std::string, ftk::ndarray<T>>& data_t0,
+                   std::map<std::string, ftk::ndarray<T>>& data_t1,
+                   int& t0, int& t1) {
+        if (current_t_ >= total_timesteps_ - 1) {
+            return false;  // No more pairs
+        }
+
+        t0 = current_t_;
+        t1 = current_t_ + 1;
+
+        // Load t0 (use cached if available from previous iteration)
+        if (current_t_ == 0 || cached_next_.empty()) {
+            data_t0 = load_timestep(t0);
+        } else {
+            data_t0 = std::move(cached_next_);
+        }
+
+        // Load t1
+        data_t1 = load_timestep(t1);
+
+        // Cache t1 for next iteration (t1 becomes t0 in next pair)
+        cached_next_ = data_t1;
+
+        current_t_++;
+        return true;
+    }
+
+    int total_timesteps() const { return total_timesteps_; }
+    int current_timestep() const { return current_t_; }
+    const std::vector<std::string>& var_names() const { return var_names_; }
+
+private:
+    std::map<std::string, ftk::ndarray<T>> load_timestep(int t) {
+        auto group = stream_.read(t);
+        std::map<std::string, ftk::ndarray<T>> data;
+
+        // Get all variables from group
+        for (const auto& name : var_names_) {
+            if (group->has(name)) {
+                const auto& arr = group->get_ref<T>(name);
+                data[name] = arr;  // Copy timestep data
+            }
+        }
+
+        return data;
+    }
+
+    stream_type& stream_;
+    int current_t_;
+    int total_timesteps_;
+    std::vector<std::string> var_names_;
+    std::map<std::string, ftk::ndarray<T>> cached_next_;
+};
+
+/**
  * @brief Load data from ndarray stream (YAML configuration)
  *
  * ndarray stream already handles all formats: NetCDF, HDF5, ADIOS2, VTK, synthetic.
  * No need for separate loaders - stream is the universal interface.
+ *
+ * NOTE: This loads ALL timesteps into memory - for large datasets, use streaming execution instead.
  */
 template <typename T>
 std::map<std::string, ftk::ndarray<T>> load_stream_data(const DataConfig& config) {

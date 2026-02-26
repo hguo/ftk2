@@ -218,7 +218,7 @@ class TrackingConfig {
 public:
     // Core settings
     FeatureType feature = FeatureType::CriticalPoints;
-    int dimension = 3;  // Spatial dimension (2 or 3)
+    int dimension = 0;  // Spatial dimension (2 or 3, 0 = auto-derive from data)
 
     // Sub-configurations
     InputConfig input;
@@ -232,8 +232,9 @@ public:
      * @brief Validate entire configuration
      */
     void validate() const {
-        if (dimension < 2 || dimension > 3) {
-            throw std::invalid_argument("dimension must be 2 or 3");
+        // dimension can be 0 (auto-derive), 2, or 3
+        if (dimension != 0 && dimension != 2 && dimension != 3) {
+            throw std::invalid_argument("dimension must be 0 (auto-derive), 2, or 3");
         }
 
         input.validate();

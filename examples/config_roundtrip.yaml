@@ -1,0 +1,35 @@
+tracking:
+  feature: critical_points
+  dimension: 3
+  input:
+    type: vector
+    variables:
+      - U
+      - V
+      - W
+    field_type: flow
+  data:
+    source: arrays
+    stream: ~
+  mesh:
+    type: regular
+    dimensions:
+      - 32
+      - 32
+      - 32
+    spacing:
+      - 1
+      - 1
+      - 1
+    origin:
+      - 0
+      - 0
+      - 0
+  execution:
+    backend: cpu
+    precision: double
+    threads: 4
+  output:
+    trajectories: results.txt
+    statistics: stats.json
+    format: text

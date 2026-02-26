@@ -10,6 +10,10 @@ namespace ftk2 {
 template <typename T>
 std::map<std::string, ftk::ndarray<T>> load_stream_data(const DataConfig& config);
 
+// Forward declaration of streaming loader
+template <typename T>
+class StreamingDataLoader;
+
 // ============================================================================
 // Factory Methods
 // ============================================================================
@@ -121,6 +125,60 @@ std::map<std::string, ftk::ndarray<T>> FeatureTrackerImpl<T>::preprocess_data(
 }
 
 // ============================================================================
+// FeatureTrackerImpl: Dimension Inference
+// ============================================================================
+
+template <typename T>
+int FeatureTrackerImpl<T>::infer_dimension(const std::map<std::string, ftk::ndarray<T>>& data) {
+    if (data.empty()) {
+        throw std::runtime_error("Cannot infer dimension from empty data");
+    }
+
+    const auto& first_var = data.begin()->second;
+    int nd = first_var.nd();
+
+    // Analyze shape to determine spatial dimension
+    // Formats:
+    //   Scalar: [nx, ny, nt] -> 2D  or  [nx, ny, nz, nt] -> 3D
+    //   Vector: [2, nx, ny, nt] -> 2D  or  [3, nx, ny, nz, nt] -> 3D
+
+    // Check if first dimension is component count
+    bool has_components = (nd >= 3 && (first_var.dimf(0) == 2 || first_var.dimf(0) == 3));
+
+    int spatial_dims;
+    if (has_components) {
+        // Vector field: [ncomp, spatial..., time]
+        spatial_dims = nd - 2;  // Subtract component and time dimensions
+    } else {
+        // Scalar field: [spatial..., time]
+        spatial_dims = nd - 1;  // Subtract time dimension
+    }
+
+    if (spatial_dims < 2 || spatial_dims > 3) {
+        throw std::runtime_error("Inferred spatial dimension must be 2D or 3D, got " +
+                                std::to_string(spatial_dims) + "D");
+    }
+
+    return spatial_dims;
+}
+
+// ============================================================================
+// FeatureTrackerImpl: Streaming Execution
+// ============================================================================
+
+template <typename T>
+template <typename PredicateType>
+TrackingResults FeatureTrackerImpl<T>::execute_streaming(
+    std::shared_ptr<Mesh> spatial_mesh,
+    const DataConfig& data_config)
+{
+    // This will be implemented in Phase 2
+    // For now, throw not implemented
+    throw std::runtime_error("Streaming execution not yet fully implemented. "
+                            "Use non-streaming mode for now (loads all data into memory).");
+}
+
+// ============================================================================
 // FeatureTrackerImpl: Execution
 // ============================================================================
 
@@ -166,16 +224,24 @@ TrackingResults FeatureTrackerImpl<T>::execute_with_predicate(
 template <typename T>
 TrackingResults FeatureTrackerImpl<T>::execute() {
     std::cout << "=== FTK2 Feature Tracker ===" << std::endl;
-    std::cout << "Configuration:" << std::endl;
+
+    // 1. Load data first (needed for auto-deriving mesh dimensions and feature dimension)
+    std::cout << "[1/5] Loading data..." << std::endl;
+    auto raw_data = create_data();
+
+    // Auto-derive dimension if not specified
+    if (config_.dimension == 0) {
+        config_.dimension = infer_dimension(raw_data);
+        std::cout << "  Auto-derived dimension: " << config_.dimension << "D" << std::endl;
+    }
+
+    // Now print configuration (after auto-derivation)
+    std::cout << "\nConfiguration:" << std::endl;
     std::cout << "  Feature: " << TrackingConfig::feature_type_to_string(config_.feature) << std::endl;
     std::cout << "  Dimension: " << config_.dimension << "D" << std::endl;
     std::cout << "  Precision: " << (std::is_same<T, double>::value ? "double" : "float") << std::endl;
     std::cout << "  Backend: " << TrackingConfig::backend_to_string(config_.execution.backend) << std::endl;
     std::cout << std::endl;
-
-    // 1. Load data first (needed for auto-deriving mesh dimensions)
-    std::cout << "[1/5] Loading data..." << std::endl;
-    auto raw_data = create_data();
 
     // 2. Create mesh (with auto-derived dimensions if needed)
     std::cout << "[2/5] Creating mesh..." << std::endl;

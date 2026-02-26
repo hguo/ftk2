@@ -125,6 +125,16 @@ private:
         std::shared_ptr<Mesh> mesh,
         const std::map<std::string, ftk::ndarray<T>>& data);
 
+    // Streaming execution - process timestep pairs incrementally
+    // Only holds 2 timesteps in memory at once
+    template <typename PredicateType>
+    TrackingResults execute_streaming(
+        std::shared_ptr<Mesh> spatial_mesh,
+        const DataConfig& data_config);
+
+    // Auto-derive dimension from data shape
+    int infer_dimension(const std::map<std::string, ftk::ndarray<T>>& data);
+
     // Write output files
     void write_results(const TrackingResults& results);
 };

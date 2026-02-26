@@ -1,0 +1,38 @@
+# FTK2 Example: Smaller tornado for faster testing
+# Reduced grid size and timesteps
+# dimension is auto-derived from data
+
+tracking:
+  feature: critical_points
+  # dimension: 3  # Auto-derived from data
+
+  input:
+    type: vector
+    variables: [u, v, w]
+    field_type: flow
+
+  data:
+    source: stream
+    stream:
+      dimensions: [16, 16, 16]
+      substreams:
+        - name: tornado
+          format: synthetic
+          synthetic:
+            name: tornado
+            n_timesteps: 3
+          vars:
+            - name: velocity
+              components: [u, v, w]
+
+  mesh:
+    # Dimensions auto-derived from data
+    type: regular
+
+  execution:
+    backend: cpu
+    precision: double
+
+  output:
+    trajectories: tornado_small_results.txt
+    statistics: tornado_small_stats.json
