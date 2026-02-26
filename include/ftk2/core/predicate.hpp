@@ -551,6 +551,14 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
             // Extract curve
             PVCurveSegment segment;
             if (extract_tetrahedron(s, values, segment)) {
+                // Store tetrahedron vertex coordinates for physical position computation
+                for (int i = 0; i < 4; ++i) {
+                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                    for (int j = 0; j < 3 && j < coords.size(); ++j) {
+                        segment.tet_vertices[i][j] = coords[j];
+                    }
+                }
+
                 found++;
                 std::lock_guard<std::mutex> lock(mutex);
                 curve_segments.push_back(segment);

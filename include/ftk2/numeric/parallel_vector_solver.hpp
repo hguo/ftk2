@@ -227,9 +227,18 @@ struct PVCurveSegment {
 
     std::vector<CriticalPoint1D> critical_points;  // Critical points on curve
 
-    PVCurveSegment() : simplex_id(-1), lambda_min(0.0), lambda_max(1.0) {}
+    // Tetrahedron vertex coordinates for physical position computation
+    std::array<std::array<double, 3>, 4> tet_vertices;  // [4 vertices][x,y,z]
 
-    // Evaluate curve at parameter lambda
+    PVCurveSegment() : simplex_id(-1), lambda_min(0.0), lambda_max(1.0) {
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                tet_vertices[i][j] = 0.0;
+            }
+        }
+    }
+
+    // Evaluate curve at parameter lambda (get barycentric coordinates)
     std::array<double, 4> get_barycentric(double lambda) const {
         double Q_val = Q.evaluate(lambda);
         if (std::abs(Q_val) < std::numeric_limits<double>::epsilon()) {
@@ -242,6 +251,19 @@ struct PVCurveSegment {
             mu[i] = P[i].evaluate(lambda) / Q_val;
         }
         return mu;
+    }
+
+    // Get physical (x,y,z) coordinates at parameter lambda
+    std::array<double, 3> get_physical_coords(double lambda) const {
+        auto bary = get_barycentric(lambda);
+
+        std::array<double, 3> pos = {0.0, 0.0, 0.0};
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                pos[j] += bary[i] * tet_vertices[i][j];
+            }
+        }
+        return pos;
     }
 };
 
