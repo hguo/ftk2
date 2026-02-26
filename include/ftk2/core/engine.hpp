@@ -9,6 +9,7 @@
 #include <ftk2/core/parallel.hpp>
 #include <ndarray/ndarray.hh>
 #include <ndarray/ndarray_stream.hh>
+#include <ndarray/device.hh>
 #include <map>
 #include <vector>
 #include <set>
@@ -280,15 +281,24 @@ public:
             }
         }
 
+        // Upload arrays to device using ndarray's built-in CUDA support
+        std::vector<ftk::ndarray<T>> device_arrays;
         std::vector<CudaDataView<T>> h_views;
+
         for (const auto& name : vars) {
-            const auto& arr = data.at(name);
+            // Make a copy and upload to device
+            ftk::ndarray<T> arr = data.at(name);
+            arr.copy_to_device(ftk::NDARRAY_DEVICE_CUDA, 0);
+
             CudaDataView<T> view;
-            CUDA_CHECK(cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T)));
-            CUDA_CHECK(cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            view.data = static_cast<T*>(arr.get_devptr());
             auto lattice = arr.get_lattice(); view.ndims = arr.nd();
-            for(int i=0; i<4; ++i) { view.dims[i] = (i < arr.nd()) ? arr.dimf(i) : 1; view.s[i] = (i < arr.nd()) ? lattice.prod_[arr.nd() - 1 - i] : 0; }
+            for(int i=0; i<4; ++i) {
+                view.dims[i] = (i < arr.nd()) ? arr.dimf(i) : 1;
+                view.s[i] = (i < arr.nd()) ? lattice.prod_[arr.nd() - 1 - i] : 0;
+            }
             h_views.push_back(view);
+            device_arrays.push_back(std::move(arr));  // Keep array alive
         }
 
         CudaDataView<T>* d_views;
@@ -358,8 +368,12 @@ public:
             }}
         }
 
-        for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
-        CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count)); CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count)); CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count)); CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
+        // device_arrays will automatically clean up device memory via ndarray's RAII
+        CUDA_CHECK(cudaFree(d_views));
+        CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
+        CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count));
+        CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count));
+        CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
         auto t_end = std::chrono::high_resolution_clock::now();
         auto d_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
         std::cout << "CUDA Execution Total=" << d_total_ms << "ms" << std::endl;
@@ -394,14 +408,19 @@ public:
             }
         }
 
+        // Upload arrays to device using ndarray's built-in CUDA support
+        std::vector<ftk::ndarray<T>> device_arrays;
         std::vector<CudaDataView<T>> h_views;
+
         for (const auto& name : vars) {
-            const auto& arr = data.at(name);
+            ftk::ndarray<T> arr = data.at(name);
+            arr.copy_to_device(ftk::NDARRAY_DEVICE_CUDA, 0);
+
             CudaDataView<T> view;
-            CUDA_CHECK(cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T)));
-            CUDA_CHECK(cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            view.data = static_cast<T*>(arr.get_devptr());
             view.ndims = 1; view.dims[0] = arr.nelem(); view.s[0] = 1;
             h_views.push_back(view);
+            device_arrays.push_back(std::move(arr));
         }
 
         CudaDataView<T>* d_views;
@@ -430,7 +449,7 @@ public:
             }
         }
 
-        for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
+        // device_arrays will automatically clean up device memory via ndarray's RAII
         CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
         for (int k = 0; k <= d_mesh.cell_dim; ++k) CUDA_CHECK(cudaFree((void*)d_mesh.simplices[k]));
         
@@ -474,14 +493,19 @@ public:
             }
         }
 
+        // Upload arrays to device using ndarray's built-in CUDA support
+        std::vector<ftk::ndarray<T>> device_arrays;
         std::vector<CudaDataView<T>> h_views;
+
         for (const auto& name : vars) {
-            const auto& arr = data.at(name);
+            ftk::ndarray<T> arr = data.at(name);
+            arr.copy_to_device(ftk::NDARRAY_DEVICE_CUDA, 0);
+
             CudaDataView<T> view;
-            CUDA_CHECK(cudaMalloc((void**)&view.data, arr.nelem() * sizeof(T)));
-            CUDA_CHECK(cudaMemcpy((void*)view.data, arr.pdata(), arr.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            view.data = static_cast<T*>(arr.get_devptr());
             view.ndims = 1; view.dims[0] = arr.nelem(); view.s[0] = 1;
             h_views.push_back(view);
+            device_arrays.push_back(std::move(arr));
         }
 
         CudaDataView<T>* d_views;
@@ -513,7 +537,7 @@ public:
             }
         }
 
-        for (auto& v : h_views) CUDA_CHECK(cudaFree((void*)v.data));
+        // device_arrays will automatically clean up device memory via ndarray's RAII
         CUDA_CHECK(cudaFree(d_views)); CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
         for (int k : needed_dims) if (k >= 0 && k <= d_mesh.base_mesh.cell_dim) CUDA_CHECK(cudaFree((void*)d_mesh.base_mesh.simplices[k]));
         
