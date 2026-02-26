@@ -28,11 +28,24 @@ template <typename T> struct CudaDataView;
 
 /**
  * @brief Predicate for finding critical points (zeros of a vector field).
+ *
+ * Supports two data formats:
+ * 1. Multi-component array: Single array with shape [M, spatial..., time]
+ * 2. Separate arrays: M separate arrays (legacy, deprecated)
  */
 template <int M, typename T = double>
 struct CriticalPointPredicate : public Predicate<M, T> {
+    // Multi-component mode (preferred)
+    std::string vector_var_name;  // Name of multi-component vector array
+
+    // Legacy mode (deprecated - separate scalar arrays)
     std::string var_names[M];
+
+    // Optional scalar field for classification
     std::string scalar_var_name;
+
+    // Data format flag
+    bool use_multicomponent = true;  // Default to multi-component
 
     bool extract_it(const Simplex& s, const T values[M+1][M], FeatureElement& el, 
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const 

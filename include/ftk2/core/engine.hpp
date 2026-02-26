@@ -723,14 +723,48 @@ private:
             return predicate_.extract_it(s, values, el);
         } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             T values[m+1][m];
-            for (int i = 0; i <= m; ++i) {
-                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                for (int j = 0; j < m; ++j) values[i][j] = get_value(data.at(predicate_.var_names[j]), s.vertices[i], coords, offset);
-            }
             std::vector<const ftk::ndarray<T>*> arrays_ptrs;
-            for(int k=0; k<m; ++k) arrays_ptrs.push_back(&data.at(predicate_.var_names[k]));
-            if (!predicate_.scalar_var_name.empty()) arrays_ptrs.push_back(&data.at(predicate_.scalar_var_name));
-            
+
+            if (predicate_.use_multicomponent && !predicate_.vector_var_name.empty()) {
+                // Multi-component mode: single array with shape [M, spatial..., time]
+                const auto& vec_array = data.at(predicate_.vector_var_name);
+                arrays_ptrs.push_back(&vec_array);
+
+                // Extract component values from multi-component array
+                for (int i = 0; i <= m; ++i) {
+                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                    for (int j = 0; j < m; ++j) {
+                        // Access component j at vertex position
+                        // Array shape: [M, spatial..., time]
+                        // Need to prepend component index to coords
+                        if (coords.size() == 2) {
+                            // 1D spatial + time: [M, nx, nt]
+                            values[i][j] = vec_array.f(j, coords[0], coords[1]);
+                        } else if (coords.size() == 3) {
+                            // 2D spatial + time: [M, nx, ny, nt]
+                            values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2]);
+                        } else if (coords.size() == 4) {
+                            // 3D spatial + time: [M, nx, ny, nz, nt]
+                            values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2], coords[3]);
+                        }
+                    }
+                }
+            } else {
+                // Legacy mode: M separate scalar arrays
+                for (int i = 0; i <= m; ++i) {
+                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                    for (int j = 0; j < m; ++j) {
+                        values[i][j] = get_value(data.at(predicate_.var_names[j]), s.vertices[i], coords, offset);
+                    }
+                }
+                for(int k=0; k<m; ++k) arrays_ptrs.push_back(&data.at(predicate_.var_names[k]));
+            }
+
+            // Optional scalar field
+            if (!predicate_.scalar_var_name.empty()) {
+                arrays_ptrs.push_back(&data.at(predicate_.scalar_var_name));
+            }
+
             return predicate_.extract_it(s, values, el, arrays_ptrs, mesh);
         }
         return false;

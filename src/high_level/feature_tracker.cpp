@@ -102,21 +102,30 @@ std::map<std::string, ftk::ndarray<T>> FeatureTrackerImpl<T>::preprocess_data(
     const std::map<std::string, ftk::ndarray<T>>& raw_data)
 {
     if (config_.input.type == InputType::Scalar) {
-        // Need to compute gradient
-        // TODO: Implement gradient computation
-        throw std::runtime_error("Gradient computation from scalar field not yet implemented. "
-                                "For now, please provide vector field directly.");
+        // Compute gradient from scalar field
+        // The gradient field becomes the vector field for CriticalPointPredicate
+        // TODO: Implement gradient computation using finite differences
+        //       - For regular meshes: use central differences
+        //       - For unstructured meshes: use mesh connectivity
+        //       Output: multi-component array [dim, spatial..., time]
+        throw std::runtime_error(
+            "Gradient computation from scalar field not yet implemented.\n"
+            "Note: CriticalPointPredicate only handles vector fields.\n"
+            "Gradient derivation should happen here in preprocessing.");
 
     } else if (config_.input.type == InputType::Vector ||
                config_.input.type == InputType::GradientVector) {
-        // Use data as-is
+        // Vector field provided directly - this is what CriticalPointPredicate expects
+        // Data should be multi-component: [dim, spatial..., time]
         return raw_data;
 
     } else if (config_.input.type == InputType::MultiScalar) {
+        // Multiple scalar fields (e.g., for fiber tracking)
         // TODO: Handle multiple scalar fields
         throw std::runtime_error("MultiScalar input not yet implemented");
 
     } else if (config_.input.type == InputType::Complex) {
+        // Complex fields for TDGL vortex tracking
         // TODO: Handle complex fields (TDGL)
         throw std::runtime_error("Complex input not yet implemented");
     }
@@ -139,11 +148,12 @@ int FeatureTrackerImpl<T>::infer_dimension(const std::map<std::string, ftk::ndar
 
     // Analyze shape to determine spatial dimension
     // Formats:
-    //   Scalar: [nx, ny, nt] -> 2D  or  [nx, ny, nz, nt] -> 3D
-    //   Vector: [2, nx, ny, nt] -> 2D  or  [3, nx, ny, nz, nt] -> 3D
+    //   Scalar (old):     [nx, ny, nt] -> 2D  or  [nx, ny, nz, nt] -> 3D
+    //   Scalar (multi):   [1, nx, ny, nt] -> 2D  or  [1, nx, ny, nz, nt] -> 3D
+    //   Vector:           [2, nx, ny, nt] -> 2D  or  [3, nx, ny, nz, nt] -> 3D
 
-    // Check if first dimension is component count
-    bool has_components = (nd >= 3 && (first_var.dimf(0) == 2 || first_var.dimf(0) == 3));
+    // Check if first dimension is component count (1, 2, or 3)
+    bool has_components = (nd >= 3 && first_var.dimf(0) >= 1 && first_var.dimf(0) <= 3);
 
     int spatial_dims;
     if (has_components) {
@@ -191,12 +201,35 @@ TrackingResults FeatureTrackerImpl<T>::execute_with_predicate(
     // Create predicate
     PredicateType predicate;
 
-    // Initialize predicate variable names for CriticalPointPredicate
-    if constexpr (PredicateType::codimension == 2 || PredicateType::codimension == 3) {
-        // This is a CriticalPointPredicate - set var_names
-        if (config_.input.variables.size() >= PredicateType::codimension) {
-            for (int i = 0; i < PredicateType::codimension; ++i) {
-                predicate.var_names[i] = config_.input.variables[i];
+    // Initialize predicate for CriticalPointPredicate specifically
+    if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<2, T>> ||
+                  std::is_same_v<PredicateType, CriticalPointPredicate<3, T>>) {
+        // CriticalPointPredicate - use multi-component arrays
+        predicate.use_multicomponent = true;
+
+        // Try to find a multi-component vector array
+        // Look for arrays with first dimension matching codimension
+        bool found_multicomp = false;
+        for (const auto& kv : data) {
+            const auto& arr = kv.second;
+            if (arr.nd() >= 3 && arr.dimf(0) == PredicateType::codimension) {
+                // Found multi-component array
+                predicate.vector_var_name = kv.first;
+                found_multicomp = true;
+                std::cout << "  Using multi-component array: " << kv.first
+                          << " [" << arr.dimf(0) << " components]" << std::endl;
+                break;
+            }
+        }
+
+        // Fallback to legacy mode if no multi-component array found
+        if (!found_multicomp) {
+            std::cout << "  Warning: No multi-component array found, using legacy mode" << std::endl;
+            predicate.use_multicomponent = false;
+            if (config_.input.variables.size() >= PredicateType::codimension) {
+                for (int i = 0; i < PredicateType::codimension; ++i) {
+                    predicate.var_names[i] = config_.input.variables[i];
+                }
             }
         }
     }
@@ -254,15 +287,26 @@ TrackingResults FeatureTrackerImpl<T>::execute() {
         const auto& first_var = raw_data.begin()->second;
         std::cout << "  Auto-deriving mesh dimensions from data..." << std::endl;
 
-        // Assume last dimension is time, others are spatial
+        // Assume last dimension is time, first might be component
         int nd = first_var.nd();
         std::vector<uint64_t> inferred_dims;
 
-        // For static data: all dimensions are spatial
-        // For temporal data: last dimension is time
-        int spatial_dims = (nd >= 4) ? (nd - 1) : nd;
+        // Check if first dimension is component count (1, 2, or 3)
+        int start_dim = 0;
+        if (first_var.dimf(0) >= 1 && first_var.dimf(0) <= 3) {
+            // Likely a component dimension
+            start_dim = 1;
+        }
 
-        for (int d = 0; d < spatial_dims; ++d) {
+        // Last dimension is time if there are enough dimensions
+        int end_dim = nd;
+        if (nd - start_dim >= 3) {
+            // Has spatial + time
+            end_dim = nd - 1;
+        }
+
+        // Extract spatial dimensions
+        for (int d = start_dim; d < end_dim; ++d) {
             inferred_dims.push_back(first_var.dimf(d));
         }
 

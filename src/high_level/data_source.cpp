@@ -202,26 +202,40 @@ std::map<std::string, ftk::ndarray<T>> load_stream_data(const DataConfig& config
     }
     std::cout << std::endl;
 
-    // Handle multi-component arrays: decompose into separate component arrays
-    // Example: "velocity" with shape [3, nx, ny, nz, nt] -> u, v, w with shape [nx, ny, nz, nt]
-    // Also ensure all data has a time dimension (add singleton if needed)
-    std::map<std::string, ftk::ndarray<T>> decomposed_data;
+    // Ensure all data has time dimension (add singleton if needed)
+    // Keep multi-component arrays intact (new default behavior)
+    std::map<std::string, ftk::ndarray<T>> processed_data;
     for (const auto& kv : data) {
         const auto& name = kv.first;
         auto arr = kv.second;  // Non-const copy for potential modification
 
-        // First, ensure data has time dimension
-        // For 2D/3D data without time: add singleton time dimension
+        // Check if data needs time dimension
         bool needs_time_dim = false;
-        if (arr.nd() == 2 || arr.nd() == 3) {
-            // Spatial-only data (2D or 3D), no time dimension
-            needs_time_dim = true;
-        } else if (arr.nd() == 3 && arr.dimf(0) == 2) {
-            // 2D vector field without time: [2, nx, ny]
-            needs_time_dim = true;
-        } else if (arr.nd() == 4 && arr.dimf(0) == 3) {
-            // 3D vector field without time: [3, nx, ny, nz]
-            needs_time_dim = true;
+        bool is_multicomponent = (arr.nd() >= 2 && (arr.dimf(0) == 1 || arr.dimf(0) == 2 || arr.dimf(0) == 3));
+
+        if (is_multicomponent) {
+            // Multi-component array: [ncomp, spatial..., time?]
+            // Check if last dimension is time (reasonable size for timesteps)
+            int spatial_and_time_dims = arr.nd() - 1;  // Excluding component dim
+            if (spatial_and_time_dims == 2) {
+                // [ncomp, nx, ny] - 2D spatial, no time
+                needs_time_dim = true;
+            } else if (spatial_and_time_dims == 3) {
+                // Could be [ncomp, nx, ny, nz] or [ncomp, nx, ny, nt]
+                // Assume no time if last dim is large (> 100)
+                if (arr.dimf(arr.nd() - 1) > 100) {
+                    needs_time_dim = true;
+                }
+            }
+        } else {
+            // Scalar array: [spatial..., time?]
+            if (arr.nd() == 2 || arr.nd() == 3) {
+                // Could be 2D/3D spatial without time
+                // Check if last dimension looks like spatial (> 100) vs time (< 100)
+                if (arr.dimf(arr.nd() - 1) > 100) {
+                    needs_time_dim = true;
+                }
+            }
         }
 
         if (needs_time_dim) {
@@ -238,42 +252,15 @@ std::map<std::string, ftk::ndarray<T>> load_stream_data(const DataConfig& config
             arr = std::move(arr_with_time);
         }
 
-        // Now check if first dimension is 2 or 3 (vector components)
-        if (arr.nd() >= 4 && (arr.dimf(0) == 2 || arr.dimf(0) == 3)) {
-            size_t num_components = arr.dimf(0);
-            std::vector<size_t> spatial_dims;
-            for (int d = 1; d < arr.nd(); ++d) {
-                spatial_dims.push_back(arr.dimf(d));
-            }
-
-            // Standard component names
-            const char* component_names[] = {"u", "v", "w"};
-
-            std::cout << "  Decomposing " << name << " into " << num_components << " components: ";
-
-            // Create separate arrays for each component
-            for (size_t c = 0; c < num_components; ++c) {
-                ftk::ndarray<T> component_arr;
-                component_arr.reshapef(spatial_dims);
-
-                // Copy component data (assumes C-order: component is the outermost dimension)
-                size_t spatial_size = component_arr.size();
-                const T* src = arr.data() + c * spatial_size;
-                T* dst = component_arr.data();
-                std::copy(src, src + spatial_size, dst);
-
-                std::string component_name = component_names[c];
-                decomposed_data[component_name] = std::move(component_arr);
-                std::cout << component_name << " ";
-            }
-            std::cout << std::endl;
-        } else {
-            // Not a multi-component array, keep as-is
-            decomposed_data[name] = arr;
+        // Keep multi-component arrays intact
+        if (is_multicomponent) {
+            std::cout << "  Multi-component array: " << name << " [" << arr.dimf(0) << " components]" << std::endl;
         }
+
+        processed_data[name] = arr;
     }
 
-    return decomposed_data;
+    return processed_data;
 
 #else
     throw std::runtime_error("ndarray stream support requires NDARRAY_HAVE_YAML");
