@@ -1,9 +1,27 @@
 # ExactPV Implementation Status
 
 **Date**: 2026-02-26
-**Latest Commit**: 48e69d5
-**Status**: ✓ 322 truly non-degenerate interior curves extracted
-           ✗ 32 components instead of 1 (curve stitching needed)
+**Latest Commit**: ff78491
+**Status**: ✓ Stitching algorithm implemented and working
+           ✗ Field creates multiple PV curves (needs redesign)
+**See**: EXACTPV_STITCHING_STATUS.md for stitching details
+
+---
+
+## Latest Update: Stitching Implementation (ff78491)
+
+**Stitching algorithm implemented** (see EXACTPV_STITCHING_STATUS.md):
+- ✓ Connects punctures through tetrahedra
+- ✓ Handles 2-puncture tets (unambiguous)
+- ✓ Handles >2-puncture tets using solver-based pairing
+- ✓ Builds connectivity graph and extracts components
+
+**Problem diagnosed**:
+- Field creates **multiple PV curves** (29 components), not single curve
+- Evidence: 18 tets with 1 puncture, 10 tets with 3 punctures (ODD counts)
+- For single curve: all tets must have EVEN puncture counts (0, 2, 4)
+
+**Next**: Redesign field to create exactly ONE closed curve.
 
 ---
 
