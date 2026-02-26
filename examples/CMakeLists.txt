@@ -105,3 +105,6 @@ endif()
 
 add_executable(ftk2_check_punctures check_punctures.cpp)
 target_link_libraries(ftk2_check_punctures ftk2)
+
+add_executable(ftk2_exact_pv_stitching exact_pv_stitching.cpp)
+target_link_libraries(ftk2_exact_pv_stitching ftk2)
