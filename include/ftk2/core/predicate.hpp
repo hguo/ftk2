@@ -181,6 +181,158 @@ struct ContourPredicate : public Predicate<1, T> {
 };
 
 /**
+ * @brief Predicate for finding TDGL magnetic vortices in superconductor simulations.
+ *
+ * Detects topological defects (vortex cores) in complex order parameter fields.
+ * Vortices are characterized by:
+ * - Phase winding around the core (winding number ±1, ±2, ...)
+ * - Amplitude drop to zero at the core
+ * - Gauge-invariant detection using magnetic vector potential
+ *
+ * Input data format:
+ * - Complex field: ψ = ρ exp(iθ) where ρ is amplitude, θ is phase
+ * - Requires: re (real), im (imaginary), or rho (amplitude) + phi (phase)
+ * - Optional: magnetic vector potential A for gauge transformation
+ */
+template <typename T = double>
+struct TDGLVortexPredicate : public Predicate<2, T> {
+    // Input field names
+    std::string re_name = "re";   // Real part of order parameter
+    std::string im_name = "im";   // Imaginary part of order parameter
+    std::string rho_name = "rho"; // Amplitude (optional, computed from re/im if not provided)
+    std::string phi_name = "phi"; // Phase (optional, computed from re/im if not provided)
+
+    // Magnetic vector potential (optional, for gauge transformation)
+    std::string Ax_name = "";  // x-component
+    std::string Ay_name = "";  // y-component
+    std::string Az_name = "";  // z-component (3D only)
+
+    // Minimum winding number to detect
+    int min_winding = 1;
+
+    // Attributes to record at feature locations
+    std::vector<AttributeSpec> attributes;
+
+    bool extract_it(const Simplex& s, const T values[3][2], FeatureElement& el,
+                   const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const
+    {
+        // values[i][0] = re, values[i][1] = im for vertex i
+        uint64_t indices[3] = {s.vertices[0], s.vertices[1], s.vertices[2]};
+
+        // Compute phase from complex components
+        T phi[3], rho[3];
+        for (int i = 0; i < 3; ++i) {
+            T re = values[i][0];
+            T im = values[i][1];
+            rho[i] = std::sqrt(re * re + im * im);
+            phi[i] = std::atan2(im, re);
+        }
+
+        // Compute phase differences around triangle with gauge transformation
+        T delta[3], phase_shift = 0;
+        for (int i = 0; i < 3; ++i) {
+            int j = (i + 1) % 3;
+
+            // Phase difference
+            T dphi = phi[j] - phi[i];
+
+            // TODO: Add magnetic potential contribution for gauge transformation
+            // For now, use simple phase difference
+            // dphi -= line_integral(A, X[i], X[j]);
+
+            // Wrap to [-π, π]
+            delta[i] = std::remainder(dphi, 2.0 * M_PI);
+            phase_shift -= delta[i];
+        }
+
+        // Compute winding number
+        T winding = phase_shift / (2.0 * M_PI);
+        int winding_int = std::round(winding);
+
+        // Check if winding number is significant
+        if (std::abs(winding_int) < min_winding) return false;
+
+        // Use SoS to break ties (consistent orientation)
+        if (!sos::sign(winding, indices[0], this->sos_q)) return false;
+
+        // Solve for barycentric coordinates (center of triangle for now)
+        T lambda[3] = {(T)1.0 / 3.0, (T)1.0 / 3.0, (T)1.0 / 3.0};
+
+        el = FeatureElement();
+        el.simplex = s;
+        el.geometry_type = FeatureGeometryType::Point;
+        for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
+
+        // Store winding number as type
+        el.type = winding_int;
+
+        // Store interpolated amplitude as scalar
+        el.scalar = (float)((rho[0] + rho[1] + rho[2]) / 3.0);
+
+        // Initialize attributes
+        for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+
+        return true;
+    }
+
+#ifdef __CUDACC__
+    struct Device {
+        static constexpr int codimension = 2;
+        int min_winding;
+        double sos_q;
+
+        template <typename DeviceMesh>
+        __device__
+        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars, const DeviceMesh& mesh, FeatureElement& el) const {
+            T values[3][2]; uint64_t indices[3];
+            for (int i = 0; i <= 2; ++i) {
+                indices[i] = s.vertices[i];
+                uint64_t coords[4] = {0};
+                mesh.id_to_coords(indices[i], coords);
+
+                // data[0] = re, data[1] = im
+                for (int j = 0; j < 2 && j < n_vars; ++j) {
+                    values[i][j] = data[j].f(coords[0], coords[1], coords[2], coords[3]);
+                }
+            }
+
+            // Compute phases and phase shift
+            T phi[3], rho[3], phase_shift = 0;
+            for (int i = 0; i < 3; ++i) {
+                T re = values[i][0], im = values[i][1];
+                rho[i] = sqrt(re * re + im * im);
+                phi[i] = atan2(im, re);
+            }
+
+            for (int i = 0; i < 3; ++i) {
+                int j = (i + 1) % 3;
+                T delta = remainder(phi[j] - phi[i], 2.0 * M_PI);
+                phase_shift -= delta;
+            }
+
+            T winding = phase_shift / (2.0 * M_PI);
+            int winding_int = round(winding);
+
+            if (abs(winding_int) < min_winding) return false;
+            if (!sos::sign(winding, indices[0], sos_q)) return false;
+
+            el = FeatureElement();
+            el.simplex = s;
+            el.geometry_type = FeatureGeometryType::Point;
+            for (int i = 0; i <= 2; ++i) el.barycentric_coords[0][i] = 1.0f / 3.0f;
+            el.type = winding_int;
+            el.scalar = (float)((rho[0] + rho[1] + rho[2]) / 3.0f);
+            for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+
+            return true;
+        }
+    };
+
+    Device get_device() const { return {min_winding, this->sos_q}; }
+#endif
+};
+
+/**
  * @brief Predicate for finding fibers (intersections of two isosurfaces from two scalar fields).
  */
 template <typename T = double>

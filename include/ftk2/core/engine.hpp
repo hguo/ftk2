@@ -109,6 +109,8 @@ public:
                 if (!predicate_.scalar_var_name.empty()) resolved_vars.push_back(predicate_.scalar_var_name);
             } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 resolved_vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            } else if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+                resolved_vars = {predicate_.re_name, predicate_.im_name};
             }
         }
 
@@ -202,6 +204,8 @@ public:
                 if (!predicate_.scalar_var_name.empty()) resolved_vars.push_back(predicate_.scalar_var_name);
             } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 resolved_vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            } else if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+                resolved_vars = {predicate_.re_name, predicate_.im_name};
             }
         }
 
@@ -296,6 +300,8 @@ public:
                 if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
             } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            } else if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+                vars = {predicate_.re_name, predicate_.im_name};
             }
         }
 
@@ -423,6 +429,8 @@ public:
                 if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
             } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            } else if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+                vars = {predicate_.re_name, predicate_.im_name};
             }
         }
 
@@ -508,6 +516,8 @@ public:
                 if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
             } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            } else if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+                vars = {predicate_.re_name, predicate_.im_name};
             }
         }
 
@@ -590,6 +600,8 @@ public:
                 }
             } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
                 vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            } else if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+                vars = {predicate_.re_name, predicate_.im_name};
             }
         }
 
@@ -972,7 +984,18 @@ private:
         bool success = false;
         int num_vertices = 0;
 
-        if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
+        if constexpr (std::is_same_v<PredicateType, TDGLVortexPredicate<T>>) {
+            // TDGL vortex: 2-simplex (triangle) with complex field (re + im)
+            T values[3][2];
+            num_vertices = 3;
+            for (int i = 0; i < num_vertices; ++i) {
+                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                // values[i][0] = re, values[i][1] = im
+                values[i][0] = get_value(data.at(predicate_.re_name), s.vertices[i], coords, offset);
+                values[i][1] = get_value(data.at(predicate_.im_name), s.vertices[i], coords, offset);
+            }
+            success = predicate_.extract_it(s, values, el);
+        } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
             T values[3][2];
             num_vertices = 3;
             for (int i = 0; i < num_vertices; ++i) {

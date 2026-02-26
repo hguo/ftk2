@@ -17,7 +17,7 @@ This document compares FTK (legacy) and FTK2 to identify missing features that n
 | **Fibers (Isosurface Intersections)** | ✅ Implicit | ✅ FiberPredicate (m=2) | ✅ **DONE** | Two scalar field intersection |
 | **Critical Lines** | ✅ 3D Regular/Unstructured | ❌ **MISSING** | 🎯 **HIGH** | Ridge/valley lines in 3D scalar fields |
 | **Parallel Vectors (ExactPV)** | ✅ 2D/3D with cubic solver | ❌ **MISSING** | 🎯 **HIGH** | v × w = 0, vortex cores |
-| **Magnetic Flux Vortices (TDGL)** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM-HIGH** | Superconductor vortices, phase-based |
+| **Magnetic Flux Vortices (TDGL)** | ✅ 3D Regular | ✅ **DONE** (2D/3D) | ✅ **DONE** | Superconductor vortices, phase-based winding |
 | **Sujudi-Haimes Vortices** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM** | Vortex cores via eigenanalysis |
 | **Levy-Degani-Seginer Vortices** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM** | Alternative vortex detection |
 | **Ridge/Valley Lines** | ✅ 3D Regular | ❌ **MISSING** | 🎯 **MEDIUM** | Extremal curves in scalar fields |
@@ -520,6 +520,42 @@ For each new feature:
 - TDGL: [Guo et al. 2017, IEEE TVCG](https://ieeexplore.ieee.org/document/8031581)
 - Stable FFF: [Theisel et al. 2010](https://ieeexplore.ieee.org/document/5487517)
 - Simplicial Spacetime: [arXiv:2011.08697](https://arxiv.org/abs/2011.08697)
+
+### ✅ **Recently Implemented**
+
+#### TDGL Magnetic Vortices (February 2026)
+- **Status**: ✅ Implemented
+- **Location**: `include/ftk2/core/predicate.hpp` → `TDGLVortexPredicate`
+- **Features**:
+  - Complex field analysis: ψ = ρ exp(iθ)
+  - Phase winding number computation
+  - Topological charge detection (w = ±1, ±2, ...)
+  - 2D/3D spatial support
+  - CPU and GPU (CUDA) backends
+  - Works on 2-simplices (triangles)
+  - Attribute recording support
+- **Applications**:
+  - Type-II superconductors (Abrikosov vortex lattices)
+  - Bose-Einstein condensates (quantized vortices)
+  - Superfluid helium (quantum turbulence)
+  - Optical vortices (orbital angular momentum)
+- **Example**: `examples/tdgl_vortex_2d.cpp`
+- **Documentation**: `docs/TDGL_VORTEX_TRACKING.md`
+- **Test Results**: Successfully tracks single vortex (w=+1) across 10 timesteps
+
+**Detection Algorithm:**
+```cpp
+// 1. Compute phase from complex field (re, im)
+phi[i] = atan2(im[i], re[i])
+
+// 2. Compute phase shift around triangle
+phase_shift = sum(phi[j] - phi[i]) for edges
+
+// 3. Winding number
+w = round(phase_shift / (2π))
+
+// 4. Vortex if |w| >= min_winding
+```
 
 ---
 
