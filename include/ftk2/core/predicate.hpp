@@ -7,12 +7,17 @@
 #include <ndarray/ndarray.hh>
 #include <vector>
 #include <string>
+#include <map>
 
 #ifdef __CUDACC__
 #include <ftk2/core/device_mesh.hpp>
 #endif
 
 namespace ftk2 {
+
+// Forward declarations for ExactPV
+struct PVCurveSegment;
+struct PVSurfacePatch;
 
 /**
  * @brief Base class for feature predicates.
@@ -383,6 +388,73 @@ struct FiberPredicate : public Predicate<2, T> {
         }
     };
     Device get_device() const { return {{thresholds[0], thresholds[1]}, this->sos_q}; }
+#endif
+};
+
+/**
+ * @brief Predicate for exact parallel vector (ExactPV) tracking
+ *
+ * Finds locations where two vector fields v and w are parallel (v × w = 0).
+ * Uses analytical cubic rational solver for exact detection.
+ *
+ * Codimension M=2:
+ * - 3D spatial: Parallel vectors form curves (1D manifolds in 3D space)
+ * - 4D spacetime: Parallel vectors form surfaces (2D manifolds in 4D space)
+ */
+template <typename T = double>
+struct ExactPVPredicate : public Predicate<2, T> {
+    static constexpr int codimension = 2;
+
+    std::string vector_u_name = "u";  // First vector field
+    std::string vector_v_name = "v";  // Second vector field
+
+    // Attributes to record at feature locations
+    std::vector<AttributeSpec> attributes;
+
+    // Storage for parametric curves (3D spatial)
+    // Note: These are mutable because they are filled during extraction
+    mutable std::vector<PVCurveSegment> curve_segments;
+
+    // Storage for parametric surfaces (4D spacetime)
+    mutable std::vector<PVSurfacePatch> surface_patches;
+
+    /**
+     * @brief Extract parallel vector features from a simplex
+     *
+     * For 3D spatial (triangles): Detects puncture points (up to 3 per triangle)
+     * For 4D spacetime: Extracts surface patches
+     *
+     * Note: This predicate stores parametric representations (curves/surfaces)
+     * for later adaptive sampling and visualization.
+     */
+    bool extract_simplex(const Simplex& s,
+                        const std::map<std::string, ftk::ndarray<T>>& data,
+                        std::vector<FeatureElement>& elements) const;
+
+    // CPU implementation
+    bool extract_it(const Simplex& s, const T values[3][2], FeatureElement& el,
+                   const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const
+    {
+        // TODO: Implement extraction logic
+        // For now, return false (not implemented)
+        return false;
+    }
+
+#ifdef __CUDACC__
+    struct Device {
+        static constexpr int codimension = 2;
+        double sos_q;
+
+        template <typename DeviceMesh>
+        __device__
+        bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars,
+                          const DeviceMesh& mesh, FeatureElement& el) const {
+            // TODO: Implement CUDA extraction
+            return false;
+        }
+    };
+
+    Device get_device() const { return {this->sos_q}; }
 #endif
 };
 

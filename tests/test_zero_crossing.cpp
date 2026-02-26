@@ -3,10 +3,10 @@
 
 using namespace ftk2;
 
-// External simple test framework macros from test_main.cpp
+static int total_tests = 0;
+static int passed_tests = 0;
+
 #define ASSERT_TRUE(...) \
-    extern int total_tests; \
-    extern int passed_tests; \
     total_tests++; \
     if ((__VA_ARGS__)) { \
         passed_tests++; \
@@ -15,8 +15,6 @@ using namespace ftk2;
     }
 
 #define ASSERT_NEAR(a, b, eps) \
-    extern int total_tests; \
-    extern int passed_tests; \
     total_tests++; \
     if (std::abs((a) - (b)) < (eps)) { \
         passed_tests++; \
@@ -65,4 +63,11 @@ void test_zero_crossing() {
         ASSERT_NEAR(lambda[2], 0.2, 1e-9);
         ASSERT_NEAR(lambda[3], 0.2, 1e-9);
     }
+}
+
+int main() {
+    std::cout << "Running Zero Crossing tests..." << std::endl;
+    test_zero_crossing();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }

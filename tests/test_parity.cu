@@ -10,8 +10,8 @@
 
 using namespace ftk2;
 
-extern int total_tests;
-extern int passed_tests;
+static int total_tests = 0;
+static int passed_tests = 0;
 
 #define ASSERT_TRUE(...) \
     total_tests++; \
@@ -197,4 +197,11 @@ void test_parity() {
         std::vector<std::string> vars = {"S1", "S2"};
         verify_parity<double, FiberPredicate<double>>(mesh, pred, data, vars);
     }
+}
+
+int main() {
+    std::cout << "Running CPU/GPU Parity tests..." << std::endl;
+    test_parity();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }

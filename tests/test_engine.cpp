@@ -6,11 +6,11 @@
 
 using namespace ftk2;
 
-// External simple test framework macros
+static int total_tests = 0;
+static int passed_tests = 0;
+
 #define ASSERT_TRUE(...) \
     do { \
-        extern int total_tests; \
-        extern int passed_tests; \
         total_tests++; \
         if ((__VA_ARGS__)) { \
             passed_tests++; \
@@ -21,8 +21,6 @@ using namespace ftk2;
 
 #define ASSERT_EQ(a, b) \
     do { \
-        extern int total_tests; \
-        extern int passed_tests; \
         total_tests++; \
         if ((a) == (b)) { \
             passed_tests++; \
@@ -72,4 +70,11 @@ void test_engine() {
         for (const auto& conn : complex.connectivity) if (conn.dimension == 2) found_faces = true;
         ASSERT_TRUE(found_faces);
     }
+}
+
+int main() {
+    std::cout << "Running Engine tests..." << std::endl;
+    test_engine();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }

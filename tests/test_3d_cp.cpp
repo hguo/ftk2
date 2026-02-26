@@ -7,8 +7,8 @@
 
 using namespace ftk2;
 
-extern int total_tests;
-extern int passed_tests;
+static int total_tests = 0;
+static int passed_tests = 0;
 
 #define ASSERT_TRUE(cond) \
     do { \
@@ -57,4 +57,11 @@ void test_3d_cp_system() {
             ASSERT_EQ(lambda[3], 0.25);
         }
     }
+}
+
+int main() {
+    std::cout << "Running 3D CP tests..." << std::endl;
+    test_3d_cp_system();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }

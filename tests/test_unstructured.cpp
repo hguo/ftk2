@@ -13,9 +13,8 @@
 
 using namespace ftk2;
 
-// Simple test framework
-extern int total_tests;
-extern int passed_tests;
+static int total_tests = 0;
+static int passed_tests = 0;
 
 #define ASSERT_TRUE(cond) \
     total_tests++; \
@@ -244,4 +243,11 @@ void test_unstructured() {
     test_unstructured_critical_point_tracking();
     test_unstructured_3d_features();
     test_regular_3d_features();
+}
+
+int main() {
+    std::cout << "Running Unstructured Mesh tests..." << std::endl;
+    test_unstructured();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }

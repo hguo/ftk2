@@ -4,10 +4,10 @@
 
 using namespace ftk2;
 
-// External simple test framework macros from test_main.cpp
+static int total_tests = 0;
+static int passed_tests = 0;
+
 #define ASSERT_TRUE(...) \
-    extern int total_tests; \
-    extern int passed_tests; \
     total_tests++; \
     if ((__VA_ARGS__)) { \
         passed_tests++; \
@@ -16,8 +16,6 @@ using namespace ftk2;
     }
 
 #define ASSERT_EQ(a, b) \
-    extern int total_tests; \
-    extern int passed_tests; \
     total_tests++; \
     if ((a) == (b)) { \
         passed_tests++; \
@@ -61,4 +59,11 @@ void test_mesh() {
         });
         ASSERT_EQ(count, 6);
     }
+}
+
+int main() {
+    std::cout << "Running Mesh tests..." << std::endl;
+    test_mesh();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }

@@ -13,9 +13,8 @@
 
 using namespace ftk2;
 
-// Simple test framework macros
-extern int total_tests;
-extern int passed_tests;
+static int total_tests = 0;
+static int passed_tests = 0;
 
 #define ASSERT_TRUE(condition) \
     do { \
@@ -304,4 +303,11 @@ void test_examples() {
     test_levelset_3d();
     test_fiber_3d();
     test_streaming();
+}
+
+int main() {
+    std::cout << "Running Examples tests..." << std::endl;
+    test_examples();
+    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    return (passed_tests == total_tests) ? 0 : 1;
 }
