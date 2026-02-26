@@ -30,30 +30,34 @@ int main() {
     auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{N, N, N});
     ftk::ndarray<double> uv({6, N, N, N});
 
-    // Use irrational offsets to avoid grid alignment and degeneracies
-    double cx = N / 2.0 + 0.23456, cy = N / 2.0 + 0.78901, cz = N / 2.0 + 0.11111;
-    double radius = N / 3.0 + 0.31415;  // Irrational radius
+    // ----------------------------------------------------------------
+    // REDESIGNED FIELD: guaranteed single closed PV curve
+    //
+    // U = (1, 0, 0) everywhere (constant)
+    // V = (1, z-z0, (x-cx)^2+(y-cy)^2-R^2)
+    //
+    // U x V = (0, -Vz, Vy) = 0  iff  Vy=0 AND Vz=0
+    //   Vy=0  =>  z = z0            (a horizontal plane)
+    //   Vz=0  =>  (x-cx)^2+(y-cy)^2 = R^2  (a vertical cylinder)
+    //   Intersection: exactly ONE closed circle at height z0
+    //
+    // Non-integer offsets ensure the circle avoids all mesh vertices/edges.
+    // ----------------------------------------------------------------
+    double z0 = N / 2.0 + 0.37;     // circle height (between grid planes)
+    double cx = N / 2.0 + 0.13;     // circle center x
+    double cy = N / 2.0 + 0.27;     // circle center y
+    double R  = N / 3.0 + 0.41;     // circle radius (~5.74 for N=16)
 
     for (int z = 0; z < N; ++z) {
         for (int y = 0; y < N; ++y) {
             for (int x = 0; x < N; ++x) {
-                double dx = x - cx, dy = y - cy, dz = z - cz;
-                double r_xy = std::sqrt(dx*dx + dy*dy) + 0.01;
-                double theta = std::atan2(dy, dx);
+                // U = (1, 0, 0) — constant first vector field
+                double ux = 1.0, uy = 0.0, uz = 0.0;
 
-                // Add small perturbation to avoid exact symmetries
-                double perturb = 0.01 * std::sin(x * 0.7 + y * 1.1 + z * 1.3);
-
-                double ux = std::cos(theta + 0.1*dz + perturb);
-                double uy = std::sin(theta + 0.1*dz + perturb);
-                double uz = 0.3 + 0.1*std::cos(2*theta) + perturb;
-
-                double dist_to_circle = r_xy - radius;
-                double dist_to_plane = dz;
-
-                double vx = ux + (dist_to_circle + perturb) * dx/r_xy + 0.1*dist_to_plane*dx/r_xy;
-                double vy = uy + (dist_to_circle + perturb) * dy/r_xy + 0.1*dist_to_plane*dy/r_xy;
-                double vz = uz + 0.2*dist_to_plane + 0.1*dist_to_circle + perturb;
+                // V designed so PV locus is circle at z=z0
+                double vx = 1.0;
+                double vy = (double)z - z0;                                    // 0 on plane z=z0
+                double vz = (x - cx)*(x - cx) + (y - cy)*(y - cy) - R*R;     // 0 on cylinder
 
                 uv.f(0, x, y, z) = ux; uv.f(1, x, y, z) = uy; uv.f(2, x, y, z) = uz;
                 uv.f(3, x, y, z) = vx; uv.f(4, x, y, z) = vy; uv.f(5, x, y, z) = vz;
