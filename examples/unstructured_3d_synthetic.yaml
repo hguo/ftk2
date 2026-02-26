@@ -1,0 +1,41 @@
+# FTK2 Example: 3D Unstructured Mesh with Synthetic Data
+# Uses 3d.vtu as base spatial mesh, generates synthetic vector field
+
+tracking:
+  feature: critical_points
+  # dimension: auto-derived from data (3D)
+
+  input:
+    type: vector
+    variables: [u, v, w]
+    field_type: flow  # Non-gradient flow field (Jacobian classification)
+
+  data:
+    source: stream
+    stream:
+      # Synthetic data on unstructured mesh vertices
+      substreams:
+        - name: synthetic_3d
+          format: synthetic
+          synthetic:
+            name: tornado  # or moving_maximum for gradient field
+            n_timesteps: 5
+          vars:
+            - name: velocity
+              components: [u, v, w]
+
+  mesh:
+    type: unstructured
+    mesh_file: ../tests/data/3d.vtu  # Base 3D spatial mesh
+    # Will be extruded in time automatically
+
+  execution:
+    backend: cpu  # or cuda for GPU acceleration
+    precision: double
+    threads: 8
+
+  output:
+    type: traced
+    format: vtp
+    filename: unstructured_3d_cp_tracks.vtp
+    statistics: unstructured_3d_stats.json

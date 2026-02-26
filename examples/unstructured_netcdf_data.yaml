@@ -1,0 +1,61 @@
+# FTK2 Example: Unstructured Mesh with NetCDF/HDF5 Data
+# Mesh from VTU, time-varying data from NetCDF/HDF5/ADIOS2
+
+tracking:
+  feature: critical_points
+  # dimension: auto-derived
+
+  input:
+    type: vector
+    variables: [vx, vy, vz]
+    field_type: flow
+
+  data:
+    source: stream
+    stream:
+      # Mesh and data from different sources
+      substreams:
+        # Option 1: NetCDF data
+        - name: netcdf_data
+          format: netcdf
+          filenames:
+            - simulation/velocity_data.nc
+          vars:
+            - name: velocity
+              components: [vx, vy, vz]
+              nc_name: velocity  # NetCDF variable name
+          # Mesh vertices must match VTU mesh
+
+        # Option 2: HDF5 data
+#        - name: hdf5_data
+#          format: hdf5
+#          filename_pattern: "simulation/data_%04d.h5"
+#          n_timesteps: 10
+#          vars:
+#            - name: velocity
+#              components: [vx, vy, vz]
+#              h5_name: /fields/velocity
+
+        # Option 3: ADIOS2 data
+#        - name: adios2_data
+#          format: adios2
+#          filename: simulation/data.bp
+#          adios2_engine: BPFile
+#          vars:
+#            - name: velocity
+#              components: [vx, vy, vz]
+
+  mesh:
+    type: unstructured
+    mesh_file: simulation/mesh.vtu  # Spatial mesh
+    # Data files must provide values for all mesh vertices
+
+  execution:
+    backend: cpu
+    precision: double
+    threads: 8
+
+  output:
+    type: traced
+    format: vtp
+    filename: netcdf_cp_tracks.vtp

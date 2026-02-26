@@ -1,0 +1,50 @@
+# FTK2 Example: Unstructured Mesh with VTU Time Series Data
+# Reads mesh and data from a sequence of VTU files
+
+tracking:
+  feature: critical_points
+  # dimension: auto-derived from data
+
+  input:
+    type: vector
+    variables: [velocity_x, velocity_y, velocity_z]
+    field_type: flow
+
+  data:
+    source: stream
+    stream:
+      # VTU time series with built-in data
+      substreams:
+        - name: vtu_series
+          format: vtu  # or vtu_resample for resampling to mesh
+          filenames:
+            - data/simulation_t000.vtu
+            - data/simulation_t001.vtu
+            - data/simulation_t002.vtu
+            - data/simulation_t003.vtu
+            - data/simulation_t004.vtu
+          # Alternatively, use pattern:
+          # filename_pattern: "data/simulation_t%03d.vtu"
+          # n_timesteps: 5
+          vars:
+            - name: velocity
+              components: [velocity_x, velocity_y, velocity_z]
+              # VTU variable names (PointData or CellData)
+              vtu_name: Velocity
+
+  mesh:
+    type: unstructured
+    # Mesh can be from first VTU file or separate mesh file
+    mesh_file: data/base_mesh.vtu  # Optional: if not specified, use from VTU data files
+    # Will be extruded in time automatically
+
+  execution:
+    backend: cpu
+    precision: double
+    threads: 8
+
+  output:
+    type: traced
+    format: vtp
+    filename: vtu_series_cp_tracks.vtp
+    statistics: vtu_series_stats.json

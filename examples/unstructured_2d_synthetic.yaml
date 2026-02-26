@@ -1,0 +1,48 @@
+# FTK2 Example: 2D Unstructured Mesh with Synthetic Data
+# Uses 1x1.vtu as base spatial mesh, generates synthetic vector field
+
+tracking:
+  feature: critical_points
+  # dimension: auto-derived from data (2D)
+
+  input:
+    type: vector
+    variables: [u, v]
+    field_type: gradient
+
+  data:
+    source: stream
+    stream:
+      # Synthetic data on unstructured mesh vertices
+      substreams:
+        - name: synthetic_unstructured
+          format: synthetic
+          synthetic:
+            name: moving_ramp  # or moving_maximum, woven, etc.
+            n_timesteps: 10
+            # Note: dimensions not specified for unstructured
+          vars:
+            - name: velocity
+              components: [u, v]
+
+  mesh:
+    type: unstructured
+    mesh_file: ../tests/data/1x1.vtu  # Base 2D spatial mesh
+    # Will be extruded in time automatically
+
+  execution:
+    backend: cpu
+    precision: double
+    threads: 4
+
+  output:
+    type: traced
+    format: vtp
+    filename: unstructured_2d_cp_tracks.vtp
+    statistics: unstructured_2d_stats.json
+
+# Alternative: sliced output for real-time visualization
+#  output:
+#    type: sliced
+#    format: vtp
+#    filename: unstructured_2d_slice-%04d.vtp
