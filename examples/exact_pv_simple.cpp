@@ -21,44 +21,58 @@ using namespace ftk2;
 int main() {
     std::cout << "ExactPV Simple Example - Parallel Vector Detection" << std::endl;
 
-    // Create a 3D mesh
-    const int N = 6;  // Medium size for better interior coverage
+    // Create a 3D mesh - high resolution for single continuous curve
+    const int N = 16;  // High resolution to capture full circle
     auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{N, N, N});
 
     // Create combined vector field: [ux, uy, uz, vx, vy, vz]
     ftk::ndarray<double> uv({6, N, N, N});  // [6 components][x][y][z]
 
-    // Generate field with simple known PV curve
-    // Approach: Create u and v that are nearly parallel everywhere,
-    // but exactly parallel along a specific curve
-    double cx = N / 2.0, cy = N / 2.0;
+    // Generate synthetic field with explicit PV curve design
+    // Strategy: Make u and v nearly parallel everywhere, with cross product
+    // vanishing exactly on a known circle
+    double cx = N / 2.0 + 0.1;  // Slight offset to avoid symmetry
+    double cy = N / 2.0 + 0.1;
+    double cz = N / 2.0;
+    double radius = N / 3.0;  // Scale radius with mesh size
 
     for (int z = 0; z < N; ++z) {
         for (int y = 0; y < N; ++y) {
             for (int x = 0; x < N; ++x) {
                 double dx = x - cx;
                 double dy = y - cy;
-                double dz = z - N/2.0;
+                double dz = z - cz;
+                double r_xy = std::sqrt(dx*dx + dy*dy) + 0.01;
 
-                // Base field U - varies smoothly
-                double r_xy = std::sqrt(dx*dx + dy*dy) + 0.1;
-                uv.f(0, x, y, z) = dx / r_xy;
-                uv.f(1, x, y, z) = dy / r_xy;
-                uv.f(2, x, y, z) = (double)z / N;
+                // Angle in xy plane
+                double theta = std::atan2(dy, dx);
 
-                // V = U + small perpendicular perturbation
-                // The perturbation vanishes at a specific curve
-                double perturb_x = dy * (dx*dx + dy*dy - 1.0) * 0.1;
-                double perturb_y = -dx * (dx*dx + dy*dy - 1.0) * 0.1;
-                uv.f(3, x, y, z) = uv.f(0, x, y, z) + perturb_x;
-                uv.f(4, x, y, z) = uv.f(1, x, y, z) + perturb_y;
-                uv.f(5, x, y, z) = uv.f(2, x, y, z);
+                // Base vectors that vary smoothly
+                double ux = std::cos(theta + 0.1*dz);
+                double uy = std::sin(theta + 0.1*dz);
+                double uz = 0.3 + 0.1*std::cos(2*theta);
+
+                // V = U + correction that vanishes on the circle
+                double dist_to_circle = r_xy - radius;
+                double dist_to_plane = dz;
+
+                // Perpendicular perturbation
+                double vx = ux + dist_to_circle * dx/r_xy + 0.1*dist_to_plane*dx/r_xy;
+                double vy = uy + dist_to_circle * dy/r_xy + 0.1*dist_to_plane*dy/r_xy;
+                double vz = uz + 0.2*dist_to_plane + 0.1*dist_to_circle;
+
+                uv.f(0, x, y, z) = ux;
+                uv.f(1, x, y, z) = uy;
+                uv.f(2, x, y, z) = uz;
+                uv.f(3, x, y, z) = vx;
+                uv.f(4, x, y, z) = vy;
+                uv.f(5, x, y, z) = vz;
             }
         }
     }
 
-    std::cout << "Fields generated: U radial, V = U + perturbation" << std::endl;
-    std::cout << "PV locus is a circle at radius ~1 in x-y plane" << std::endl;
+    std::cout << "Fields generated: Synthetic PV field" << std::endl;
+    std::cout << "PV locus: circle at z=" << cz << ", radius=" << radius << std::endl;
 
     // Prepare data map
     std::map<std::string, ftk::ndarray<double>> data;

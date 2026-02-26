@@ -1,8 +1,8 @@
 # ExactPV Implementation Status
 
 **Date**: 2026-02-26
-**Commit**: eaa57e5
-**Status**: Work in Progress - Non-degenerate curves found, but not single closed curve
+**Latest Commit**: (updating)
+**Status**: Non-degenerate curves successfully extracted, but single-curve requirement not met
 
 ---
 
@@ -66,25 +66,60 @@ The current implementation finds multiple curve fragments instead of one continu
 
 ---
 
+## Best Result Achieved (N=16 mesh)
+
+**Configuration**:
+- Mesh: 16×16×16 regular simplicial (10,656 tets)
+- Field: Synthetic circular PV locus with distance-based perturbation
+- Circle: radius = N/3 ≈ 5.33, center offset (0.1, 0.1) from grid
+
+**Results**:
+- ✓ 327 puncture points detected
+- ✓ 324 non-degenerate curves through tet interiors (100% non-degenerate!)
+- ✓ All curves have valid lambda ranges (not collapsed)
+- ✓ Physical coordinates vary smoothly along curves
+- ✗ 32 disconnected components (not single curve)
+
+**Why Not One Curve?**
+
+Tested configurations:
+1. N=6: 6 curves, 45 components
+2. N=8: 28 curves, 13 components
+3. N=12: 257 curves, 24 components
+4. N=16: 324 curves, 32 components
+
+**Finding**: Higher resolution increases curve count but doesn't reduce fragmentation. The issue is geometric: regular simplicial mesh triangulation creates systematic sampling gaps that fragment the circular PV locus, regardless of resolution.
+
+**Fundamental Issue**: The regular mesh triangulation pattern doesn't align with circular/curved geometry, causing the continuous circular PV locus to be detected as multiple disconnected segments.
+
+---
+
 ## Next Steps (Required for Validation)
 
-### 1. Design Single-Curve Field
-Create a vector field with ONE clean closed PV curve that:
-- Passes through multiple tet interiors (not just boundaries)
-- Forms a topologically closed loop
-- Has known analytical form for verification
+### 1. Implement Curve Stitching Algorithm (REQUIRED)
 
-**Candidate approaches**:
-- Perfect circular helix with carefully chosen radius/pitch
-- Use irrational offsets to avoid mesh alignment
-- Consider larger mesh (8×8×8 or 10×10×10) for better interior coverage
-- Or: Use unstructured mesh to avoid regular triangulation artifacts
+**Problem**: Current implementation extracts independent curve segments per tetrahedron. These segments are not connected into continuous curves across tet boundaries.
 
-### 2. Implement Curve Stitching
-Currently each tet produces an independent curve segment. Need to:
-- Match curve endpoints at shared tet faces
-- Connect segments into continuous curves
-- Validate topological consistency
+**Solution needed**:
+- For each pair of adjacent tets sharing a face:
+  - Check if their PV curve segments intersect the shared face
+  - If yes, match the intersection points and connect segments
+  - Build connected curve graph
+- Result: N curve segments → M connected curves (ideally M=1 for circular locus)
+
+**Implementation approach**:
+1. Store curve segment endpoints (entry/exit points on tet faces)
+2. Build adjacency graph of tets
+3. For adjacent tets, check if curve endpoints are close (<ε)
+4. Connect matching endpoints into polylines
+5. Close loops where endpoints connect
+
+**Expected result**: 324 segments → ~1 closed curve
+
+### 2. Alternative: Use Unstructured Mesh
+If curve stitching proves difficult, consider:
+- Generate unstructured mesh with elements aligned to PV locus
+- Or: Use synthetic test case where PV curve is straight line (avoids stitching)
 
 ### 3. Add Analytical Verification
 Once single curve works:
