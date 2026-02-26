@@ -258,6 +258,24 @@ public:
         if (ext_mesh) { execute_cuda_extruded(ext_mesh, data, var_names); return; }
     }
 
+    /**
+     * @brief Streaming CUDA execution - holds only 2 consecutive timesteps in GPU memory
+     * @param stream The ndarray stream to read from
+     * @param spatial_mesh The spatial mesh (without time dimension)
+     * @param var_names Variables to track (empty = auto-detect from predicate)
+     */
+    void execute_cuda_streaming(ftk::stream<ftk::native_storage>& stream,
+                                std::shared_ptr<Mesh> spatial_mesh,
+                                const std::vector<std::string>& var_names = {}) {
+        auto reg_mesh = std::dynamic_pointer_cast<RegularSimplicialMesh>(spatial_mesh);
+        if (reg_mesh) {
+            execute_cuda_streaming_regular(stream, reg_mesh, var_names);
+            return;
+        }
+
+        throw std::runtime_error("Streaming CUDA execution only supports regular meshes currently");
+    }
+
     void execute_cuda_regular(std::shared_ptr<RegularSimplicialMesh> reg_mesh, const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
         auto t_start = std::chrono::high_resolution_clock::now();
         clear_results();
@@ -543,6 +561,226 @@ public:
         
         auto t_end = std::chrono::high_resolution_clock::now();
         std::cout << "CUDA Extruded Total=" << std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count() << "ms" << std::endl;
+    }
+
+    /**
+     * @brief Streaming CUDA execution for regular meshes
+     * Only holds 2 consecutive timesteps in GPU memory, swaps buffers between iterations
+     */
+    void execute_cuda_streaming_regular(ftk::stream<ftk::native_storage>& stream,
+                                       std::shared_ptr<RegularSimplicialMesh> spatial_mesh,
+                                       const std::vector<std::string>& var_names = {}) {
+        auto t_start = std::chrono::high_resolution_clock::now();
+        clear_results();
+
+        int n_timesteps = stream.total_timesteps();
+        std::cout << "CUDA Streaming: Processing " << n_timesteps << " timesteps (2 in memory)" << std::endl;
+
+        // Determine variables to track
+        std::vector<std::string> vars = var_names;
+        if (vars.empty()) {
+            if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) {
+                vars = {predicate_.var_name};
+            } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
+                if (predicate_.use_multicomponent && !predicate_.vector_var_name.empty()) {
+                    vars = {predicate_.vector_var_name};
+                } else {
+                    for(int i=0; i<m; ++i) vars.push_back(predicate_.var_names[i]);
+                    if (!predicate_.scalar_var_name.empty()) vars.push_back(predicate_.scalar_var_name);
+                }
+            } else if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
+                vars = {predicate_.var_names[0], predicate_.var_names[1]};
+            }
+        }
+
+        // Get spatial dimensions from first timestep
+        auto group_0 = stream.read(0);
+        const auto& first_arr = group_0->template get_ref<T>(vars[0]);
+        std::vector<uint64_t> spatial_dims;
+
+        // Handle multi-component arrays: skip first dimension if it's component count
+        int start_dim = 0;
+        if (first_arr.nd() >= 2 && first_arr.dimf(0) >= 1 && first_arr.dimf(0) <= 16) {
+            start_dim = 1;  // Skip component dimension
+        }
+        for (int d = start_dim; d < first_arr.nd(); ++d) {
+            spatial_dims.push_back(first_arr.dimf(d));
+        }
+
+        // Allocate persistent device buffers for 2 timesteps (slab)
+        // These buffers will be reused across all timestep pairs
+        std::vector<ftk::ndarray<T>> device_buffer_t0, device_buffer_t1;
+        std::vector<CudaDataView<T>> h_views_t0, h_views_t1;
+
+        for (const auto& var : vars) {
+            const auto& ref_arr = group_0->template get_ref<T>(var);
+
+            // Allocate device buffers with spatial shape (no time dimension)
+            ftk::ndarray<T> d_buf0, d_buf1;
+            std::vector<size_t> shape;
+            for (size_t d = 0; d < ref_arr.nd(); ++d) shape.push_back(ref_arr.dimf(d));
+            d_buf0.reshapef(shape);
+            d_buf1.reshapef(shape);
+
+            // Allocate on device
+            d_buf0.to_device(ftk::NDARRAY_DEVICE_CUDA, 0);
+            d_buf1.to_device(ftk::NDARRAY_DEVICE_CUDA, 0);
+
+            // Create views
+            CudaDataView<T> view0, view1;
+            view0.data = static_cast<T*>(d_buf0.get_devptr());
+            view1.data = static_cast<T*>(d_buf1.get_devptr());
+
+            auto lattice = ref_arr.get_lattice();
+            for (int i = 0; i < 2; ++i) {
+                auto& view = (i == 0) ? view0 : view1;
+                view.ndims = ref_arr.nd();
+                for(int j=0; j<4; ++j) {
+                    view.dims[j] = (j < ref_arr.nd()) ? ref_arr.dimf(j) : 1;
+                    view.s[j] = (j < ref_arr.nd()) ? lattice.prod_[ref_arr.nd() - 1 - j] : 0;
+                }
+            }
+
+            device_buffer_t0.push_back(std::move(d_buf0));
+            device_buffer_t1.push_back(std::move(d_buf1));
+            h_views_t0.push_back(view0);
+            h_views_t1.push_back(view1);
+        }
+
+        // Allocate slab views array (combines t0 and t1)
+        std::vector<CudaDataView<T>> h_views_slab;
+        for (size_t i = 0; i < vars.size(); ++i) {
+            h_views_slab.push_back(h_views_t0[i]);
+            h_views_slab.push_back(h_views_t1[i]);
+        }
+
+        CudaDataView<T>* d_views;
+        CUDA_CHECK(cudaMalloc(&d_views, h_views_slab.size() * sizeof(CudaDataView<T>)));
+
+        // Setup device mesh for slab (2 timesteps)
+        RegularSimplicialMeshDevice d_mesh;
+        d_mesh.ndims = spatial_dims.size() + 1;  // spatial + time
+        std::vector<uint64_t> slab_dims = spatial_dims;
+        slab_dims.push_back(2);  // 2 timesteps
+        for(int i=0; i<4; ++i) {
+            d_mesh.local_dims[i] = (i < d_mesh.ndims) ? slab_dims[i] : 1;
+            d_mesh.offset[i] = 0;  // Will update per slab
+            d_mesh.global_dims[i] = (i < d_mesh.ndims) ? (i == d_mesh.ndims - 1 ? n_timesteps : slab_dims[i]) : 1;
+        }
+
+        // Allocate extraction result buffers
+        int max_nodes = 1000000, max_conn = 3000000;
+        CudaExtractionResult<IDType> res;
+        res.max_nodes = max_nodes; res.max_conn = max_conn;
+        CUDA_CHECK(cudaMalloc(&res.nodes, res.max_nodes * sizeof(FeatureElement)));
+        CUDA_CHECK(cudaMemset(res.nodes, 0, res.max_nodes * sizeof(FeatureElement)));
+        CUDA_CHECK(cudaMalloc(&res.node_count, sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&res.edges, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 1>)));
+        CUDA_CHECK(cudaMalloc(&res.faces, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 2>)));
+        CUDA_CHECK(cudaMalloc(&res.volumes, res.max_conn * sizeof(DeviceManifoldSimplex<IDType, 3>)));
+        CUDA_CHECK(cudaMalloc(&res.edge_count, sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&res.face_count, sizeof(int)));
+        CUDA_CHECK(cudaMalloc(&res.volume_count, sizeof(int)));
+
+        // Stream through timestep pairs
+        for (int t = 0; t < n_timesteps - 1; ++t) {
+            auto t_slab_start = std::chrono::high_resolution_clock::now();
+
+            // Read timestep pair from stream
+            auto group_t0 = stream.read(t);
+            auto group_t1 = stream.read(t + 1);
+
+            // Upload data to device buffers (reusing allocated memory)
+            for (size_t i = 0; i < vars.size(); ++i) {
+                const auto& arr_t0 = group_t0->template get_ref<T>(vars[i]);
+                const auto& arr_t1 = group_t1->template get_ref<T>(vars[i]);
+
+                CUDA_CHECK(cudaMemcpy(device_buffer_t0[i].get_devptr(), arr_t0.pdata(),
+                                     arr_t0.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+                CUDA_CHECK(cudaMemcpy(device_buffer_t1[i].get_devptr(), arr_t1.pdata(),
+                                     arr_t1.nelem() * sizeof(T), cudaMemcpyHostToDevice));
+            }
+
+            // Update device views and mesh offset for current slab
+            CUDA_CHECK(cudaMemcpy(d_views, h_views_slab.data(),
+                                 h_views_slab.size() * sizeof(CudaDataView<T>), cudaMemcpyHostToDevice));
+
+            d_mesh.offset[d_mesh.ndims - 1] = t;  // Time offset
+
+            // Reset result counters
+            CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int)));
+            CUDA_CHECK(cudaMemset(res.edge_count, 0, sizeof(int)));
+            CUDA_CHECK(cudaMemset(res.face_count, 0, sizeof(int)));
+            CUDA_CHECK(cudaMemset(res.volume_count, 0, sizeof(int)));
+
+            // Launch extraction kernel
+            uint64_t n_v = d_mesh.get_num_vertices();
+            extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, vars.size(), res);
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            // Copy results back to host
+            int h_node_count;
+            CUDA_CHECK(cudaMemcpy(&h_node_count, res.node_count, sizeof(int), cudaMemcpyDeviceToHost));
+
+            if (h_node_count > 0) {
+                std::vector<FeatureElement> h_elements(h_node_count);
+                CUDA_CHECK(cudaMemcpy(h_elements.data(), res.nodes,
+                                     h_node_count * sizeof(FeatureElement), cudaMemcpyDeviceToHost));
+
+                // Insert into tracking structure
+                std::sort(h_elements.begin(), h_elements.end(),
+                         [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
+
+                for (const auto& el : h_elements) {
+                    if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
+                        uint64_t node_id = uf_.add();
+                        active_nodes_[el.simplex] = node_id;
+                        node_elements_[node_id] = el;
+                        node_id_to_simplex_[node_id] = el.simplex;
+                    }
+                }
+            }
+
+            // Process manifold connectivity
+            int h_e, h_f, h_v;
+            CUDA_CHECK(cudaMemcpy(&h_e, res.edge_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_f, res.face_count, sizeof(int), cudaMemcpyDeviceToHost));
+            CUDA_CHECK(cudaMemcpy(&h_v, res.volume_count, sizeof(int), cudaMemcpyDeviceToHost));
+
+            if (h_e > 0) {
+                std::vector<DeviceManifoldSimplex<IDType, 1>> h_s(h_e);
+                CUDA_CHECK(cudaMemcpy(h_s.data(), res.edges, h_e * sizeof(h_s[0]), cudaMemcpyDeviceToHost));
+                for (const auto& s : h_s) {
+                    std::vector<IDType> nodes;
+                    for(int i=0; i<=1; ++i) {
+                        IDType nid;
+                        if(resolve_simplex_to_node_regular(s.nodes[i], spatial_mesh, m, nid))
+                            nodes.push_back(nid);
+                    }
+                    if(nodes.size()==2) {
+                        std::sort(nodes.begin(), nodes.end());
+                        manifold_simplices_[1].push_back(nodes);
+                    }
+                }
+            }
+
+            auto t_slab_end = std::chrono::high_resolution_clock::now();
+            auto slab_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_slab_end - t_slab_start).count();
+            std::cout << "  Slab [" << t << ", " << (t+1) << "]: " << h_node_count << " features, "
+                      << slab_ms << "ms" << std::endl;
+        }
+
+        // Cleanup
+        CUDA_CHECK(cudaFree(d_views));
+        CUDA_CHECK(cudaFree(res.nodes)); CUDA_CHECK(cudaFree(res.node_count));
+        CUDA_CHECK(cudaFree(res.edges)); CUDA_CHECK(cudaFree(res.edge_count));
+        CUDA_CHECK(cudaFree(res.faces)); CUDA_CHECK(cudaFree(res.face_count));
+        CUDA_CHECK(cudaFree(res.volumes)); CUDA_CHECK(cudaFree(res.volume_count));
+        // device_buffer_t0 and device_buffer_t1 cleaned up automatically via RAII
+
+        auto t_end = std::chrono::high_resolution_clock::now();
+        auto d_total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+        std::cout << "CUDA Streaming Total=" << d_total_ms << "ms (memory: 2 timesteps)" << std::endl;
     }
 #endif
 

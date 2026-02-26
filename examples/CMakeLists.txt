@@ -67,6 +67,13 @@ if (CMAKE_CUDA_COMPILER)
 
     add_executable(ftk2_critical_point_2d_cuda critical_point_2d_cuda.cu)
     target_link_libraries(ftk2_critical_point_2d_cuda PRIVATE ftk2 VTK::IOXML VTK::CommonCore VTK::CommonDataModel)
+
+    # Streaming CUDA example - demonstrates memory-efficient 2-timestep GPU execution
+    if(yaml-cpp_FOUND)
+        add_executable(ftk2_critical_point_2d_streaming_cuda critical_point_2d_streaming_cuda.cu)
+        target_link_libraries(ftk2_critical_point_2d_streaming_cuda PRIVATE ftk2 yaml-cpp::yaml-cpp)
+        message(STATUS "Building streaming CUDA example (requires yaml-cpp)")
+    endif()
 endif()
 
 # High-level API demo (Layer 2)
