@@ -122,6 +122,25 @@ std::string TrackingConfig::mesh_type_to_string(MeshType type) {
     }
 }
 
+OutputType TrackingConfig::parse_output_type(const std::string& str) {
+    std::string lower = to_lower(str);
+    if (lower == "discrete") return OutputType::Discrete;
+    if (lower == "traced") return OutputType::Traced;
+    if (lower == "sliced") return OutputType::Sliced;
+    if (lower == "intercepted") return OutputType::Intercepted;
+    throw std::invalid_argument("Unknown output type: " + str);
+}
+
+std::string TrackingConfig::output_type_to_string(OutputType type) {
+    switch (type) {
+        case OutputType::Discrete: return "discrete";
+        case OutputType::Traced: return "traced";
+        case OutputType::Sliced: return "sliced";
+        case OutputType::Intercepted: return "intercepted";
+        default: return "unknown";
+    }
+}
+
 // ============================================================================
 // YAML Serialization
 // ============================================================================
@@ -253,6 +272,10 @@ TrackingConfig TrackingConfig::from_yaml_node(const YAML::Node& node) {
     if (node["output"]) {
         auto output_node = node["output"];
 
+        if (output_node["filename"]) {
+            config.output.filename = output_node["filename"].as<std::string>();
+        }
+
         if (output_node["trajectories"]) {
             config.output.trajectories = output_node["trajectories"].as<std::string>();
         }
@@ -263,6 +286,45 @@ TrackingConfig TrackingConfig::from_yaml_node(const YAML::Node& node) {
 
         if (output_node["format"]) {
             config.output.format = output_node["format"].as<std::string>();
+        }
+
+        if (output_node["type"]) {
+            config.output.type = parse_output_type(output_node["type"].as<std::string>());
+        }
+
+        // Parse attributes to record
+        if (output_node["attributes"]) {
+            auto attrs_node = output_node["attributes"];
+            if (attrs_node.IsSequence()) {
+                for (const auto& attr_node : attrs_node) {
+                    AttributeConfig attr;
+
+                    if (attr_node.IsScalar()) {
+                        // Simple form: just the source name
+                        attr.name = attr_node.as<std::string>();
+                        attr.source = attr.name;
+                        attr.type = "scalar";
+                    } else if (attr_node.IsMap()) {
+                        // Full form with all fields
+                        if (attr_node["name"]) {
+                            attr.name = attr_node["name"].as<std::string>();
+                        }
+                        if (attr_node["source"]) {
+                            attr.source = attr_node["source"].as<std::string>();
+                        } else if (!attr.name.empty()) {
+                            attr.source = attr.name;
+                        }
+                        if (attr_node["type"]) {
+                            attr.type = attr_node["type"].as<std::string>();
+                        }
+                        if (attr_node["component"]) {
+                            attr.component = attr_node["component"].as<int>();
+                        }
+                    }
+
+                    config.output.attributes.push_back(attr);
+                }
+            }
         }
     }
 

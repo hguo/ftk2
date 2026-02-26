@@ -234,6 +234,34 @@ TrackingResults FeatureTrackerImpl<T>::execute_with_predicate(
         }
     }
 
+    // Configure attributes to record (all predicate types)
+    if (!config_.output.attributes.empty()) {
+        std::cout << "  Configuring " << config_.output.attributes.size() << " attributes to record:" << std::endl;
+        for (const auto& attr_cfg : config_.output.attributes) {
+            // Validate that the source array exists in data
+            if (data.find(attr_cfg.source) == data.end()) {
+                std::cout << "    Warning: Attribute source '" << attr_cfg.source << "' not found in data, skipping" << std::endl;
+                continue;
+            }
+
+            AttributeSpec spec;
+            spec.name = attr_cfg.name;
+            spec.source = attr_cfg.source;
+            spec.type = attr_cfg.type;
+            spec.component = attr_cfg.component;
+            spec.slot = predicate.attributes.size();  // Auto-assign slot (0-15)
+
+            if (spec.slot >= 16) {
+                std::cout << "    Warning: Maximum 16 attributes supported, skipping '" << attr_cfg.name << "'" << std::endl;
+                break;
+            }
+
+            predicate.attributes.push_back(spec);
+            std::cout << "    [" << spec.slot << "] " << spec.name
+                      << " <- " << spec.source << " (" << spec.type << ")" << std::endl;
+        }
+    }
+
     // Create engine
     SimplicialEngine<T, PredicateType> engine(mesh, predicate);
 
@@ -404,6 +432,16 @@ void FeatureTrackerImpl<T>::write_results(const TrackingResults& results) {
         fout << "# FTK2 Feature Complex\n";
         fout << "# Feature: " << TrackingConfig::feature_type_to_string(config_.feature) << "\n";
         fout << "# Num vertices: " << complex.vertices.size() << "\n";
+
+        // Write attribute header
+        if (!config_.output.attributes.empty()) {
+            fout << "# Attributes: ";
+            for (size_t i = 0; i < config_.output.attributes.size(); ++i) {
+                fout << config_.output.attributes[i].name;
+                if (i < config_.output.attributes.size() - 1) fout << ", ";
+            }
+            fout << "\n";
+        }
         fout << "\n";
 
         // Write feature elements
@@ -412,7 +450,20 @@ void FeatureTrackerImpl<T>::write_results(const TrackingResults& results) {
             const auto& elem = complex.vertices[i];
             fout << i << ": track_id=" << elem.track_id
                  << " type=" << elem.type
-                 << " scalar=" << elem.scalar << "\n";
+                 << " scalar=" << elem.scalar;
+
+            // Write attributes if any were configured
+            if (!config_.output.attributes.empty()) {
+                fout << " attrs=[";
+                for (size_t j = 0; j < config_.output.attributes.size(); ++j) {
+                    if (j < 16) {  // Max 16 attributes
+                        fout << elem.attributes[j];
+                        if (j < config_.output.attributes.size() - 1) fout << ", ";
+                    }
+                }
+                fout << "]";
+            }
+            fout << "\n";
         }
 
         std::cout << "  Wrote feature complex to: " << config_.output.trajectories << std::endl;

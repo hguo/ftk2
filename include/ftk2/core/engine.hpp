@@ -707,22 +707,28 @@ private:
         auto reg_mesh = dynamic_cast<RegularSimplicialMesh*>(mesh);
         std::vector<uint64_t> offset = reg_mesh ? reg_mesh->get_offset() : std::vector<uint64_t>{0,0,0,0};
 
+        bool success = false;
+        int num_vertices = 0;
+
         if constexpr (std::is_same_v<PredicateType, FiberPredicate<T>>) {
             T values[3][2];
-            for (int i = 0; i < 3; ++i) {
+            num_vertices = 3;
+            for (int i = 0; i < num_vertices; ++i) {
                 auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
                 for (int j = 0; j < 2; ++j) values[i][j] = get_value(data.at(predicate_.var_names[j]), s.vertices[i], coords, offset);
             }
-            return predicate_.extract_it(s, values, el);
+            success = predicate_.extract_it(s, values, el);
         } else if constexpr (std::is_same_v<PredicateType, ContourPredicate<T>>) {
             T values[2][1];
-            for (int i = 0; i < 2; ++i) {
+            num_vertices = 2;
+            for (int i = 0; i < num_vertices; ++i) {
                 auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
                 values[i][0] = get_value(data.at(predicate_.var_name), s.vertices[i], coords, offset);
             }
-            return predicate_.extract_it(s, values, el);
+            success = predicate_.extract_it(s, values, el);
         } else if constexpr (std::is_same_v<PredicateType, CriticalPointPredicate<m, T>>) {
             T values[m+1][m];
+            num_vertices = m + 1;
             std::vector<const ftk::ndarray<T>*> arrays_ptrs;
 
             if (predicate_.use_multicomponent && !predicate_.vector_var_name.empty()) {
@@ -765,9 +771,69 @@ private:
                 arrays_ptrs.push_back(&data.at(predicate_.scalar_var_name));
             }
 
-            return predicate_.extract_it(s, values, el, arrays_ptrs, mesh);
+            success = predicate_.extract_it(s, values, el, arrays_ptrs, mesh);
         }
-        return false;
+
+        // If feature extraction succeeded, interpolate user-specified attributes
+        if (success && !predicate_.attributes.empty()) {
+            for (const auto& attr_spec : predicate_.attributes) {
+                if (attr_spec.slot < 0 || attr_spec.slot >= 16) continue;
+
+                // Check if attribute source exists in data
+                auto it = data.find(attr_spec.source);
+                if (it == data.end()) continue;
+
+                const auto& attr_array = it->second;
+
+                // Interpolate attribute value at feature location using barycentric coordinates
+                T attr_value = 0;
+                for (int i = 0; i < num_vertices; ++i) {
+                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                    T vertex_value = 0;
+
+                    // Handle multi-component arrays (check if first dimension is component count)
+                    bool is_multicomp = (attr_array.nd() >= 2 && attr_array.dimf(0) >= 1 && attr_array.dimf(0) <= 16);
+
+                    if (is_multicomp && attr_spec.component >= 0) {
+                        // Extract specific component
+                        int comp = attr_spec.component;
+                        if (coords.size() == 2) {
+                            vertex_value = attr_array.f(comp, coords[0], coords[1]);
+                        } else if (coords.size() == 3) {
+                            vertex_value = attr_array.f(comp, coords[0], coords[1], coords[2]);
+                        } else if (coords.size() == 4) {
+                            vertex_value = attr_array.f(comp, coords[0], coords[1], coords[2], coords[3]);
+                        }
+                    } else if (is_multicomp && attr_spec.type == "magnitude") {
+                        // Compute magnitude of vector
+                        T mag_sq = 0;
+                        int ncomp = attr_array.dimf(0);
+                        for (int c = 0; c < ncomp; ++c) {
+                            T comp_val = 0;
+                            if (coords.size() == 2) {
+                                comp_val = attr_array.f(c, coords[0], coords[1]);
+                            } else if (coords.size() == 3) {
+                                comp_val = attr_array.f(c, coords[0], coords[1], coords[2]);
+                            } else if (coords.size() == 4) {
+                                comp_val = attr_array.f(c, coords[0], coords[1], coords[2], coords[3]);
+                            }
+                            mag_sq += comp_val * comp_val;
+                        }
+                        vertex_value = std::sqrt(mag_sq);
+                    } else {
+                        // Scalar field or single value
+                        vertex_value = get_value(attr_array, s.vertices[i], coords, offset);
+                    }
+
+                    // Accumulate weighted by barycentric coordinate
+                    attr_value += el.barycentric_coords[0][i] * vertex_value;
+                }
+
+                el.attributes[attr_spec.slot] = (float)attr_value;
+            }
+        }
+
+        return success;
     }
 
     struct ThreadData {

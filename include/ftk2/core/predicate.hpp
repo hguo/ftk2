@@ -27,6 +27,17 @@ struct Predicate {
 template <typename T> struct CudaDataView;
 
 /**
+ * @brief Attribute configuration for recording at feature locations
+ */
+struct AttributeSpec {
+    std::string name;           // Attribute name
+    std::string source;         // Source data array name
+    std::string type = "scalar"; // scalar, magnitude, component_X
+    int component = -1;         // For multi-component: which component
+    int slot = -1;              // Which attributes[] slot to use (0-15)
+};
+
+/**
  * @brief Predicate for finding critical points (zeros of a vector field).
  *
  * Supports two data formats:
@@ -47,6 +58,9 @@ struct CriticalPointPredicate : public Predicate<M, T> {
     // Data format flag
     bool use_multicomponent = true;  // Default to multi-component
 
+    // Attributes to record at feature locations
+    std::vector<AttributeSpec> attributes;
+
     bool extract_it(const Simplex& s, const T values[M+1][M], FeatureElement& el, 
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const 
     {
@@ -60,7 +74,7 @@ struct CriticalPointPredicate : public Predicate<M, T> {
         el = FeatureElement(); // Full zero-initialization
         el.simplex = s; el.geometry_type = FeatureGeometryType::Point;
         for (int i = 0; i <= M; ++i) el.barycentric_coords[0][i] = (float)lambda[i];
-        
+
         el.type = 0; el.scalar = 0.0f;
         if (!scalar_var_name.empty() && arrays.size() > M && mesh) {
             T s_val = 0;
@@ -74,7 +88,11 @@ struct CriticalPointPredicate : public Predicate<M, T> {
             }
             el.scalar = (float)s_val;
         }
+
+        // Initialize attributes to zero
+        // (Actual attribute interpolation is handled by the engine after extract_it succeeds)
         for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+
         return true;
     }
 
@@ -116,6 +134,9 @@ template <typename T = double>
 struct ContourPredicate : public Predicate<1, T> {
     std::string var_name;
     T threshold = (T)0.0;
+
+    // Attributes to record at feature locations
+    std::vector<AttributeSpec> attributes;
 
     bool extract_it(const Simplex& s, const T values[2][1], FeatureElement& el,
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const 
@@ -166,6 +187,9 @@ template <typename T = double>
 struct FiberPredicate : public Predicate<2, T> {
     std::string var_names[2];
     T thresholds[2] = {(T)0.0, (T)0.0};
+
+    // Attributes to record at feature locations
+    std::vector<AttributeSpec> attributes;
 
     bool extract_it(const Simplex& s, const T values[3][2], FeatureElement& el,
                    const std::vector<const ftk::ndarray<T>*>& arrays = {}, const Mesh* mesh = nullptr) const 

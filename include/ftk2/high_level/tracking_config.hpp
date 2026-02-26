@@ -187,6 +187,25 @@ enum class OutputType {
 };
 
 /**
+ * @brief Attribute to record at feature locations
+ */
+struct AttributeConfig {
+    std::string name;           // Attribute name in output
+    std::string source;         // Source data array name
+    std::string type = "scalar"; // scalar, magnitude, component_0, component_1, etc.
+    int component = -1;         // For multi-component arrays: which component (-1 = all)
+
+    void validate() const {
+        if (name.empty()) {
+            throw std::invalid_argument("Attribute name cannot be empty");
+        }
+        if (source.empty()) {
+            throw std::invalid_argument("Attribute source cannot be empty");
+        }
+    }
+};
+
+/**
  * @brief Output configuration
  */
 struct OutputConfig {
@@ -207,9 +226,19 @@ struct OutputConfig {
     // Optional: separate statistics file
     std::string statistics;
 
+    // Attributes to record at feature locations
+    // Examples:
+    //   - Original scalar value of gradient field
+    //   - Velocity magnitude at critical point
+    //   - Temperature at feature location
+    std::vector<AttributeConfig> attributes;
+
     void validate() const {
         if (filename.empty() && trajectories.empty()) {
             throw std::invalid_argument("Output filename cannot be empty");
+        }
+        for (const auto& attr : attributes) {
+            attr.validate();
         }
     }
 };

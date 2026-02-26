@@ -41,7 +41,9 @@ int main(int argc, char** argv) {
     data_map["v2"] = arr2;
 
     CriticalPointPredicate<3, double> cp_pred;
-    cp_pred.var_names = {"v0", "v1", "v2"};
+    cp_pred.var_names[0] = "v0";
+    cp_pred.var_names[1] = "v1";
+    cp_pred.var_names[2] = "v2";
 
     auto engine = std::make_shared<SimplicialEngine<double, CriticalPointPredicate<3, double>>>(base_mesh, cp_pred);
     engine->execute(data_map);

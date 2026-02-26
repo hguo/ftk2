@@ -1,0 +1,76 @@
+tracking:
+  feature: critical_points
+  dimension: 2  # Will be auto-derived
+
+  input:
+    type: vector
+    variables: [velocity]
+    field_type: flow  # Non-gradient vector field (Jacobian classification)
+
+  data:
+    source: stream
+    stream:
+      filetype: synthetic
+      name: moving_ramps
+      dimensions: [16, 16]
+      n_timesteps: 3
+
+      vars:
+        # Multi-component velocity field [2, nx, ny, nt]
+        - name: velocity
+          type: float
+          components: [u, v]
+          synthetic:
+            generator: moving_ramps
+            ramp_velocity: 1.0
+
+        # Scalar temperature field [1, nx, ny, nt] for attribute recording
+        - name: temperature
+          type: float
+          components: [temp]
+          synthetic:
+            generator: sine_wave
+            amplitude: 100.0
+            frequency: 0.5
+
+        # Scalar pressure field [1, nx, ny, nt] for attribute recording
+        - name: pressure
+          type: float
+          components: [p]
+          synthetic:
+            generator: gaussian
+            amplitude: 1000.0
+            width: 5.0
+
+  mesh:
+    type: regular
+    # dimensions will be auto-derived from data
+
+  execution:
+    backend: cpu
+    precision: double
+
+  output:
+    trajectories: cp_with_attributes.txt
+    format: text
+
+    # User-specified attributes to record at critical point locations
+    attributes:
+      # Simple form: just source name (will use same as attribute name)
+      - temperature
+      - pressure
+
+      # Full form: specify all details
+      - name: vel_magnitude
+        source: velocity
+        type: magnitude
+
+      - name: vel_u
+        source: velocity
+        type: scalar
+        component: 0
+
+      - name: vel_v
+        source: velocity
+        type: scalar
+        component: 1
