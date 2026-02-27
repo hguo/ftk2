@@ -557,8 +557,8 @@ and are exactly the ones SoS perturbation eliminates.
 
 ## 7. The Exact Integer Pipeline
 
-To eliminate all floating-point thresholds from the PV solver, we implement a
-seven-subtask pipeline that progressively moves decision predicates from float
+To eliminate all floating-point thresholds from the PV solver, we implement an
+eight-subtask pipeline that progressively moves decision predicates from float
 arithmetic into exact integer arithmetic.  The two remaining float operations
 are the root-finding itself (unavoidably irrational) and the least-squares bary
 solve (linear algebra at a float λ*).
@@ -832,6 +832,71 @@ that SoS perturbation is designed to resolve.
 before the per-root loop; call `sturm_count_d4(seq_D, lo/hi)` inside
 `sos_bary_inside` when N_k has no root in the interval.
 
+### Subtask 8 — Certified Horner Error Bound for N_k Evaluation
+
+**Goal**: guarantee that the final float evaluation `N_k(lo)` cannot return
+the wrong sign, even when N_k(lo) is extremely small.
+
+**Background**: after Subtasks 6 and 7 confirm N_k has no root in (lo, hi] and
+D(λ*) > 0, we evaluate N_k(lo) in double arithmetic.  The Horner evaluation
+can have rounding error of order γ · cond(N_k, lo), where
+
+$$
+\mathrm{cond}(N_k, x) = \sum_{j=0}^{d} |N_k[j]|\,|x|^j
+$$
+
+is the *absolute condition number* of the evaluation and γ accounts for
+floating-point accumulation.  If N_k(lo) is genuinely close to 0 (because a
+root of N_k lies just outside the interval), the float evaluation could return
+the wrong sign.
+
+**Method**: use Higham's standard Horner rounding-error bound (§3.1,
+*Accuracy and Stability of Numerical Algorithms*, 2nd ed.):
+
+$$
+|\mathrm{fl}(N_k(lo)) - N_k(lo)| \;\leq\; \gamma_{2d+1} \cdot \mathrm{cond}(N_k, lo),
+\qquad \gamma_n = \frac{n\,u}{1 - n\,u} \approx n\,u,
+$$
+
+where $u = \varepsilon_{\mathrm{mach}}/2 \approx 2^{-53}$.  An extra factor of
+$(d+1)$ covers rounding in `compute_bary_numerators`, giving the conservative
+multiplier
+
+$$
+\gamma = (2d + 2)\,\varepsilon_{\mathrm{mach}} = 10\,\varepsilon_{\mathrm{mach}}
+\quad (d = 4).
+$$
+
+The certified sign rule is:
+
+$$
+|N_k(lo)| > \gamma \cdot \mathrm{cond}(N_k, lo)
+\;\Longrightarrow\; \mathrm{sign}(N_k(lo)) = \mathrm{sign}(\mu_k(\lambda^*)).
+$$
+
+If the inequality fails, N_k(lo) is within rounding noise, meaning
+μ_k(λ*) is genuinely near zero — apply SoS ownership rule.
+
+**Why this terminates the certification chain**: combining Subtasks 6–8,
+every branch of `sos_bary_inside` is now either:
+1. A certified sign decision (Sturm count + error-bounded evaluation), or
+2. A genuine boundary case → SoS min-index ownership rule.
+
+No float threshold remains that could silently misclassify a non-boundary
+puncture as boundary (or vice versa) due to rounding.
+
+**Comparison of Subtasks 6–8**:
+
+| Decision | Subtask 6 | Subtask 7 | Subtask 8 |
+|---|---|---|---|
+| N_k root-free? | Sturm count | — | — |
+| D(λ*) > 0? | `d_lo > 1e-200` | Sturm count | — |
+| sign(N_k(lo)) certified? | bare comparison | — | error-bound guard |
+
+**Implementation**: after `nk_lo = eval_poly_sturm(...)`, compute
+`cond_nk = Σ |N_poly[k][d]| |lo|^d` via reversed Horner, then check
+`|nk_lo| > EVAL_GAMMA * cond_nk` before trusting the sign.
+
 ---
 
 ## 8. Implementation Status
@@ -848,6 +913,7 @@ before the per-root loop; call `sturm_count_d4(seq_D, lo/hi)` inside
 | **Subtask 5**: Exact bary sign via interval evaluation | same | Implemented |
 | **Subtask 6**: Exact bary sign via Sturm count on N_k(λ) | same | Implemented |
 | **Subtask 7**: Exact D(λ*) > 0 certificate via Sturm count on D(λ) | same | Implemented |
+| **Subtask 8**: Certified Horner error bound for N_k(lo) sign | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

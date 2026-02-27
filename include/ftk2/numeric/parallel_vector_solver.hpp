@@ -1732,18 +1732,21 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         eval_nu_at(lambda[i], nu);
 
         // ----------------------------------------------------------------
-        // Subtasks 6 & 7: determine sign of νₖ(λ*) exactly.
+        // Subtasks 6–8: determine sign of νₖ(λ*) with certified exactness.
         //
         // With isolating interval [λ_lo, λ_hi] for λ*:
         //
         //  Subtask 6: Sturm count on N_k
-        //   V_Nk(lo)−V_Nk(hi) = 0 → N_k has no root → sign(N_k(lo)) is sign
+        //   V_Nk(lo)−V_Nk(hi) = 0 → N_k has no root in (lo,hi] → proceed
         //   V_Nk(lo)−V_Nk(hi) ≥ 1 → N_k(λ*) = 0 → SoS ownership rule
         //
-        //  Subtask 7: Sturm count on D (when N_k has no root in interval)
-        //   V_D(lo)−V_D(hi) = 0  → D has no root → D(λ*) > 0 certified
-        //                          (D ≥ 0 everywhere; no threshold needed)
+        //  Subtask 7: Sturm count on D (when N_k confirmed root-free)
+        //   V_D(lo)−V_D(hi) = 0  → D(λ*) > 0 certified (D ≥ 0 by Cauchy-Binet)
         //   V_D(lo)−V_D(hi) ≥ 1  → D(λ*) = 0, degenerate → SoS rule
+        //
+        //  Subtask 8: certified Horner error bound on N_k(lo)
+        //   |N_k(lo)| > γ·cond(N_k,lo) → sign certified (Higham §3.1)
+        //   |N_k(lo)| ≤ γ·cond(N_k,lo) → evaluation within rounding noise → SoS
         //
         // The SoS ownership rule: triangle T claims the boundary puncture
         // on edge (vᵢ, vⱼ) iff global_idx(vₖ) < min(global_idx(vᵢ), vⱼ)).
@@ -1773,11 +1776,36 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
                     if (vD_lo - vD_hi == 0) {
                         // D has no root in (lo, hi]: D(λ*) > 0 certified
                         // (D ≥ 0 by Cauchy-Binet; no root → strictly positive).
-                        // Evaluate N_k(lo) for the exact sign of μ_k(λ*).
+                        // Evaluate N_k(lo) for the sign of μ_k(λ*).
+                        //
+                        // Subtask 8: certify the sign using Higham's Horner
+                        // error bound.  For a degree-d Horner evaluation,
+                        //
+                        //   |fl(N_k(lo)) − N_k(lo)| ≤ γ_{2d+1} · cond(N_k, lo)
+                        //
+                        // where cond(N_k, lo) = Σ |N_k[j]| |lo|^j and
+                        // γ_n = n·u / (1 − n·u) ≈ n·u  (u = machine epsilon / 2).
+                        //
+                        // An extra factor of (d+1) accounts for coefficient
+                        // rounding in compute_bary_numerators.  We use the
+                        // conservative multiplier (2·degNk + 2)·u so the bound
+                        // covers both sources of error.
+                        //
+                        // If |N_k(lo)| > error_bound the sign is certified.
+                        // Otherwise N_k(λ*) is too small to distinguish from
+                        // rounding noise → fall through to SoS.
                         double nk_lo = eval_poly_sturm(N_poly[k], degNk, lambda_lo[i]);
-                        if (nk_lo > 0.0) return true;
-                        if (nk_lo < 0.0) return false;
-                        // nk_lo == 0.0: numerical coincidence → SoS
+                        double ax = std::abs(lambda_lo[i]);
+                        double cond_nk = std::abs(N_poly[k][degNk]);
+                        for (int d = degNk - 1; d >= 0; --d)
+                            cond_nk = cond_nk * ax + std::abs(N_poly[k][d]);
+                        static constexpr double EVAL_GAMMA =
+                            (2 * 4 + 2) * std::numeric_limits<double>::epsilon();
+                        if (std::abs(nk_lo) > EVAL_GAMMA * cond_nk) {
+                            if (nk_lo > 0.0) return true;
+                            return false;
+                        }
+                        // |N_k(lo)| ≤ error bound: cannot certify sign → SoS
                     }
                     // D has a root in (lo, hi]: D(λ*) = 0, system degenerate → SoS
                 }
