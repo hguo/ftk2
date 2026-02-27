@@ -1023,11 +1023,33 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         solve_least_square3x2(M, b, nu, epsilon);
         nu[2] = T(1) - nu[0] - nu[1];
 
-        // With SoS perturbation the barycentric coords are generically strictly
-        // positive; use a tight threshold.  Without SoS (indices==nullptr) fall
-        // back to the old epsilon-based tolerance.
-        const T bary_eps = indices ? T(1e-10) : epsilon;
-        if (nu[0] < -bary_eps || nu[1] < -bary_eps || nu[2] < -bary_eps)
+        // ----------------------------------------------------------------
+        // SoS min-index edge ownership rule.
+        //
+        // For each barycentric coordinate k:
+        //   nu[k] > threshold   → clearly inside      → accept
+        //   nu[k] < -threshold  → clearly outside     → reject
+        //   |nu[k]| <= threshold → boundary (nu[k]≈0) → min-idx tie-break
+        //
+        // The tie-break: this triangle claims the boundary puncture iff
+        // global_index(v_k) < min(global_index(v_i), global_index(v_j)),
+        // where i=(k+1)%3, j=(k+2)%3.  Exactly one triangle among all
+        // sharing the edge (v_i, v_j) satisfies this condition, so each
+        // boundary puncture is created by exactly one triangle.
+        //
+        // When indices==nullptr (legacy call) we fall back to a soft
+        // epsilon-based accept, which preserves existing behaviour.
+        // ----------------------------------------------------------------
+        const T bary_threshold = T(1e-10);
+        auto sos_bary_inside = [&](int k) -> bool {
+            if (nu[k] > bary_threshold)  return true;   // clearly interior
+            if (nu[k] < -bary_threshold) return false;  // clearly exterior
+            // Floating-point near-zero: apply ownership rule.
+            if (!indices) return nu[k] >= -epsilon;     // legacy fallback
+            int i = (k + 1) % 3, j = (k + 2) % 3;
+            return indices[k] < std::min(indices[i], indices[j]);
+        };
+        if (!sos_bary_inside(0) || !sos_bary_inside(1) || !sos_bary_inside(2))
             continue;
 
         // Verify cross-product residual on the ORIGINAL (unperturbed) field
