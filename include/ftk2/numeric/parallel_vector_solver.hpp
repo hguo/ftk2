@@ -411,6 +411,75 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
     }
 }
 
+// ============================================================================
+// Field Quantization  (Subtask 1 of the exact __int128 pipeline)
+// ============================================================================
+//
+// DESIGN RATIONALE
+// ----------------
+// The floating-point solve chain has one unavoidable source of inexactness:
+// every predicate (discriminant sign, barycentric sign) is decided with a
+// tolerance (sos_disc_eps, bary_threshold).  Replacing those tolerances with
+// exact integer arithmetic requires that all polynomial coefficients be exact
+// integers — which is achieved by multiplying each field component by a fixed
+// power-of-two scale before rounding to int64_t.
+//
+// SoS field perturbation (~1e-8) is intentionally NOT applied before
+// quantization: at scale 2^QUANT_BITS = 2^20 ≈ 10^6, a perturbation of 1e-8
+// rounds to zero.  In the exact integer pipeline, degeneracies (disc == 0,
+// nu[k] == 0) are resolved by pure index-based tie-breaking — no field
+// nudging is needed.
+//
+// OVERFLOW ANALYSIS  (for characteristic polynomial in __int128)
+// ---------------------------------------------------------------
+// Let M = max absolute field value across all 6 components × 3 vertices.
+//
+//   Quantized value:          |f̂|  ≤ M · 2^QUANT_BITS
+//   Triple product (det term): ≤ M³ · 2^(3·QUANT_BITS)
+//   Full 3×3 det (6 terms):   ≤ 6·M³ · 2^(3·QUANT_BITS)
+//
+// With QUANT_BITS = 20:
+//   M = 1      : 6 · 2^60  ≈ 2^63   (fits int64_t)
+//   M = 1000   : 6 · 10^9 · 2^60 ≈ 2^93  (fits __int128, 127-bit signed)
+//   M = 10^6   : 6 · 10^18 · 2^60 ≈ 2^120 (fits __int128)
+//   M = 5×10^6 : approaches 2^127 — borderline; use QUANT_BITS=16 if needed.
+//
+// The characteristic polynomial coefficients P1, P2 involve sums of products
+// mixing V and W values; the same analysis applies since both are scaled by
+// 2^QUANT_BITS.  All intermediate quantities in Subtasks 2–5 stay within 127
+// bits for M ≤ 10^6, which covers all practical simulation fields.
+
+static constexpr int     QUANT_BITS  = 20;
+static constexpr int64_t QUANT_SCALE = int64_t(1) << QUANT_BITS;  // 1,048,576
+
+/**
+ * @brief Quantize one floating-point value to int64_t.
+ *
+ * Maps  x  →  round(x · QUANT_SCALE).
+ * Quantization error: ≤ 0.5 / QUANT_SCALE ≈ 4.8×10⁻⁷ (in original units).
+ * This corresponds to ~20 bits of precision after the binary point, matching
+ * six significant decimal digits — sufficient for most physical field data.
+ */
+inline int64_t quant(double x) {
+    return static_cast<int64_t>(std::llround(x * static_cast<double>(QUANT_SCALE)));
+}
+
+/**
+ * @brief Quantize a 3×3 field array [vertex][component] to int64_t.
+ *
+ * Input V is indexed as V[vertex][component] (same layout as the PV solver).
+ * Output Vq carries the same layout with each entry scaled by QUANT_SCALE and
+ * rounded to the nearest integer.
+ *
+ * Precondition: |V[i][j]| < 5×10^6  (see overflow analysis above).
+ */
+template <typename T>
+void quantize_field_3x3(const T V[3][3], int64_t Vq[3][3]) {
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            Vq[i][j] = quant(static_cast<double>(V[i][j]));
+}
+
 /**
  * @brief Solve for parallel vectors on a triangle (2-simplex)
  *
@@ -944,6 +1013,16 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      const uint64_t* indices,
                      T epsilon) {
     punctures.clear();
+
+    // ----------------------------------------------------------------
+    // Subtask 1: quantize the original (unperturbed) field to int64_t.
+    // Vq, Wq are exact integer representations scaled by QUANT_SCALE.
+    // They are NOT used by the floating-point path below; Subtask 2 will
+    // route through these for exact characteristic polynomial computation.
+    // ----------------------------------------------------------------
+    int64_t Vq[3][3], Wq[3][3];
+    quantize_field_3x3(V, Vq);
+    quantize_field_3x3(W, Wq);
 
     // ----------------------------------------------------------------
     // SoS field perturbation
