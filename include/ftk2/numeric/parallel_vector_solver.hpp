@@ -335,18 +335,23 @@ inline T sos_perturbation(uint64_t vertex_idx, int component) {
     return T(SOS_EPS) / T(uint64_t(1) << k);
 }
 
+// Forward declaration — defined after the quantization and integer polynomial
+// sections (Subtasks 1–3) which appear later in this file.
+inline int discriminant_sign_i128(const __int128 P[4]);
+
 /**
  * @brief Solve cubic with SoS tie-breaking for the disc == 0 (tangent) case.
  *
- * Identical to solve_cubic_real except: when |disc| is below the SoS threshold
- * (i.e., after field perturbation we still land exactly at a repeated root),
- * use the parity of the minimum vertex index to decide whether to treat disc as
- * slightly positive (1 root) or slightly negative (3 roots).  This is a
- * deterministic, index-based fallback that replaces the floating-point coin-flip
- * at disc ≈ 0.
+ * Identical to solve_cubic_real except: when |disc| is below the SoS threshold,
+ * first query the exact integer discriminant (Subtask 3).  If that returns a
+ * definite sign, use the appropriate root formula.  Only if the exact sign is
+ * also zero (true repeated root) does the SoS min-idx tie-break fire.
+ *
+ * @param P_i128  Integer polynomial from Subtask 2 (may be nullptr for legacy calls).
  */
 template <typename T>
 int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
+                         const __int128* P_i128 = nullptr,
                          T epsilon = std::numeric_limits<T>::epsilon()) {
     if (std::abs(P[3]) < epsilon) {
         // Degenerate to quadratic / linear — same as solve_cubic_real
@@ -374,7 +379,7 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
     T sos_disc_eps = epsilon * (std::abs(q*q*q) + std::abs(r*r) + epsilon);
 
     if (disc > sos_disc_eps) {
-        // One real root
+        // One real root (float disc clearly positive)
         T s = r + std::sqrt(disc);
         s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
         T t = r - std::sqrt(disc);
@@ -382,7 +387,7 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
         roots[0] = -term1 + s + t;
         return 1;
     } else if (disc < -sos_disc_eps) {
-        // Three distinct real roots
+        // Three distinct real roots (float disc clearly negative)
         T mq = -q;
         T dum1 = std::acos(r / std::sqrt(mq*mq*mq));
         T r13 = 2*std::sqrt(mq);
@@ -391,22 +396,54 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
         roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
         return 3;
     } else {
-        // disc ≈ 0: repeated root (PV curve tangent to triangle face).
-        // SoS tie-break: use parity of minimum vertex global index.
-        //   even → treat disc as slightly > 0 → 1 root (tangent excluded)
-        //   odd  → treat disc as slightly < 0 → 3 roots (tangent counted)
-        uint64_t min_idx = indices ? std::min({indices[0], indices[1], indices[2]})
-                                   : uint64_t(0);
-        T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
-        roots[0] = -term1 + 2*r13;
-        roots[1] = -(r13 + term1);
-        if (min_idx % 2 == 0) {
-            // Treat as 1-root case: keep only the non-repeated root
-            return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 1;
+        // Float disc ≈ 0: consult exact integer discriminant (Subtask 3).
+        // discriminant_sign_i128 returns:
+        //   +1 → exactly one real root       (Δ > 0 for cubic convention)
+        //   -1 → exactly three distinct roots (Δ < 0)
+        //    0 → repeated root OR overflow guard → fall through to SoS tie-break
+        int exact_sign = P_i128 ? discriminant_sign_i128(P_i128) : 0;
+
+        if (exact_sign > 0) {
+            // Exact: one real root.  Use disc > 0 formula, clamping disc ≥ 0.
+            T safe = (disc > T(0)) ? disc : T(0);
+            T sq   = std::sqrt(safe);
+            T s = r + sq; s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
+            T t = r - sq; t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
+            roots[0] = -term1 + s + t;
+            return 1;
+        } else if (exact_sign < 0) {
+            // Exact: three distinct real roots.  Use disc < 0 formula,
+            // clamping -q ≥ 0 in case float rounding made q slightly positive.
+            T mq = -q > T(0) ? -q : T(0);
+            if (mq < epsilon) {
+                // Numerically indistinguishable from triple root — single root.
+                T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
+                roots[0] = -term1 + 2*r13;
+                return 1;
+            }
+            T arg  = r / std::sqrt(mq*mq*mq);
+            // clamp to [-1,1] in case float rounding pushes it slightly out
+            arg = arg < T(-1) ? T(-1) : (arg > T(1) ? T(1) : arg);
+            T dum1 = std::acos(arg);
+            T r13  = 2*std::sqrt(mq);
+            roots[0] = -term1 + r13*std::cos(dum1/3);
+            roots[1] = -term1 + r13*std::cos((dum1 + 2*M_PI)/3);
+            roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
+            return 3;
         } else {
-            // Treat as 3-root case: the double root appears twice
-            roots[2] = roots[1];
-            return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;
+            // Exact discriminant is zero (or overflow guard returned 0):
+            // true repeated root → SoS min-idx tie-break.
+            uint64_t min_idx = indices ? std::min({indices[0], indices[1], indices[2]})
+                                       : uint64_t(0);
+            T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
+            roots[0] = -term1 + 2*r13;
+            roots[1] = -(r13 + term1);
+            if (min_idx % 2 == 0) {
+                return 1;   // tangent excluded
+            } else {
+                roots[2] = roots[1];
+                return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;
+            }
         }
     }
 }
@@ -553,6 +590,91 @@ inline void characteristic_polynomial_3x3_i128(const int64_t A[3][3],
           -a(1,0)*b(0,1)*b(2,2) - a(0,1)*b(1,0)*b(2,2) + a(0,0)*b(1,1)*b(2,2);
 
     P[3] = -det3_i128(B);
+}
+
+// ============================================================================
+// Exact Discriminant Sign  (Subtask 3)
+// ============================================================================
+//
+// The discriminant of  χ(λ) = P[3]λ³ + P[2]λ² + P[1]λ + P[0]  is:
+//
+//   Δ = 18·P3·P2·P1·P0 − 4·P2³·P0 + P2²·P1² − 4·P3·P1³ − 27·P3²·P0²
+//
+// With raw __int128 polynomial coefficients (each up to ~2^94 for M=1000),
+// the degree-4 terms reach (2^94)^4 = 2^376 — well beyond __int128.
+//
+// STRATEGY — GCD normalization + overflow guard:
+//   1. Divide all four coefficients by their GCD (does not change root
+//      structure or sign of Δ, since Δ scales as g^4).
+//   2. If the maximum normalized coefficient < 2^30, all degree-4 terms
+//      fit in __int128 (54·(2^30)^4 ≈ 2^125 < 2^127). Compute exactly.
+//   3. Otherwise coefficients are large ↔ Δ is far from zero relative to
+//      coefficient scale → the float discriminant sign is reliable. Return
+//      0 to signal "use float fallback", handled by the caller.
+//
+// OVERFLOW PROOF for the 2^30 threshold (let M30 = 2^30):
+//   |18abcd|  ≤ 18 · M30^4 = 18 · 2^120 ≈ 2^124.2
+//   |4b³d|    ≤  4 · M30^4              ≈ 2^122
+//   |b²c²|    ≤      M30^4              ≈ 2^120
+//   |4ac³|    ≤  4 · M30^4              ≈ 2^122
+//   |27a²d²|  ≤ 27 · M30^4              ≈ 2^124.75
+//   Sum (signed): ≤ 54 · M30^4          ≈ 2^125.75 < 2^127  ✓
+//
+// Intermediate products also stay in range:
+//   b*b: ≤ M30^2 = 2^60; b*b*b: ≤ 2^90; b*b*b*d: ≤ 2^120  ✓
+
+/**
+ * @brief GCD of two __int128 values (Euclidean algorithm, handles negatives).
+ */
+inline __int128 gcd_i128(__int128 a, __int128 b) {
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    while (b) { __int128 t = a % b; a = b; b = t; }
+    return a;
+}
+
+/**
+ * @brief Exact sign of the discriminant of the integer cubic P_i128.
+ *
+ * @param P  Cubic coefficients [P0, P1, P2, P3]  (P[3] is the leading term).
+ * @return  +1  →  three distinct real roots
+ *           0  →  repeated root (or overflow guard triggered)
+ *          -1  →  one real root, two complex conjugates
+ *
+ * Note: sign convention matches the standard cubic discriminant:
+ *   Δ > 0 ↔ three distinct real roots, Δ < 0 ↔ one real root.
+ */
+inline int discriminant_sign_i128(const __int128 P[4]) {
+    if (P[3] == 0) return 0;  // not a cubic
+
+    // Step 1: GCD-normalize to minimize coefficient magnitude.
+    __int128 g = gcd_i128(gcd_i128(P[0] < 0 ? -P[0] : P[0],
+                                    P[1] < 0 ? -P[1] : P[1]),
+                           gcd_i128(P[2] < 0 ? -P[2] : P[2],
+                                    P[3] < 0 ? -P[3] : P[3]));
+    if (g == 0) return 0;
+
+    __int128 a = P[3] / g;   // leading coefficient
+    __int128 b = P[2] / g;
+    __int128 c = P[1] / g;
+    __int128 d = P[0] / g;   // constant term
+
+    // Step 2: overflow guard — if any coefficient ≥ 2^30, return 0.
+    static constexpr __int128 THRESH = __int128(1) << 30;
+    auto abs128 = [](__int128 x) { return x < 0 ? -x : x; };
+    if (abs128(a) >= THRESH || abs128(b) >= THRESH ||
+        abs128(c) >= THRESH || abs128(d) >= THRESH)
+        return 0;  // large coefficients → float sign is reliable
+
+    // Step 3: exact discriminant in __int128.
+    // Δ = 18abcd − 4b³d + b²c² − 4ac³ − 27a²d²
+    __int128 b2 = b*b,  b3 = b2*b;
+    __int128 c2 = c*c,  c3 = c2*c;
+    __int128 a2 = a*a;
+    __int128 d2 = d*d;
+    __int128 delta = 18*a*b*c*d  -  4*b3*d  +  b2*c2  -  4*a*c3  -  27*a2*d2;
+
+    return (delta > 0) ? +1 : (delta < 0) ? -1 : 0;
 }
 
 /**
@@ -1171,9 +1293,10 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     T P[4];
     characteristic_polynomial_3x3(VT, WT, P);
 
-    // Solve cubic with SoS tie-breaking for the disc == 0 edge case
+    // Solve cubic: use exact integer discriminant (Subtask 3) to decide
+    // the root count when the float discriminant is near zero.
     T lambda[3];
-    int n_roots = solve_cubic_real_sos(P, lambda, indices, epsilon);
+    int n_roots = solve_cubic_real_sos(P, lambda, indices, P_i128, epsilon);
 
     // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
