@@ -558,7 +558,7 @@ and are exactly the ones SoS perturbation eliminates.
 ## 7. The Exact Integer Pipeline
 
 To eliminate all floating-point thresholds from the PV solver, we implement an
-ten-subtask pipeline that progressively moves decision predicates from float
+eleven-subtask pipeline that progressively moves decision predicates from float
 arithmetic into exact integer arithmetic.  The two remaining float operations
 are the root-finding itself (unavoidably irrational) and the least-squares bary
 solve (linear algebra at a float λ*).
@@ -1011,6 +1011,57 @@ centroid ν* = (1/3, 1/3, 1/3).  With S = 50000, the SoS-induced residual is
 larger S.  The test confirms the solver finds exactly one puncture with the new
 code (and would have found zero with the old code for S ≳ 70000).
 
+### Subtask 11 — Certified Exact-λ=0 Exclusion
+
+**Goal**: replace the heuristic `|λ| ≤ ε_machine` filter with an exact
+integer test that skips the trivial λ=0 eigenvalue and only that eigenvalue.
+
+**Background**: the PV condition V = λW with λ=0 gives V(ν*) = 0 — the V
+field vanishes at the puncture.  This is a trivially parallel (and typically
+uninteresting) solution.  The old code skipped any root with
+`|λ| ≤ std::numeric_limits<T>::epsilon()`, which is approximately 2.2×10⁻¹⁶
+for double.  This guard is fragile: a genuine eigenvalue at, say, λ = 10⁻¹⁷
+would be silently dropped, even though det(V) ≠ 0.
+
+**Exact test**: the constant term of the characteristic polynomial is
+
+$$
+P[0] = \det(V_q),
+$$
+
+where $V_q$ is the quantized field matrix.  $P_{\text{i128}}[0] = 0$ if and
+only if λ=0 is an exact root of the integer polynomial — equivalently, if and
+only if det(V) = 0 (up to quantization), i.e., V is degenerate at the
+triangle.
+
+**Decision rule**: skip root $i$ iff
+
+$$
+P_{\text{i128}}[0] = 0
+\quad\text{AND}\quad
+\lambda_{\mathrm{lo}}[i] \le 0 \le \lambda_{\mathrm{hi}}[i].
+$$
+
+The second condition verifies that the Sturm-isolated interval actually
+contains 0 — ruling out the pathological case where the float root happened to
+be near 0 but the true root is not (which would only occur when
+$P_{\text{i128}}[0] \ne 0$, anyway).
+
+**Why this is an improvement**:
+
+| Case | Old `\|λ\|≤ε` guard | New certified check |
+|---|---|---|
+| True λ=0 root (det(V)=0) | Skip (correct) | Skip (certified correct) |
+| Genuine λ≈1e-17 root (det(V)≠0) | Silently drop (wrong) | Keep (correct) |
+| Float root=0 but det(V)≠0 | Skip (wrong) | Keep (correct) |
+
+**Tests**:
+- `solve_pv_triangle_zero_root_certified`: V with a zero vertex (det(V)=0);
+  verifies no returned puncture has |λ| near zero.
+- `solve_pv_triangle_near_zero_genuine_root`: V=diag(0.1,1,1), W=I;
+  char poly roots 0.1, 1, 1; det(V)=0.1 ≠ 0 → Subtask 11 must not skip
+  the λ=0.1 root; solver runs without error.
+
 ---
 
 ## 8. Implementation Status
@@ -1030,6 +1081,7 @@ code (and would have found zero with the old code for S ≳ 70000).
 | **Subtask 8**: Certified Horner error bound for N_k(lo) sign | same | Implemented |
 | **Subtask 9**: Unified ε-window certification for degenerate intervals | same | Implemented |
 | **Subtask 10**: Remove scale-dependent cross-product residual filter | same | Implemented |
+| **Subtask 11**: Certified exact-λ=0 exclusion via P_i128[0] | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

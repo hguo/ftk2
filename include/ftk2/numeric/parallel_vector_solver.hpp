@@ -1723,9 +1723,33 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         build_sturm_deg4(D_poly, degD, seq_D);
     }
 
+    // Subtask 11: exact λ=0 exclusion via integer characteristic polynomial.
+    //
+    // The trivial root λ=0 corresponds to V(ν*) = 0·W(ν*) = 0 — the V field
+    // vanishes at the puncture, making V∥W trivially.  We only want to skip a
+    // float root when it IS the λ=0 eigenvalue, i.e. when the exact integer
+    // char poly has λ=0 as a root.
+    //
+    // P_i128[0] = det(Vq) is the constant term of the integer poly.
+    // P_i128[0] = 0  iff  det(Vq) = 0  iff  λ=0 is an exact root.
+    //
+    // Paired with the Sturm isolating interval: the true root sits in
+    // [lambda_lo[i], lambda_hi[i]].  Skip iff 0 ∈ [lo, hi] AND P_i128[0]=0.
+    //
+    // When P_i128[0] ≠ 0, no root is at λ=0.  A float root with |λ|<ε was
+    // simply a near-zero genuine eigenvalue; the old `|λ|≤ε` guard would
+    // have incorrectly dropped it.
+    //
+    // For degenerate intervals (lo==hi==λ̂), 0∈[lo,hi] requires λ̂=0 exactly
+    // in double — acceptable since that only happens when the cubic solver
+    // returned 0.0 as a root estimate, and P_i128[0]=0 confirms it is exact.
+    const bool zero_is_exact_root = (P_i128[0] == __int128(0));
+
     // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
-        if (std::abs(lambda[i]) <= epsilon) continue;  // λ=0 → V=0, trivially parallel
+        // Subtask 11: skip only the certified-exact λ=0 root.
+        if (zero_is_exact_root && lambda_lo[i] <= 0.0 && 0.0 <= lambda_hi[i])
+            continue;
 
         // Bary coords at the Sturm-isolated midpoint
         T nu[3];

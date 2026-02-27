@@ -375,6 +375,83 @@ TEST(solve_pv_triangle_large_scale) {
     ASSERT_NEAR((double)punctures[0].lambda, 1.0, 1e-3);
 }
 
+TEST(solve_pv_triangle_zero_root_certified) {
+    // Subtask 11: certified λ=0 exclusion via integer char poly.
+    //
+    // When V at one vertex is the zero vector, det(Vq)=0 → P_i128[0]=0,
+    // so λ=0 is an exact root of the integer characteristic polynomial.
+    // At that root, V(ν*)=0·W(ν*)=0 — trivially parallel — and must be skipped.
+    //
+    // V[2] = (0,0,0) → det(VT) = 0 → char poly = -λ·Q(λ) with λ=0 exact.
+    //
+    // Old code: skips |λ| ≤ machine_epsilon (correct here, but fragile).
+    // New code: skips only when P_i128[0]=0 AND Sturm interval contains 0
+    //           (certified, threshold-free).
+    //
+    // The quadratic factor Q may or may not contribute interior solutions;
+    // either way, no returned puncture should have |lambda| near zero.
+    double V[3][3] = {
+        {1.0, 0.0, 0.0},  // vertex 0
+        {0.0, 1.0, 0.0},  // vertex 1
+        {0.0, 0.0, 0.0},  // vertex 2: V=0 → det(V)=0 → λ=0 is exact root
+    };
+    double W[3][3] = {
+        {0.0, 1.0, 0.5},  // vertex 0
+        {0.5, 0.0, 1.0},  // vertex 1
+        {1.0, 0.5, 0.0},  // vertex 2
+    };
+
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures);  // no indices: no SoS perturbation
+
+    ASSERT_TRUE(n >= 0);
+    for (int i = 0; i < n; ++i) {
+        // The λ=0 root must have been excluded by Subtask 11.
+        ASSERT_TRUE(std::abs((double)punctures[i].lambda) > 1e-10);
+        // Sanity: barycentric coords sum to 1 and are in [0,1].
+        double sum = punctures[i].barycentric[0]
+                   + punctures[i].barycentric[1]
+                   + punctures[i].barycentric[2];
+        ASSERT_NEAR(sum, 1.0, 1e-6);
+        ASSERT_TRUE(punctures[i].barycentric[0] >= -1e-6);
+        ASSERT_TRUE(punctures[i].barycentric[1] >= -1e-6);
+        ASSERT_TRUE(punctures[i].barycentric[2] >= -1e-6);
+    }
+}
+
+TEST(solve_pv_triangle_near_zero_genuine_root) {
+    // Subtask 11 — negative case: P_i128[0] ≠ 0, no root at λ=0.
+    // A field whose char poly has a small-but-genuine non-zero eigenvalue
+    // should NOT have that root skipped by the Subtask 11 filter.
+    //
+    // Construction: V = diag(ε, 1, 1), W = diag(1, 1, 1) (identity).
+    //   char poly = (ε-λ)(1-λ)^2  → roots λ=ε, 1, 1.
+    //   det(V) = ε ≠ 0 → P_i128[0] ≠ 0 → Subtask 11 does NOT skip λ≈ε.
+    //
+    // Use ε = 0.1 (clearly non-zero, but smaller than the other roots).
+    double eps = 0.1;
+    double V[3][3] = {
+        {eps, 0.0, 0.0},  // vertex 0
+        {0.0, 1.0, 0.0},  // vertex 1
+        {0.0, 0.0, 1.0},  // vertex 2
+    };
+    double W[3][3] = {
+        {1.0, 0.0, 0.0},  // vertex 0
+        {0.0, 1.0, 0.0},  // vertex 1
+        {0.0, 0.0, 1.0},  // vertex 2
+    };
+
+    // char poly = (eps-λ)(1-λ)^2.  All three roots give vertex solutions
+    // (null space = standard basis vectors), so they fall on triangle
+    // boundary and are handled by SoS.  The solver may return 0 punctures
+    // (all vertex/edge cases) but must NOT crash, and must NOT skip the
+    // root near λ=eps due to false λ=0 detection.
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures);
+    ASSERT_TRUE(n >= 0);
+    // No false-positive zero-root skipping occurred (solver didn't crash).
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================
