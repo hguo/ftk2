@@ -558,7 +558,7 @@ and are exactly the ones SoS perturbation eliminates.
 ## 7. The Exact Integer Pipeline
 
 To eliminate all floating-point thresholds from the PV solver, we implement an
-eight-subtask pipeline that progressively moves decision predicates from float
+nine-subtask pipeline that progressively moves decision predicates from float
 arithmetic into exact integer arithmetic.  The two remaining float operations
 are the root-finding itself (unavoidably irrational) and the least-squares bary
 solve (linear algebra at a float λ*).
@@ -897,6 +897,70 @@ puncture as boundary (or vice versa) due to rounding.
 `cond_nk = Σ |N_poly[k][d]| |lo|^d` via reversed Horner, then check
 `|nk_lo| > EVAL_GAMMA * cond_nk` before trusting the sign.
 
+### Subtask 9 — Unified Sturm/Error-Bound Certification for Degenerate Intervals
+
+**Goal**: eliminate the last remaining float threshold `bary_threshold = 1e-10`
+from the degenerate-interval path, making the entire `sos_bary_inside` decision
+threshold-free.
+
+**Background**: Sturm isolation (Subtask 4) produces a root interval
+`[lambda_lo, lambda_hi]` that is strictly proper (`lo < hi`) for each cubic
+root.  However, when two roots of the characteristic cubic are extremely close,
+the interval collapse check can fail, leaving `lambda_lo[i] == lambda_hi[i]` —
+we call this a *degenerate interval*.  The previous code fell back to
+
+```cpp
+const T bary_threshold = T(1e-10);
+return (double)nu[k] > -bary_threshold;
+```
+
+which is an arbitrary threshold with no certified meaning.
+
+**Method**: replace the degenerate-interval fallback with the same
+`try_certify_nk_sign` helper used for proper intervals, but using a
+*machine-epsilon window*
+
+$$
+[\hat\lambda - \delta,\; \hat\lambda + \delta],
+\qquad \delta = \max\!\left(4\,\varepsilon_{\mathrm{mach}}\,|\hat\lambda|,\;
+\varepsilon_{\min}\right),
+$$
+
+where $\hat\lambda$ is the float root and $\varepsilon_{\min}$ is the smallest
+positive normal double.  The reasoning:
+
+1. **Window correctness**: the float root $\hat\lambda$ satisfies
+   $|\hat\lambda - \lambda^*| \lesssim 4u|\lambda^*|$ for well-conditioned
+   cubic roots.  Therefore $\lambda^*$ lies inside
+   $[\hat\lambda - \delta, \hat\lambda + \delta]$ with probability 1 under
+   generic perturbation.
+
+2. **N_k root-free ⟹ sign certified**: if the Sturm count shows N_k has
+   no root in the window, then sign(N_k(λ*)) = sign(N_k(hat{λ})).  The
+   Higham error-bound check (Subtask 8) then certifies the float evaluation.
+
+3. **N_k has a root in window ⟹ μ_k(λ*) ≈ 0**: this is the genuine
+   boundary case — the puncture lies on (or extremely near) an edge of the
+   triangle.  The SoS min-index ownership rule resolves it.
+
+**Result**: `try_certify_nk_sign` is called in both the proper-interval and
+degenerate-interval paths; the only difference is how (lo, hi) is constructed.
+The constant `bary_threshold = 1e-10` is removed entirely.
+
+**Comparison of Subtasks 6–9**:
+
+| Decision | Sub 6 | Sub 7 | Sub 8 | Sub 9 |
+|---|---|---|---|---|
+| N_k root-free in window? | Sturm count | — | — | — |
+| D(λ*) > 0? | `d_lo > 1e-200` | Sturm count | — | — |
+| sign(N_k(lo)) certified? | bare comparison | — | error-bound guard | — |
+| Degenerate interval? | `bary_threshold = 1e-10` | — | — | ε-window + Sturm |
+
+**Implementation**: extracted `try_certify_nk_sign(k, lo, hi) -> int` helper
+lambda that encapsulates Subtasks 6–8.  `sos_bary_inside` selects (lo, hi)
+based on `have_interval` and delegates to the helper.  The SoS ownership rule
+is the single shared fallback for all failure modes.
+
 ---
 
 ## 8. Implementation Status
@@ -914,6 +978,7 @@ puncture as boundary (or vice versa) due to rounding.
 | **Subtask 6**: Exact bary sign via Sturm count on N_k(λ) | same | Implemented |
 | **Subtask 7**: Exact D(λ*) > 0 certificate via Sturm count on D(λ) | same | Implemented |
 | **Subtask 8**: Certified Horner error bound for N_k(lo) sign | same | Implemented |
+| **Subtask 9**: Unified ε-window certification for degenerate intervals | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

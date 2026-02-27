@@ -1732,91 +1732,91 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         eval_nu_at(lambda[i], nu);
 
         // ----------------------------------------------------------------
-        // Subtasks 6–8: determine sign of νₖ(λ*) with certified exactness.
+        // Subtasks 6–9: determine sign of νₖ(λ*) with certified exactness.
         //
-        // With isolating interval [λ_lo, λ_hi] for λ*:
+        // Common helper used in both the certified-interval path (Subtasks 6–8)
+        // and the degenerate-interval path (Subtask 9):
         //
-        //  Subtask 6: Sturm count on N_k
-        //   V_Nk(lo)−V_Nk(hi) = 0 → N_k has no root in (lo,hi] → proceed
-        //   V_Nk(lo)−V_Nk(hi) ≥ 1 → N_k(λ*) = 0 → SoS ownership rule
+        //   try_certify_nk_sign(k, lo, hi)
+        //     1. Build Sturm seq for N_k; count roots of N_k in (lo, hi].
+        //        V_Nk(lo)−V_Nk(hi) = 0 → N_k root-free in interval.
+        //     2. Count roots of D in (lo, hi].
+        //        V_D(lo)−V_D(hi)  = 0 → D(λ*) > 0 certified (D ≥ 0).
+        //     3. Evaluate N_k(lo) with Higham error bound (Subtask 8):
+        //        |N_k(lo)| > γ·cond → certified sign returned (+1 or −1).
+        //     Returns 0 if any step fails (N_k or D has root in window, or
+        //     evaluation is within rounding noise) → SoS ownership rule.
         //
-        //  Subtask 7: Sturm count on D (when N_k confirmed root-free)
-        //   V_D(lo)−V_D(hi) = 0  → D(λ*) > 0 certified (D ≥ 0 by Cauchy-Binet)
-        //   V_D(lo)−V_D(hi) ≥ 1  → D(λ*) = 0, degenerate → SoS rule
-        //
-        //  Subtask 8: certified Horner error bound on N_k(lo)
-        //   |N_k(lo)| > γ·cond(N_k,lo) → sign certified (Higham §3.1)
-        //   |N_k(lo)| ≤ γ·cond(N_k,lo) → evaluation within rounding noise → SoS
+        // Subtask 9 reuses the same helper for the degenerate interval,
+        // replacing the old bary_threshold = 1e-10 fallback with a
+        // machine-epsilon window [λ − δ, λ + δ] around the float root.
         //
         // The SoS ownership rule: triangle T claims the boundary puncture
         // on edge (vᵢ, vⱼ) iff global_idx(vₖ) < min(global_idx(vᵢ), vⱼ)).
-        // Falls back to Subtask 5 threshold when interval is degenerate.
         // ----------------------------------------------------------------
-        const T bary_threshold = T(1e-10);
+
+        // Returns +1 / −1 if sign of N_k in (lo,hi] is certified, else 0.
+        auto try_certify_nk_sign = [&](int k, double lo, double hi) -> int {
+            int degNk = 4;
+            while (degNk > 0 && std::abs(N_poly[k][degNk]) < 1e-200) --degNk;
+
+            SturmSeqDeg4 seq_nk;
+            build_sturm_deg4(N_poly[k], degNk, seq_nk);
+            if (sturm_count_d4(seq_nk, lo) - sturm_count_d4(seq_nk, hi) != 0)
+                return 0;  // N_k has a root in (lo, hi]
+
+            // N_k root-free in window: check D via pre-computed seq_D.
+            if (sturm_count_d4(seq_D, lo) - sturm_count_d4(seq_D, hi) != 0)
+                return 0;  // D has a root → degenerate system
+
+            // Subtask 8: certified Horner sign at lo.
+            double nk_lo = eval_poly_sturm(N_poly[k], degNk, lo);
+            double ax = std::abs(lo);
+            double cond_nk = std::abs(N_poly[k][degNk]);
+            for (int d = degNk - 1; d >= 0; --d)
+                cond_nk = cond_nk * ax + std::abs(N_poly[k][d]);
+            static constexpr double EVAL_GAMMA =
+                (2 * 4 + 2) * std::numeric_limits<double>::epsilon();
+            if (std::abs(nk_lo) > EVAL_GAMMA * cond_nk)
+                return (nk_lo > 0.0) ? +1 : -1;
+
+            return 0;  // within rounding noise
+        };
+
         bool have_interval = (lambda_lo[i] < lambda_hi[i]);
 
         auto sos_bary_inside = [&](int k) -> bool {
+            double lo, hi;
             if (have_interval) {
-                // Subtask 6: Sturm-count exact sign of N_k in [lo, hi]
-                int degNk = 4;
-                while (degNk > 0 && std::abs(N_poly[k][degNk]) < 1e-200) --degNk;
-
-                SturmSeqDeg4 seq_nk;
-                build_sturm_deg4(N_poly[k], degNk, seq_nk);
-                int v_lo = sturm_count_d4(seq_nk, lambda_lo[i]);
-                int v_hi = sturm_count_d4(seq_nk, lambda_hi[i]);
-
-                if (v_lo - v_hi == 0) {
-                    // N_k has no root in (lo, hi]: sign is constant.
-                    // Subtask 7: certify D(λ*) > 0 via Sturm count on D —
-                    // no floating-point threshold needed.
-                    int vD_lo = sturm_count_d4(seq_D, lambda_lo[i]);
-                    int vD_hi = sturm_count_d4(seq_D, lambda_hi[i]);
-
-                    if (vD_lo - vD_hi == 0) {
-                        // D has no root in (lo, hi]: D(λ*) > 0 certified
-                        // (D ≥ 0 by Cauchy-Binet; no root → strictly positive).
-                        // Evaluate N_k(lo) for the sign of μ_k(λ*).
-                        //
-                        // Subtask 8: certify the sign using Higham's Horner
-                        // error bound.  For a degree-d Horner evaluation,
-                        //
-                        //   |fl(N_k(lo)) − N_k(lo)| ≤ γ_{2d+1} · cond(N_k, lo)
-                        //
-                        // where cond(N_k, lo) = Σ |N_k[j]| |lo|^j and
-                        // γ_n = n·u / (1 − n·u) ≈ n·u  (u = machine epsilon / 2).
-                        //
-                        // An extra factor of (d+1) accounts for coefficient
-                        // rounding in compute_bary_numerators.  We use the
-                        // conservative multiplier (2·degNk + 2)·u so the bound
-                        // covers both sources of error.
-                        //
-                        // If |N_k(lo)| > error_bound the sign is certified.
-                        // Otherwise N_k(λ*) is too small to distinguish from
-                        // rounding noise → fall through to SoS.
-                        double nk_lo = eval_poly_sturm(N_poly[k], degNk, lambda_lo[i]);
-                        double ax = std::abs(lambda_lo[i]);
-                        double cond_nk = std::abs(N_poly[k][degNk]);
-                        for (int d = degNk - 1; d >= 0; --d)
-                            cond_nk = cond_nk * ax + std::abs(N_poly[k][d]);
-                        static constexpr double EVAL_GAMMA =
-                            (2 * 4 + 2) * std::numeric_limits<double>::epsilon();
-                        if (std::abs(nk_lo) > EVAL_GAMMA * cond_nk) {
-                            if (nk_lo > 0.0) return true;
-                            return false;
-                        }
-                        // |N_k(lo)| ≤ error bound: cannot certify sign → SoS
-                    }
-                    // D has a root in (lo, hi]: D(λ*) = 0, system degenerate → SoS
-                }
-                // N_k has a root in [lo, hi] or D degenerate: μ_k(λ*) ≈ 0 → SoS
+                lo = lambda_lo[i];
+                hi = lambda_hi[i];
             } else {
-                // Degenerate interval (isolation failed): Subtask 5 fallback
-                if (nu[k] > bary_threshold)  return true;
-                if (nu[k] < -bary_threshold) return false;
+                // Subtask 9: degenerate interval — Sturm isolation failed for
+                // this root (two cubic roots nearly coincident).  Use a
+                // machine-epsilon window [λ − δ, λ + δ] to probe N_k's sign.
+                //
+                // The float root λ̂ has accuracy ~ 4u|λ̂| relative to the
+                // true root λ*.  If N_k has no root within this window, the
+                // sign of N_k(λ̂) is the same as sign(N_k(λ*)), and Subtask 8
+                // certifies it.  If N_k does have a root here, μ_k(λ*) ≈ 0
+                // and the SoS rule applies — exactly the boundary case.
+                //
+                // This replaces the previous bary_threshold = 1e-10 fallback,
+                // making the degenerate-interval path threshold-free.
+                double lam = (double)lambda[i];
+                double delta = std::max(std::abs(lam) * (4.0 * std::numeric_limits<double>::epsilon()),
+                                        std::numeric_limits<double>::min());
+                lo = lam - delta;
+                hi = lam + delta;
             }
-            // Boundary zone: apply SoS min-index ownership rule.
-            if (!indices) return nu[k] >= -epsilon;  // legacy fallback
+
+            int sign = try_certify_nk_sign(k, lo, hi);
+            if (sign > 0) return true;
+            if (sign < 0) return false;
+
+            // Boundary zone (N_k or D degenerate, or evaluation uncertain):
+            // apply SoS min-index ownership rule.
+            if (!indices) return (double)lambda[i] >= 0.0;  // legacy fallback
             int ii = (k + 1) % 3, jj = (k + 2) % 3;
             return indices[k] < std::min(indices[ii], indices[jj]);
         };
