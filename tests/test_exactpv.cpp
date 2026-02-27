@@ -452,6 +452,59 @@ TEST(solve_pv_triangle_near_zero_genuine_root) {
     // No false-positive zero-root skipping occurred (solver didn't crash).
 }
 
+TEST(solve_pv_triangle_all_parallel_with_sos) {
+    // Subtask 12: certified all-parallel check via exact integer cross products.
+    //
+    // When V=W exactly, the ENTIRE triangle is a PV surface → INT_MAX.
+    // Old code: used Vp (SoS-perturbed) with float epsilon threshold.
+    //   Bug: SoS adds different deltas to V and W slots, making Vp ≠ Wp
+    //   even when V=W, so the float cross products are O(SOS_EPS) >> epsilon.
+    //   The check would NOT detect all-parallel → solver produces artifacts.
+    //
+    // New code: uses Vq/Wq (quantized ORIGINAL field) with exact integer
+    //   comparison.  V=W → Vq=Wq → cross=0 → INT_MAX regardless of SoS.
+    double V[3][3] = {
+        {1.0, 2.0, 3.0},
+        {4.0, 5.0, 6.0},
+        {7.0, 8.0, 9.0},
+    };
+    // W = V exactly → V ∥ W everywhere → whole triangle is PV
+    double W[3][3] = {
+        {1.0, 2.0, 3.0},
+        {4.0, 5.0, 6.0},
+        {7.0, 8.0, 9.0},
+    };
+
+    uint64_t indices[3] = {10, 20, 30};  // SoS active
+
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures, indices);
+
+    // Must return INT_MAX (entire triangle is PV surface), not spurious punctures.
+    // Old code would return some SoS-artifact punctures here instead.
+    ASSERT_EQ(n, std::numeric_limits<int>::max());
+}
+
+TEST(solve_pv_triangle_proportional_with_sos) {
+    // Subtask 12: W = 3V → V ∥ W at every vertex → all-parallel → INT_MAX.
+    // Proportionality (not equality) is also detected by exact cross product.
+    double V[3][3] = {
+        {1.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0},
+        {0.0, 0.0, 1.0},
+    };
+    double W[3][3] = {
+        {3.0, 0.0, 0.0},
+        {0.0, 3.0, 0.0},
+        {0.0, 0.0, 3.0},
+    };
+
+    uint64_t indices[3] = {5, 15, 25};
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures, indices);
+    ASSERT_EQ(n, std::numeric_limits<int>::max());
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================

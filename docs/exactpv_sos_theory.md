@@ -558,7 +558,7 @@ and are exactly the ones SoS perturbation eliminates.
 ## 7. The Exact Integer Pipeline
 
 To eliminate all floating-point thresholds from the PV solver, we implement an
-eleven-subtask pipeline that progressively moves decision predicates from float
+twelve-subtask pipeline that progressively moves decision predicates from float
 arithmetic into exact integer arithmetic.  The two remaining float operations
 are the root-finding itself (unavoidably irrational) and the least-squares bary
 solve (linear algebra at a float λ*).
@@ -1062,6 +1062,52 @@ $P_{\text{i128}}[0] \ne 0$, anyway).
   char poly roots 0.1, 1, 1; det(V)=0.1 ≠ 0 → Subtask 11 must not skip
   the λ=0.1 root; solver runs without error.
 
+### Subtask 12 — Certified All-Parallel Check via Integer Cross Products
+
+**Goal**: replace the float `|Vp × Wp| > ε_machine` all-parallel check with
+an exact integer test on the quantized original field.
+
+**Background**: the solver detects the degenerate case "V ∥ W at every vertex
+⟹ entire triangle is a PV surface" early and returns `INT_MAX`.  The old check
+used the *SoS-perturbed* field vectors `Vp, Wp` and compared the cross-product
+norm against `std::numeric_limits<T>::epsilon()`:
+
+```cpp
+if (vector_norm3(cross_product(Vp[i], Wp[i])) > epsilon) { all_parallel = false; }
+```
+
+**Bug in old check**: when `V = W` exactly and SoS is active (`indices ≠ nullptr`),
+the perturbation adds different small values to the V and W slots
+(`V[i][j] + sos_perturbation(idx[i], j)` vs `W[i][j] + sos_perturbation(idx[i], j+3)`),
+so `Vp[i] ≠ Wp[i]` even though `V[i] = W[i]`.  The float cross product is
+`O(SOS\_EPS) ≈ 10^{-8}` while `ε_machine ≈ 2×10^{-16}`, so the test concludes
+NOT all-parallel and the solver proceeds — producing SoS-artifact punctures
+instead of returning `INT_MAX`.
+
+**Fix**: test the *quantized original* field vectors `Vq[i]`, `Wq[i]` with exact
+integer arithmetic:
+
+$$
+c_x = V_q^{(i)}_y \cdot W_q^{(i)}_z - V_q^{(i)}_z \cdot W_q^{(i)}_y
+= 0,\quad
+c_y = \ldots = 0,\quad
+c_z = \ldots = 0
+\quad\forall\,i \;\Longrightarrow\; \text{all-parallel}.
+$$
+
+The products are computed in `__int128` (components ≤ 5×10¹² per field
+bound, products ≤ 5×10²⁵ < 2¹²⁷).  No threshold.
+
+**Correctness**: `V[i] = W[i]` → `Vq[i] = Wq[i]` → cross = 0 → `INT_MAX`, regardless
+of whether SoS is active.  `W = c·V` → `Wq = round(c·Vq)` → in general `Wq[i]`
+is proportional to `Vq[i]` up to rounding, and the exact cross product captures
+this correctly for exact proportionality.
+
+**Tests**:
+- `solve_pv_triangle_all_parallel_with_sos`: `V = W` with SoS indices.
+  Old code produced spurious punctures; new code returns `INT_MAX`.
+- `solve_pv_triangle_proportional_with_sos`: `W = 3V` with SoS indices → `INT_MAX`.
+
 ---
 
 ## 8. Implementation Status
@@ -1082,6 +1128,7 @@ $P_{\text{i128}}[0] \ne 0$, anyway).
 | **Subtask 9**: Unified ε-window certification for degenerate intervals | same | Implemented |
 | **Subtask 10**: Remove scale-dependent cross-product residual filter | same | Implemented |
 | **Subtask 11**: Certified exact-λ=0 exclusion via P_i128[0] | same | Implemented |
+| **Subtask 12**: Certified all-parallel check via integer cross products on Vq/Wq | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

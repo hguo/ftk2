@@ -1602,15 +1602,36 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         }
     }
 
-    // Check for degenerate case: all vectors parallel at all vertices
-    bool all_parallel = true;
-    for (int i = 0; i < 3; ++i) {
-        T cross[3];
-        cross_product3(Vp[i], Wp[i], cross);
-        if (vector_norm3(cross) > epsilon) { all_parallel = false; break; }
+    // ----------------------------------------------------------------
+    // Subtask 12: certified all-parallel check via exact integer cross products.
+    //
+    // The entire triangle is a PV surface iff V[i] × W[i] = 0 at ALL vertices,
+    // i.e. iff V and W are proportional everywhere on the triangle.
+    //
+    // Old check: uses Vp (SoS-perturbed) with float threshold epsilon.
+    //   Bug: when V=W exactly with SoS active, Vp ≠ Wp (different per-slot
+    //   perturbations), so the float cross products are O(SOS_EPS) >> epsilon,
+    //   and the check fails to detect all-parallel.  The solver then proceeds
+    //   and may return SoS-artifact punctures instead of INT_MAX.
+    //
+    // New check: uses Vq/Wq (quantized ORIGINAL field) with exact integer
+    //   comparison.  Vq × Wq = 0 iff V[i] ∥ W[i] in the quantized sense
+    //   (no threshold).  This is correct for both the SoS and no-SoS paths.
+    //
+    // Overflow: |Vq[i][j]| ≤ max_field × QUANT_SCALE ≤ 5×10^6 × 2^20 ≈ 5×10^12.
+    //   Cross product component ≤ 2×(5×10^12)^2 = 5×10^25 < 2^127.  Use __int128.
+    // ----------------------------------------------------------------
+    {
+        bool all_parallel = true;
+        for (int i = 0; i < 3; ++i) {
+            __int128 cx = (__int128)Vq[i][1]*Wq[i][2] - (__int128)Vq[i][2]*Wq[i][1];
+            __int128 cy = (__int128)Vq[i][2]*Wq[i][0] - (__int128)Vq[i][0]*Wq[i][2];
+            __int128 cz = (__int128)Vq[i][0]*Wq[i][1] - (__int128)Vq[i][1]*Wq[i][0];
+            if (cx != 0 || cy != 0 || cz != 0) { all_parallel = false; break; }
+        }
+        if (all_parallel)
+            return std::numeric_limits<int>::max();  // entire triangle is PV surface
     }
-    if (all_parallel)
-        return std::numeric_limits<int>::max();  // entire triangle is PV surface
 
     // Transpose for characteristic polynomial: columns = components, rows = vertices
     T VT[3][3], WT[3][3];
