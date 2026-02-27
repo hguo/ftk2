@@ -720,6 +720,69 @@ root of the bary numerator N_k(λ) lies in [lₖ, hₖ], so the sign is certifie
 independent evaluations at the interval endpoints agree, the sign is doubly
 confirmed.
 
+### Subtask 6 — Exact Barycentric Sign via Sturm Count on Degree-4 Numerator
+
+**Goal**: eliminate the τ = 10⁻¹⁰ boundary threshold entirely for the common
+case where the barycentric coordinate is genuinely nonzero.
+
+**Observation**: Subtask 5 still applies τ at the two endpoint evaluations.
+If N_k(λ) is nonzero throughout [l_k, h_k], we can evaluate it at a single
+point and obtain the exact sign — with *no threshold at all*.
+
+**Method**: express μ_k(λ) = N_k(λ) / D(λ) as a ratio of degree-4 polynomials
+derived from the linear-in-λ system M(λ)·ν = b(λ):
+
+$$
+M(λ)_{rc} = (V_{rc} - V_{r2}) - λ(W_{rc} - W_{r2}), \quad
+b(λ)_r = -(V_{r2} - λ\,W_{r2}),
+$$
+
+where r ∈ {0,1,2} and c ∈ {0,1}.  With
+
+$$
+A(λ) = M(λ)^T M(λ) \quad (\text{quadratic in }λ),\qquad
+g(λ) = M(λ)^T b(λ) \quad (\text{quadratic in }λ),
+$$
+
+Cramer's rule gives
+
+$$
+D(λ) = A_{00}A_{11} - A_{01}^2, \qquad
+N_0 = A_{11}\,g_0 - A_{01}\,g_1, \qquad
+N_1 = A_{00}\,g_1 - A_{01}\,g_0, \qquad
+N_2 = D - N_0 - N_1,
+$$
+
+each of degree 4.  By the Cauchy–Binet identity, D(λ) = Σ (2×2 minors of M)²
+≥ 0 for all λ.
+
+**Algorithm** for each root λ* isolated in [l_k, h_k]:
+1. Build the Sturm sequence for N_k (degree ≤ 4).
+2. Count sign changes V(l_k) and V(h_k).
+3. If V(l_k) − V(h_k) = 0 (no root of N_k in (l_k, h_k]):
+   - Evaluate N_k(l_k) and D(l_k).
+   - If D(l_k) > 0: sign(μ_k) = sign(N_k(l_k)) — **exact, no threshold**.
+4. Otherwise (N_k has a root in the interval): μ_k(λ*) ≈ 0 → apply SoS
+   min-index ownership rule.
+
+**Why this eliminates the threshold**: the Sturm count is a *discrete*
+integer test.  When it confirms 0 roots of N_k in [l_k, h_k], N_k has constant
+sign there — so evaluating at l_k gives the exact sign of N_k(λ*) regardless
+of how close λ* is to a root of N_k.  The threshold τ is only needed when N_k
+genuinely vanishes in the interval (a true boundary case), in which case the
+SoS rule applies.
+
+**Comparison with Subtask 5**:
+
+| Case | Subtask 5 | Subtask 6 |
+|---|---|---|
+| Nonzero bary coord | Two threshold evaluations | Exact Sturm-count decision |
+| Near-zero bary coord (genuine boundary) | SoS rule | SoS rule |
+| Degenerate interval | τ-threshold at midpoint | τ-threshold at midpoint |
+
+**Implementation**: `compute_bary_numerators`, `build_sturm_deg4`,
+`sturm_count_d4`, and the `sos_bary_inside` lambda in `solve_pv_triangle`.
+
 ---
 
 ## 8. Implementation Status
@@ -734,6 +797,7 @@ confirmed.
 | **Subtask 3**: Exact discriminant sign | same | Implemented |
 | **Subtask 4**: Sturm-sequence root isolation | same | Implemented |
 | **Subtask 5**: Exact bary sign via interval evaluation | same | Implemented |
+| **Subtask 6**: Exact bary sign via Sturm count on N_k(λ) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

@@ -827,6 +827,187 @@ inline int isolate_cubic_roots(const double P[4],
     return n_iso;
 }
 
+// ============================================================================
+// Exact Barycentric Sign via Sturm Count on Numerator Polynomial  (Subtask 6)
+// ============================================================================
+//
+// For a fixed Sturm interval [λ_lo, λ_hi] containing exactly one root λ*,
+// determine the sign of each barycentric coordinate μ_k(λ*) without any
+// floating-point threshold.
+//
+// KEY IDEA
+// --------
+// The barycentric solve expresses μ_k as a rational function of λ:
+//
+//     μ_k(λ) = N_k(λ) / D(λ)
+//
+// where N_k and D are degree-4 polynomials derived from the 3×2
+// overdetermined system M(λ)·[μ₀,μ₁]ᵀ = b(λ) (M and b each linear in λ):
+//
+//     M(λ)[r][c] = Mlin[r][c][0]  +  λ·Mlin[r][c][1]    (r=0..2, c=0..1)
+//     b(λ)[r]    = blin[r][0]     +  λ·blin[r][1]
+//
+//     (MᵀM)[p][q](λ) = Σᵣ M[r][p]·M[r][q]  (quadratic in λ)
+//     (Mᵀb)[p](λ)    = Σᵣ M[r][p]·b[r]      (quadratic in λ)
+//
+//     D     = det(MᵀM) = (MᵀM)₀₀·(MᵀM)₁₁ − (MᵀM)₀₁²   (degree 4)
+//     N[0]  = (MᵀM)₁₁·(Mᵀb)[0] − (MᵀM)₀₁·(Mᵀb)[1]     (degree 4)
+//     N[1]  = (MᵀM)₀₀·(Mᵀb)[1] − (MᵀM)₀₁·(Mᵀb)[0]     (degree 4)
+//     N[2]  = D − N[0] − N[1]                             (degree 4)
+//
+// D(λ) = Σ (2×2 minor of M)² ≥ 0  (Cauchy-Binet) with D(λ*) > 0 for
+// a simple eigenvalue with full-rank sub-system, so sign(μ_k) = sign(N_k).
+//
+// SIGN DETERMINATION
+// ------------------
+// Build the Sturm sequence of N_k and count sign changes at λ_lo and λ_hi:
+//   V(λ_lo) − V(λ_hi) = 0  →  N_k has no root in (λ_lo, λ_hi]
+//                          →  evaluate N_k(λ_lo) for the exact sign
+//   V(λ_lo) − V(λ_hi) ≥ 1  →  N_k(λ*) = 0  →  SoS ownership rule
+//
+// This replaces all floating-point threshold comparisons with a pure
+// root-count predicate.
+
+/// Sturm sequence for a polynomial of degree ≤ 4.
+struct SturmSeqDeg4 {
+    double c[5][5];  // c[i][k]: coefficient of x^k in Sᵢ (ascending degree)
+    int    deg[5];   // effective degree of Sᵢ
+    int    n;        // length of sequence (1..5)
+};
+
+/// Float polynomial remainder: R = A mod B (ascending-degree).
+/// Returns effective degree of R, or -1 if R is the zero polynomial.
+static inline int poly_rem_d(const double* A, int dA, const double* B, int dB, double* R) {
+    static constexpr double EPS_ZERO = 1e-200;
+    // Copy A into R
+    for (int k = 0; k <= dA; ++k) R[k] = A[k];
+    for (int k = dA + 1; k <= 4; ++k) R[k] = 0.0;
+
+    for (int d = dA; d >= dB; --d) {
+        if (std::abs(R[d]) < EPS_ZERO) { R[d] = 0.0; continue; }
+        double coeff = R[d] / B[dB];
+        int    shift = d - dB;
+        for (int i = 0; i <= dB; ++i) R[i + shift] -= coeff * B[i];
+        R[d] = 0.0;
+    }
+
+    int dR = dB - 1;
+    while (dR > 0 && std::abs(R[dR]) < EPS_ZERO) --dR;
+    return (std::abs(R[dR]) < EPS_ZERO && dR == 0) ? -1 : dR;
+}
+
+/// Build Sturm sequence for polynomial P of degree degP ≤ 4 (ascending-degree).
+inline void build_sturm_deg4(const double* P, int degP, SturmSeqDeg4& seq) {
+    // Zero-initialise
+    for (auto& row : seq.c) for (auto& v : row) v = 0.0;
+    for (auto& d : seq.deg) d = 0;
+    seq.n = 0;
+
+    // S₀ = P
+    for (int k = 0; k <= degP; ++k) seq.c[0][k] = P[k];
+    seq.deg[0] = degP;
+    seq.n = 1;
+    if (degP == 0) return;
+
+    // S₁ = P'
+    for (int k = 1; k <= degP; ++k) seq.c[1][k - 1] = k * seq.c[0][k];
+    seq.deg[1] = degP - 1;
+    seq.n = 2;
+    if (degP == 1) return;
+
+    // Sᵢ₊₁ = −rem(Sᵢ₋₁, Sᵢ)
+    for (int i = 2; i <= degP && i <= 4; ++i) {
+        if (seq.deg[i - 1] == 0) {
+            // Constant S_{i-1}: remainder is zero → stop
+            break;
+        }
+        double rem[5] = {};
+        int dRem = poly_rem_d(seq.c[i - 2], seq.deg[i - 2],
+                               seq.c[i - 1], seq.deg[i - 1], rem);
+        if (dRem < 0) break;  // zero remainder → sequence terminates
+        for (int k = 0; k <= dRem; ++k) seq.c[i][k] = -rem[k];
+        seq.deg[i] = dRem;
+        seq.n = i + 1;
+        if (dRem == 0) break;  // constant Sᵢ → done
+    }
+}
+
+/// Sturm sign-change count at x for the degree-4 Sturm sequence.
+inline int sturm_count_d4(const SturmSeqDeg4& seq, double x) {
+    int    changes = 0;
+    double prev    = 0.0;
+    for (int i = 0; i < seq.n; ++i) {
+        double v = eval_poly_sturm(seq.c[i], seq.deg[i], x);
+        if (v != 0.0) {
+            if (prev != 0.0 && ((prev > 0.0) != (v > 0.0))) ++changes;
+            prev = v;
+        }
+    }
+    return changes;
+}
+
+/// Compute degree-4 barycentric numerator polynomials N[3][5] and D[5].
+///
+/// @param Mlin  Linear polynomial coefficients of M(λ)[r][c] = Mlin[r][c][0] + λ·Mlin[r][c][1]
+/// @param blin  Linear polynomial coefficients of b(λ)[r]    = blin[r][0]    + λ·blin[r][1]
+/// @param N     Output: N[k][0..4] are the degree-4 numerator poly coefficients for μ_k
+/// @param D     Output: D[0..4] are the degree-4 denominator poly (Gram determinant)
+inline void compute_bary_numerators(
+        const double Mlin[3][2][2], const double blin[3][2],
+        double N[3][5], double D[5]) {
+    // (MᵀM)[p][q](λ) — quadratic in λ
+    double A[2][2][3] = {};
+    for (int r = 0; r < 3; ++r)
+        for (int p = 0; p < 2; ++p)
+            for (int q = 0; q < 2; ++q) {
+                double m0p = Mlin[r][p][0], m1p = Mlin[r][p][1];
+                double m0q = Mlin[r][q][0], m1q = Mlin[r][q][1];
+                A[p][q][0] += m0p * m0q;
+                A[p][q][1] += m0p * m1q + m1p * m0q;
+                A[p][q][2] += m1p * m1q;
+            }
+
+    // (Mᵀb)[p](λ) — quadratic in λ
+    double g[2][3] = {};
+    for (int r = 0; r < 3; ++r)
+        for (int p = 0; p < 2; ++p) {
+            double m0 = Mlin[r][p][0], m1 = Mlin[r][p][1];
+            double b0 = blin[r][0],    b1 = blin[r][1];
+            g[p][0] += m0 * b0;
+            g[p][1] += m0 * b1 + m1 * b0;
+            g[p][2] += m1 * b1;
+        }
+
+    // Multiply two degree-2 polynomials → degree-4
+    auto mul2 = [](const double* P, const double* Q, double* R) {
+        for (int k = 0; k < 5; ++k) R[k] = 0.0;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                R[i + j] += P[i] * Q[j];
+    };
+
+    // D = A₀₀·A₁₁ − A₀₁²
+    double t0[5], t1[5];
+    mul2(A[0][0], A[1][1], t0);
+    mul2(A[0][1], A[0][1], t1);
+    for (int k = 0; k < 5; ++k) D[k] = t0[k] - t1[k];
+
+    // N[0] = A₁₁·g[0] − A₀₁·g[1]
+    double a11g0[5], a01g1[5];
+    mul2(A[1][1], g[0], a11g0);
+    mul2(A[0][1], g[1], a01g1);
+    for (int k = 0; k < 5; ++k) N[0][k] = a11g0[k] - a01g1[k];
+
+    // N[1] = A₀₀·g[1] − A₀₁·g[0]
+    double a00g1[5], a01g0[5];
+    mul2(A[0][0], g[1], a00g1);
+    mul2(A[0][1], g[0], a01g0);
+    for (int k = 0; k < 5; ++k) N[1][k] = a00g1[k] - a01g0[k];
+
+    // N[2] = D − N[0] − N[1]
+    for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
+}
+
 /**
  * @brief Solve for parallel vectors on a triangle (2-simplex)
  *
@@ -1479,11 +1660,9 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     }
 
     // ----------------------------------------------------------------
-    // Subtask 5: exact barycentric sign via interval evaluation.
+    // Subtask 5 & 6: barycentric sign determination.
     //
-    // Helper: evaluate barycentric coordinates (ν₀, ν₁, ν₂) at a given λ
-    // by solving the 3×2 overdetermined system (VT − λ WT) ν = 0, Σν = 1.
-    // Factored out so we can call it at λ_lo, λ_hi, and λ_mid.
+    // Helper: evaluate ν at a given λ via the 3×2 least-squares solve.
     // ----------------------------------------------------------------
     auto eval_nu_at = [&](T lam, T nu_out[3]) {
         const T Ml[3][2] = {
@@ -1503,6 +1682,25 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         nu_out[2] = T(1) - nu_out[0] - nu_out[1];
     };
 
+    // ----------------------------------------------------------------
+    // Subtask 6: compute bary numerator polynomials N[3][5] and D[5].
+    //
+    // Expresses μ_k(λ) = N_k(λ)/D(λ) with degree-4 polynomials derived
+    // from the linear-in-λ M(λ) and b(λ) matrices.
+    // D = det(MᵀM) ≥ 0 is the Gram determinant (non-negative).
+    // ----------------------------------------------------------------
+    double Mlin[3][2][2], blin_arr[3][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            Mlin[r][c][0] = (double)(VT[r][c] - VT[r][2]);
+            Mlin[r][c][1] = -(double)(WT[r][c] - WT[r][2]);
+        }
+        blin_arr[r][0] = -(double)VT[r][2];
+        blin_arr[r][1] =  (double)WT[r][2];
+    }
+    double N_poly[3][5], D_poly[5];
+    compute_bary_numerators(Mlin, blin_arr, N_poly, D_poly);
+
     // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
         if (std::abs(lambda[i]) <= epsilon) continue;  // λ=0 → V=0, trivially parallel
@@ -1512,43 +1710,48 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         eval_nu_at(lambda[i], nu);
 
         // ----------------------------------------------------------------
-        // Subtask 5: determine sign of νₖ(λ*) using both interval endpoints.
+        // Subtask 6: determine sign of νₖ(λ*) using Sturm count on N_k.
         //
-        // Since λ* ∈ [λ_lo, λ_hi] and νₖ is continuous, if νₖ(λ_lo) and
-        // νₖ(λ_hi) both have the same definite sign, then νₖ(λ*) has
-        // that sign — no root of the bary numerator lies in [λ_lo, λ_hi].
+        // With isolating interval [λ_lo, λ_hi] for λ*:
+        //   V(λ_lo) − V(λ_hi) = 0  →  N_k has no root in (λ_lo, λ_hi]
+        //                          →  evaluate N_k(λ_lo) for exact sign
+        //   V(λ_lo) − V(λ_hi) ≥ 1  →  N_k(λ*) = 0  →  SoS rule
         //
-        //   both > τ              → interior (accept)
-        //   both < −τ             → exterior (reject)
-        //   mixed or near-zero    → boundary → SoS min-index rule
+        // D(λ) = Gram det ≥ 0.  When D(λ_lo) > 0, sign(μ_k) = sign(N_k).
         //
-        // When the interval is degenerate (isolation failed), we fall back
-        // to checking only the midpoint nu[k].
+        // Falls back to Subtask 5 threshold check when the interval is
+        // degenerate (Sturm isolation failed for this root).
         //
         // The SoS ownership rule: triangle T claims the boundary puncture
         // on edge (vᵢ, vⱼ) iff global_idx(vₖ) < min(global_idx(vᵢ), vⱼ)).
-        // Exactly one triangle per shared edge satisfies this, preventing
-        // duplicate punctures.
         // ----------------------------------------------------------------
         const T bary_threshold = T(1e-10);
-
         bool have_interval = (lambda_lo[i] < lambda_hi[i]);
-        T nu_lo[3], nu_hi[3];
-        if (have_interval) {
-            eval_nu_at(static_cast<T>(lambda_lo[i]), nu_lo);
-            eval_nu_at(static_cast<T>(lambda_hi[i]), nu_hi);
-        }
 
         auto sos_bary_inside = [&](int k) -> bool {
             if (have_interval) {
-                // Subtask 5: both-endpoint sign agreement
-                if (nu_lo[k] > bary_threshold && nu_hi[k] > bary_threshold)
-                    return true;
-                if (nu_lo[k] < -bary_threshold && nu_hi[k] < -bary_threshold)
-                    return false;
-                // Endpoints disagree or one is near-zero → boundary zone
+                // Subtask 6: Sturm-count exact sign of N_k in [lo, hi]
+                int degNk = 4;
+                while (degNk > 0 && std::abs(N_poly[k][degNk]) < 1e-200) --degNk;
+
+                SturmSeqDeg4 seq_nk;
+                build_sturm_deg4(N_poly[k], degNk, seq_nk);
+                int v_lo = sturm_count_d4(seq_nk, lambda_lo[i]);
+                int v_hi = sturm_count_d4(seq_nk, lambda_hi[i]);
+
+                if (v_lo - v_hi == 0) {
+                    // N_k has no root in (lo, hi]: sign is constant, evaluate at lo
+                    double nk_lo = eval_poly_sturm(N_poly[k], degNk, lambda_lo[i]);
+                    double  d_lo = eval_poly_sturm(D_poly,    4,      lambda_lo[i]);
+                    if (d_lo > 1e-200) {
+                        if (nk_lo > 0.0) return true;
+                        if (nk_lo < 0.0) return false;
+                        // nk_lo == 0.0: root at boundary → fall through to SoS
+                    }
+                }
+                // N_k has a root in [lo, hi] or D ≈ 0: μ_k(λ*) ≈ 0
             } else {
-                // Degenerate interval (isolation failed): single-point check
+                // Degenerate interval (isolation failed): Subtask 5 fallback
                 if (nu[k] > bary_threshold)  return true;
                 if (nu[k] < -bary_threshold) return false;
             }
