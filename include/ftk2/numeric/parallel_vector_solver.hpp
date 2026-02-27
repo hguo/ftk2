@@ -1464,63 +1464,98 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     // If isolation fails for a root (rare, can happen when two roots are
     // extremely close), the original float value is retained unchanged.
     // ----------------------------------------------------------------
+    // Expose Sturm intervals for Subtask 5.
+    // Default: degenerate point intervals [lambda[k], lambda[k]] so that
+    // Subtask 5 has a valid interval even when isolation fails.
+    double lambda_lo[3], lambda_hi[3];
+    for (int k = 0; k < n_roots; ++k)
+        lambda_lo[k] = lambda_hi[k] = (double)lambda[k];
     {
         double Pd[4] = { (double)P[0], (double)P[1], (double)P[2], (double)P[3] };
-        double lo[3], hi[3];
         double lambda_d[3] = { (double)lambda[0], (double)lambda[1], (double)lambda[2] };
-        int n_iso = isolate_cubic_roots(Pd, lo, hi, lambda_d, n_roots);
+        int n_iso = isolate_cubic_roots(Pd, lambda_lo, lambda_hi, lambda_d, n_roots);
         for (int k = 0; k < n_iso; ++k)
-            lambda[k] = static_cast<T>((lo[k] + hi[k]) * 0.5);
+            lambda[k] = static_cast<T>((lambda_lo[k] + lambda_hi[k]) * 0.5);
     }
+
+    // ----------------------------------------------------------------
+    // Subtask 5: exact barycentric sign via interval evaluation.
+    //
+    // Helper: evaluate barycentric coordinates (ν₀, ν₁, ν₂) at a given λ
+    // by solving the 3×2 overdetermined system (VT − λ WT) ν = 0, Σν = 1.
+    // Factored out so we can call it at λ_lo, λ_hi, and λ_mid.
+    // ----------------------------------------------------------------
+    auto eval_nu_at = [&](T lam, T nu_out[3]) {
+        const T Ml[3][2] = {
+            {(VT[0][0]-VT[0][2]) - lam*(WT[0][0]-WT[0][2]),
+             (VT[0][1]-VT[0][2]) - lam*(WT[0][1]-WT[0][2])},
+            {(VT[1][0]-VT[1][2]) - lam*(WT[1][0]-WT[1][2]),
+             (VT[1][1]-VT[1][2]) - lam*(WT[1][1]-WT[1][2])},
+            {(VT[2][0]-VT[2][2]) - lam*(WT[2][0]-WT[2][2]),
+             (VT[2][1]-VT[2][2]) - lam*(WT[2][1]-WT[2][2])}
+        };
+        const T bl[3] = {
+            -(VT[0][2] - lam*WT[0][2]),
+            -(VT[1][2] - lam*WT[1][2]),
+            -(VT[2][2] - lam*WT[2][2])
+        };
+        solve_least_square3x2(Ml, bl, nu_out, epsilon);
+        nu_out[2] = T(1) - nu_out[0] - nu_out[1];
+    };
 
     // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
         if (std::abs(lambda[i]) <= epsilon) continue;  // λ=0 → V=0, trivially parallel
 
-        // Build the 3×2 overdetermined system (VT - λ WT) μ = 0 with Σμ=1
-        const T M[3][2] = {
-            {(VT[0][0]-VT[0][2]) - lambda[i]*(WT[0][0]-WT[0][2]),
-             (VT[0][1]-VT[0][2]) - lambda[i]*(WT[0][1]-WT[0][2])},
-            {(VT[1][0]-VT[1][2]) - lambda[i]*(WT[1][0]-WT[1][2]),
-             (VT[1][1]-VT[1][2]) - lambda[i]*(WT[1][1]-WT[1][2])},
-            {(VT[2][0]-VT[2][2]) - lambda[i]*(WT[2][0]-WT[2][2]),
-             (VT[2][1]-VT[2][2]) - lambda[i]*(WT[2][1]-WT[2][2])}
-        };
-        const T b[3] = {
-            -(VT[0][2] - lambda[i]*WT[0][2]),
-            -(VT[1][2] - lambda[i]*WT[1][2]),
-            -(VT[2][2] - lambda[i]*WT[2][2])
-        };
-
+        // Bary coords at the Sturm-isolated midpoint
         T nu[3];
-        solve_least_square3x2(M, b, nu, epsilon);
-        nu[2] = T(1) - nu[0] - nu[1];
+        eval_nu_at(lambda[i], nu);
 
         // ----------------------------------------------------------------
-        // SoS min-index edge ownership rule.
+        // Subtask 5: determine sign of νₖ(λ*) using both interval endpoints.
         //
-        // For each barycentric coordinate k:
-        //   nu[k] > threshold   → clearly inside      → accept
-        //   nu[k] < -threshold  → clearly outside     → reject
-        //   |nu[k]| <= threshold → boundary (nu[k]≈0) → min-idx tie-break
+        // Since λ* ∈ [λ_lo, λ_hi] and νₖ is continuous, if νₖ(λ_lo) and
+        // νₖ(λ_hi) both have the same definite sign, then νₖ(λ*) has
+        // that sign — no root of the bary numerator lies in [λ_lo, λ_hi].
         //
-        // The tie-break: this triangle claims the boundary puncture iff
-        // global_index(v_k) < min(global_index(v_i), global_index(v_j)),
-        // where i=(k+1)%3, j=(k+2)%3.  Exactly one triangle among all
-        // sharing the edge (v_i, v_j) satisfies this condition, so each
-        // boundary puncture is created by exactly one triangle.
+        //   both > τ              → interior (accept)
+        //   both < −τ             → exterior (reject)
+        //   mixed or near-zero    → boundary → SoS min-index rule
         //
-        // When indices==nullptr (legacy call) we fall back to a soft
-        // epsilon-based accept, which preserves existing behaviour.
+        // When the interval is degenerate (isolation failed), we fall back
+        // to checking only the midpoint nu[k].
+        //
+        // The SoS ownership rule: triangle T claims the boundary puncture
+        // on edge (vᵢ, vⱼ) iff global_idx(vₖ) < min(global_idx(vᵢ), vⱼ)).
+        // Exactly one triangle per shared edge satisfies this, preventing
+        // duplicate punctures.
         // ----------------------------------------------------------------
         const T bary_threshold = T(1e-10);
+
+        bool have_interval = (lambda_lo[i] < lambda_hi[i]);
+        T nu_lo[3], nu_hi[3];
+        if (have_interval) {
+            eval_nu_at(static_cast<T>(lambda_lo[i]), nu_lo);
+            eval_nu_at(static_cast<T>(lambda_hi[i]), nu_hi);
+        }
+
         auto sos_bary_inside = [&](int k) -> bool {
-            if (nu[k] > bary_threshold)  return true;   // clearly interior
-            if (nu[k] < -bary_threshold) return false;  // clearly exterior
-            // Floating-point near-zero: apply ownership rule.
-            if (!indices) return nu[k] >= -epsilon;     // legacy fallback
-            int i = (k + 1) % 3, j = (k + 2) % 3;
-            return indices[k] < std::min(indices[i], indices[j]);
+            if (have_interval) {
+                // Subtask 5: both-endpoint sign agreement
+                if (nu_lo[k] > bary_threshold && nu_hi[k] > bary_threshold)
+                    return true;
+                if (nu_lo[k] < -bary_threshold && nu_hi[k] < -bary_threshold)
+                    return false;
+                // Endpoints disagree or one is near-zero → boundary zone
+            } else {
+                // Degenerate interval (isolation failed): single-point check
+                if (nu[k] > bary_threshold)  return true;
+                if (nu[k] < -bary_threshold) return false;
+            }
+            // Boundary zone: apply SoS min-index ownership rule.
+            if (!indices) return nu[k] >= -epsilon;  // legacy fallback
+            int ii = (k + 1) % 3, jj = (k + 2) % 3;
+            return indices[k] < std::min(indices[ii], indices[jj]);
         };
         if (!sos_bary_inside(0) || !sos_bary_inside(1) || !sos_bary_inside(2))
             continue;

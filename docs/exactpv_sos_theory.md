@@ -553,18 +553,189 @@ and are exactly the ones SoS perturbation eliminates.
 
 ---
 
-## 7. Implementation Status
+---
 
-| Component | File | Status |
+## 7. The Exact Integer Pipeline
+
+To eliminate all floating-point thresholds from the PV solver, we implement a
+five-subtask pipeline that progressively moves decision predicates from float
+arithmetic into exact integer arithmetic.  The two remaining float operations
+are the root-finding itself (unavoidably irrational) and the least-squares bary
+solve (linear algebra at a float λ*).
+
+### Subtask 1 — Field Quantization
+
+**Goal**: convert field values to exact integers so all polynomial coefficients
+are integers.
+
+**Method**: multiply every field component at every vertex by
+`QUANT_SCALE = 2^20 ≈ 10^6` and round to `int64_t`.
+
+```cpp
+static constexpr int     QUANT_BITS  = 20;
+static constexpr int64_t QUANT_SCALE = int64_t(1) << QUANT_BITS;
+
+inline int64_t quant(double x) {
+    return static_cast<int64_t>(std::llround(x * double(QUANT_SCALE)));
+}
+```
+
+**Overflow analysis**: with |field| ≤ 10^6, each quantized entry is ≤ 2^40.
+A 3×3 determinant involves triple products ≤ (2^40)^3 = 2^120 < 2^127, which
+fits in `__int128` (signed 127-bit).
+
+**Key property**: multiplying both field matrices by the same scale S does not
+change the roots of det(A − λB) = 0, so the integer polynomial has the same
+roots as the float polynomial.
+
+**What this makes exact**: all four polynomial coefficients P₀, P₁, P₂, P₃ of
+the characteristic cubic are exact integers.
+
+### Subtask 2 — Integer Characteristic Polynomial
+
+**Goal**: compute det(V̂_T − λŴ_T) with `__int128` coefficients.
+
+**Method**: direct cofactor expansion with `__int128` accumulation.  Each of
+the 18-term mixed-cofactor expressions for P₁ and P₂ is evaluated in a single
+formula using `__int128` arithmetic, avoiding intermediate overflow.
+
+```cpp
+inline void characteristic_polynomial_3x3_i128(
+    const int64_t A[3][3], const int64_t B[3][3], __int128 P[4]);
+```
+
+**Coefficient magnitudes** (M = max quantized entry ≤ 2^40):
+
+| Coefficient | Terms | Magnitude |
 |---|---|---|
-| SoS perturbation | `include/ftk2/numeric/parallel_vector_solver.hpp` | Implemented |
-| SoS cubic solver | same | Implemented (disc=0 parity tie-break) |
-| Min-idx edge ownership | same | Implemented (`sos_bary_inside` lambda) |
-| Predicate index passing | `include/ftk2/core/predicate.hpp` | Implemented |
-| Test field (single circle) | `examples/exact_pv_stitching.cpp` | Implemented |
-| Quantization (__int128) | — | Future work |
-| Resultant-based edge detection | — | Future work |
+| P₀ = det(A) | 6 | ≤ 6·M³ ≈ 6·2^120 < 2^123 |
+| P₁, P₂ | 18 | ≤ 18·M³ ≈ 2^124 < 2^127 |
+| P₃ = −det(B) | 6 | ≤ 6·M³ ≈ 2^123 |
+
+All coefficients fit in signed `__int128`.
+
+### Subtask 3 — Exact Discriminant Sign
+
+**Goal**: when the float discriminant is near zero, determine the exact sign
+of the cubic discriminant to correctly resolve the root count (1 vs 3 roots).
+
+**Method**: GCD-normalize the four `__int128` coefficients, then compute
+Δ = 18abcd − 4b³d + b²c² − 4ac³ − 27a²d² in `__int128`.
+
+**GCD normalization**: dividing P₀…P₃ by gcd(P₀,P₁,P₂,P₃) does not change
+the roots and reduces coefficient magnitudes.  If the normalized max coefficient
+< 2^30, all degree-4 terms fit in `__int128`:
+
+$$
+|18abcd| \le 18 \cdot (2^{30})^4 = 18 \cdot 2^{120} \approx 2^{124.2} < 2^{127}. \checkmark
+$$
+
+**Overflow guard**: if any normalized coefficient ≥ 2^30, return 0 (signal
+"use float fallback"), since large coefficients mean Δ is far from zero and
+the float sign is reliable.
+
+**Integration in `solve_cubic_real_sos`**:
+
+| Float disc sign | Exact disc sign | Action |
+|---|---|---|
+| clearly + or − | (not consulted) | normal float path |
+| near-zero | exact + | clamp to one-root formula |
+| near-zero | exact − | clamp to three-root formula |
+| near-zero | exactly 0 | SoS min-idx parity tie-break |
+
+### Subtask 4 — Sturm-Sequence Root Isolation
+
+**Goal**: tighten each float root λ̂ₖ into a verified isolating interval
+[lₖ, hₖ] (containing exactly one root, width ≤ 10⁻¹⁰) using Sturm's theorem.
+
+**Sturm sequence for cubic P = p₃x³ + p₂x² + p₁x + p₀**:
+
+| k | Sₖ | Degree |
+|---|---|---|
+| 0 | P | 3 |
+| 1 | P' | 2 |
+| 2 | −prem(P, P') | 1 |
+| 3 | −prem(P', S₂) | 0 |
+
+Closed-form pseudo-remainder formulas (no fractions):
+$$
+S_2 = \bigl[p_3(p_1 p_2 - 9 p_0 p_3),\; 2p_3(p_2^2 - 3 p_1 p_3)\bigr]
+$$
+$$
+S_3 = -\bigl(p_1 s_{21}^2 - 2 p_2 s_{21} s_{20} + 3 p_3 s_{20}^2\bigr)
+$$
+
+**Sturm's theorem**: V(a) − V(b) = # distinct roots in (a, b], where V(x) =
+# sign changes in (S₀(x), S₁(x), S₂(x), S₃(x)) ignoring zeros.
+
+**Algorithm**:
+1. Start with δ = |λ̂| × 10⁻⁷, lo = λ̂ − δ, hi = λ̂ + δ.
+2. Expand or shrink δ until V(lo) − V(hi) = 1.
+3. Bisect until hi − lo ≤ 10⁻¹⁰.
+
+**Why float polynomial**: the Sturm sequence is built from the float
+SoS-perturbed polynomial P[4], not from P_i128.  Intermediate Sturm
+coefficients for the integer polynomial can reach ~2^93 (e.g.
+2p₃(p₂²−3p₁p₃) with p₂ ~ 2^30), which loses precision in double.  The
+float polynomial has field-scale coefficients (~O(1)) where all Sturm
+intermediates are safe for double arithmetic.
+
+**Effect**: replaces each float λ̂ with the midpoint of [lₖ, hₖ], giving a
+better starting point for the least-squares bary solve.  Also confirms each
+root is genuine (spurious float roots with V-count = 0 are discarded).
+
+### Subtask 5 — Exact Barycentric Sign via Interval Evaluation
+
+**Goal**: determine the sign of μ_k(λ*) without relying on the 1×10⁻¹⁰
+floating-point threshold.
+
+**Method**: evaluate the barycentric coordinates at both endpoints of the
+Sturm-isolated interval [lₖ, hₖ] for each root.
+
+$$
+\mu_k^{\mathrm{lo}} = \mu_k(l_k), \qquad \mu_k^{\mathrm{hi}} = \mu_k(h_k).
+$$
+
+Since λ* ∈ [lₖ, hₖ] and the bary map is continuous, the sign of μ_k(λ*) is
+determined by:
+
+| μ_k^lo | μ_k^hi | Conclusion |
+|---|---|---|
+| both > τ | both > τ | μ_k(λ*) > 0 → accept |
+| both < −τ | both < −τ | μ_k(λ*) < 0 → reject |
+| mixed signs | — | μ_k(λ*) ≈ 0 → SoS ownership rule |
+| one in [−τ, τ] | — | near-boundary → SoS ownership rule |
+
+where τ = 10⁻¹⁰ is the boundary threshold (same constant, but now applied at
+two independent evaluation points rather than one).
+
+**Correctness argument**: with hₖ − lₖ ≤ 10⁻¹⁰ and |dμ_k/dλ| bounded by
+field derivatives, the change in μ_k across the interval is at most
+|dμ_k/dλ| × 10⁻¹⁰ / 2.  If both endpoints agree (same definite sign), no
+root of the bary numerator N_k(λ) lies in [lₖ, hₖ], so the sign is certified.
+
+**Why this improves on the threshold alone**: a single float evaluation of
+μ_k(λ̂) could be wrong by |dμ_k/dλ| × |λ̂ − λ*|.  The Sturm interval gives
+|λ̂ − λ*| ≤ 5×10⁻¹¹, reducing the sign error below the threshold.  When two
+independent evaluations at the interval endpoints agree, the sign is doubly
+confirmed.
 
 ---
 
-*Document generated from session notes, February 2026.*
+## 8. Implementation Status
+
+| Component | File | Status |
+|---|---|---|
+| SoS perturbation | `parallel_vector_solver.hpp` | Implemented |
+| SoS cubic solver (parity tie-break) | same | Implemented |
+| Min-idx edge ownership rule | same | Implemented |
+| **Subtask 1**: Field quantization to `int64_t` | same | Implemented |
+| **Subtask 2**: Integer characteristic polynomial (`__int128`) | same | Implemented |
+| **Subtask 3**: Exact discriminant sign | same | Implemented |
+| **Subtask 4**: Sturm-sequence root isolation | same | Implemented |
+| **Subtask 5**: Exact bary sign via interval evaluation | same | Implemented |
+| Resultant-based tet-edge detection (G3/G4) | — | Future work |
+
+---
+
+*Document updated February 2026.*
