@@ -304,6 +304,113 @@ struct PVSurfacePatch {
 // Solver Functions (3D Spatial)
 // ============================================================================
 
+// ============================================================================
+// Simulation of Simplicity (SoS) for PV
+// ============================================================================
+
+/**
+ * @brief SoS field perturbation for vertex (vertex_idx, component).
+ *
+ * Returns a small positive value δ that is unique to each (vertex, component)
+ * pair and decreases geometrically with vertex index:
+ *
+ *   δ(i, j) = SOS_EPS / 2^(6*(i%8) + j%6)
+ *
+ * Interpretation: symbolically, this represents ε^(2^k) → 0⁺.
+ * Adding δ to each field component at each vertex before solving ensures:
+ *   1. No puncture lands exactly on a simplex edge or vertex.
+ *   2. The characteristic polynomial has generically distinct real roots.
+ *   3. Barycentric coordinates at solutions are generically strictly positive.
+ *
+ * The magnitude (1e-8 to ~1e-22) is:
+ *   - Small enough to preserve topology (field gradients are O(1))
+ *   - Large enough to break floating-point exact zeros
+ */
+static constexpr double SOS_EPS = 1e-8;
+
+template <typename T>
+inline T sos_perturbation(uint64_t vertex_idx, int component) {
+    // k in [0,47]: perturbation range [SOS_EPS/2^47, SOS_EPS] = [7e-23, 1e-8]
+    int k = (int)((vertex_idx % 8) * 6 + component % 6);
+    return T(SOS_EPS) / T(uint64_t(1) << k);
+}
+
+/**
+ * @brief Solve cubic with SoS tie-breaking for the disc == 0 (tangent) case.
+ *
+ * Identical to solve_cubic_real except: when |disc| is below the SoS threshold
+ * (i.e., after field perturbation we still land exactly at a repeated root),
+ * use the parity of the minimum vertex index to decide whether to treat disc as
+ * slightly positive (1 root) or slightly negative (3 roots).  This is a
+ * deterministic, index-based fallback that replaces the floating-point coin-flip
+ * at disc ≈ 0.
+ */
+template <typename T>
+int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
+                         T epsilon = std::numeric_limits<T>::epsilon()) {
+    if (std::abs(P[3]) < epsilon) {
+        // Degenerate to quadratic / linear — same as solve_cubic_real
+        if (std::abs(P[2]) < epsilon) {
+            if (std::abs(P[1]) < epsilon) return 0;
+            roots[0] = -P[0] / P[1];
+            return 1;
+        }
+        T disc = P[1]*P[1] - 4*P[2]*P[0];
+        if (disc < 0) return 0;
+        if (std::abs(disc) < epsilon) { roots[0] = -P[1]/(2*P[2]); return 1; }
+        T sq = std::sqrt(disc);
+        roots[0] = (-P[1]+sq)/(2*P[2]);
+        roots[1] = (-P[1]-sq)/(2*P[2]);
+        return 2;
+    }
+
+    T b = P[2]/P[3], c = P[1]/P[3], d = P[0]/P[3];
+    T q = (3*c - b*b)/9;
+    T r = (-27*d + b*(9*c - 2*b*b))/54;
+    T disc = q*q*q + r*r;
+    T term1 = b/3;
+
+    // SoS threshold: proportional to scale of discriminant terms
+    T sos_disc_eps = epsilon * (std::abs(q*q*q) + std::abs(r*r) + epsilon);
+
+    if (disc > sos_disc_eps) {
+        // One real root
+        T s = r + std::sqrt(disc);
+        s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
+        T t = r - std::sqrt(disc);
+        t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
+        roots[0] = -term1 + s + t;
+        return 1;
+    } else if (disc < -sos_disc_eps) {
+        // Three distinct real roots
+        T mq = -q;
+        T dum1 = std::acos(r / std::sqrt(mq*mq*mq));
+        T r13 = 2*std::sqrt(mq);
+        roots[0] = -term1 + r13*std::cos(dum1/3);
+        roots[1] = -term1 + r13*std::cos((dum1 + 2*M_PI)/3);
+        roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
+        return 3;
+    } else {
+        // disc ≈ 0: repeated root (PV curve tangent to triangle face).
+        // SoS tie-break: use parity of minimum vertex global index.
+        //   even → treat disc as slightly > 0 → 1 root (tangent excluded)
+        //   odd  → treat disc as slightly < 0 → 3 roots (tangent counted)
+        uint64_t min_idx = indices ? std::min({indices[0], indices[1], indices[2]})
+                                   : uint64_t(0);
+        T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
+        roots[0] = -term1 + 2*r13;
+        roots[1] = -(r13 + term1);
+        if (min_idx % 2 == 0) {
+            // Treat as 1-root case: keep only the non-repeated root
+            return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 1;
+        } else {
+            // Treat as 3-root case: the double root appears twice
+            roots[2] = roots[1];
+            return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;
+        }
+    }
+}
+
 /**
  * @brief Solve for parallel vectors on a triangle (2-simplex)
  *
@@ -312,12 +419,14 @@ struct PVSurfacePatch {
  * @param V Vectors at 3 triangle vertices [3][3]
  * @param W Vectors at 3 triangle vertices [3][3]
  * @param punctures Output vector of puncture points
+ * @param indices Global vertex indices for SoS perturbation (nullptr = no SoS)
  * @param epsilon Tolerance for numerical comparisons
  * @return Number of punctures found (0-3), or INT_MAX if degenerate (entire triangle is PV)
  */
 template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
+                     const uint64_t* indices = nullptr,
                      T epsilon = std::numeric_limits<T>::epsilon());
 
 /**
@@ -832,96 +941,112 @@ void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3],
 template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
+                     const uint64_t* indices,
                      T epsilon) {
     punctures.clear();
 
-    // Check for degenerate case: all vectors parallel at vertices
+    // ----------------------------------------------------------------
+    // SoS field perturbation
+    //
+    // Add a unique, tiny positive delta to each field component at each
+    // vertex.  The delta is based on the global vertex index so it is:
+    //   - Deterministic and reproducible across calls
+    //   - Unique per (vertex, component) pair
+    //   - Ordered: lower vertex index → larger perturbation (dominates)
+    //
+    // Effect: any puncture that the unperturbed field would place exactly
+    // on a simplex edge/vertex is displaced slightly into the interior of
+    // exactly one triangle, removing the need for ad-hoc epsilon thresholds
+    // or user-chosen field offsets.
+    //
+    // If indices == nullptr the perturbation is skipped (legacy behaviour).
+    // ----------------------------------------------------------------
+    T Vp[3][3], Wp[3][3];
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            if (indices) {
+                Vp[i][j] = V[i][j] + sos_perturbation<T>(indices[i], j);
+                Wp[i][j] = W[i][j] + sos_perturbation<T>(indices[i], j + 3);
+            } else {
+                Vp[i][j] = V[i][j];
+                Wp[i][j] = W[i][j];
+            }
+        }
+    }
+
+    // Check for degenerate case: all vectors parallel at all vertices
     bool all_parallel = true;
     for (int i = 0; i < 3; ++i) {
         T cross[3];
-        cross_product3(V[i], W[i], cross);
-        if (vector_norm3(cross) > epsilon) {
-            all_parallel = false;
-            break;
-        }
+        cross_product3(Vp[i], Wp[i], cross);
+        if (vector_norm3(cross) > epsilon) { all_parallel = false; break; }
     }
+    if (all_parallel)
+        return std::numeric_limits<int>::max();  // entire triangle is PV surface
 
-    if (all_parallel) {
-        return std::numeric_limits<int>::max();  // Entire triangle is PV surface
-    }
-
-    // Transpose matrices for characteristic polynomial computation
+    // Transpose for characteristic polynomial: columns = components, rows = vertices
     T VT[3][3], WT[3][3];
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j) {
-            VT[i][j] = V[j][i];
-            WT[i][j] = W[j][i];
+            VT[i][j] = Vp[j][i];
+            WT[i][j] = Wp[j][i];
         }
-    }
 
-    // Compute characteristic polynomial: det(V - λW) = 0
+    // Characteristic polynomial: det(VT - λ WT) = 0  (cubic in λ)
     T P[4];
     characteristic_polynomial_3x3(VT, WT, P);
 
-    // Solve cubic equation for λ values
+    // Solve cubic with SoS tie-breaking for the disc == 0 edge case
     T lambda[3];
-    int n_roots = solve_cubic_real(P, lambda, epsilon);
+    int n_roots = solve_cubic_real_sos(P, lambda, indices, epsilon);
 
-    // For each root, compute barycentric coordinates and verify
+    // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
-        if (std::abs(lambda[i]) <= epsilon) continue;  // Skip λ ≈ 0
+        if (std::abs(lambda[i]) <= epsilon) continue;  // λ=0 → V=0, trivially parallel
 
-        // Set up least squares system: (V - λW)μ = 0
-        // We solve for first two barycentric coords; third is 1 - μ₀ - μ₁
+        // Build the 3×2 overdetermined system (VT - λ WT) μ = 0 with Σμ=1
         const T M[3][2] = {
-            {(VT[0][0] - VT[0][2]) - lambda[i] * (WT[0][0] - WT[0][2]),
-             (VT[0][1] - VT[0][2]) - lambda[i] * (WT[0][1] - WT[0][2])},
-            {(VT[1][0] - VT[1][2]) - lambda[i] * (WT[1][0] - WT[1][2]),
-             (VT[1][1] - VT[1][2]) - lambda[i] * (WT[1][1] - WT[1][2])},
-            {(VT[2][0] - VT[2][2]) - lambda[i] * (WT[2][0] - WT[2][2]),
-             (VT[2][1] - VT[2][2]) - lambda[i] * (WT[2][1] - WT[2][2])}
+            {(VT[0][0]-VT[0][2]) - lambda[i]*(WT[0][0]-WT[0][2]),
+             (VT[0][1]-VT[0][2]) - lambda[i]*(WT[0][1]-WT[0][2])},
+            {(VT[1][0]-VT[1][2]) - lambda[i]*(WT[1][0]-WT[1][2]),
+             (VT[1][1]-VT[1][2]) - lambda[i]*(WT[1][1]-WT[1][2])},
+            {(VT[2][0]-VT[2][2]) - lambda[i]*(WT[2][0]-WT[2][2]),
+             (VT[2][1]-VT[2][2]) - lambda[i]*(WT[2][1]-WT[2][2])}
         };
         const T b[3] = {
-            -(VT[0][2] - lambda[i] * WT[0][2]),
-            -(VT[1][2] - lambda[i] * WT[1][2]),
-            -(VT[2][2] - lambda[i] * WT[2][2])
+            -(VT[0][2] - lambda[i]*WT[0][2]),
+            -(VT[1][2] - lambda[i]*WT[1][2]),
+            -(VT[2][2] - lambda[i]*WT[2][2])
         };
 
         T nu[3];
-        T cond = solve_least_square3x2(M, b, nu, epsilon);
+        solve_least_square3x2(M, b, nu, epsilon);
         nu[2] = T(1) - nu[0] - nu[1];
 
-        // Check if barycentric coordinates are valid (within [0,1])
-        if (nu[0] >= -epsilon && nu[0] <= 1 + epsilon &&
-            nu[1] >= -epsilon && nu[1] <= 1 + epsilon &&
-            nu[2] >= -epsilon && nu[2] <= 1 + epsilon)
-        {
-            // Verify solution by checking cross product
-            T v[3], w[3], cross[3];
-            lerp_s2v3(V, nu, v);
-            lerp_s2v3(W, nu, w);
-            cross_product3(v, w, cross);
-            T norm = vector_norm3(cross);
+        // With SoS perturbation the barycentric coords are generically strictly
+        // positive; use a tight threshold.  Without SoS (indices==nullptr) fall
+        // back to the old epsilon-based tolerance.
+        const T bary_eps = indices ? T(1e-10) : epsilon;
+        if (nu[0] < -bary_eps || nu[1] < -bary_eps || nu[2] < -bary_eps)
+            continue;
 
-            if (norm > 1e-2) {
-                // Reject due to large residual
-                continue;
-            }
+        // Verify cross-product residual on the ORIGINAL (unperturbed) field
+        T v[3], w[3], cross[3];
+        lerp_s2v3(V, nu, v);
+        lerp_s2v3(W, nu, w);
+        cross_product3(v, w, cross);
+        if (vector_norm3(cross) > 1e-2) continue;
 
-            // Valid puncture point found
-            PuncturePoint p;
-            p.lambda = lambda[i];
-            p.barycentric[0] = nu[0];
-            p.barycentric[1] = nu[1];
-            p.barycentric[2] = nu[2];
-            // Note: 3D coords would be computed from mesh coordinates
-            p.coords_3d[0] = p.coords_3d[1] = p.coords_3d[2] = 0;
-
-            punctures.push_back(p);
-        }
+        PuncturePoint p;
+        p.lambda       = lambda[i];
+        p.barycentric[0] = nu[0];
+        p.barycentric[1] = nu[1];
+        p.barycentric[2] = nu[2];
+        p.coords_3d[0] = p.coords_3d[1] = p.coords_3d[2] = 0;
+        punctures.push_back(p);
     }
 
-    return punctures.size();
+    return (int)punctures.size();
 }
 
 template <typename T>

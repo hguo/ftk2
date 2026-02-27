@@ -448,9 +448,11 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
             W[i][2] = values[i][5];  // v_z
         }
 
-        // Solve for parallel vector puncture points
+        // Solve for parallel vector puncture points with SoS perturbation.
+        // Pass global vertex indices so the solver can apply index-based
+        // symbolic perturbation, removing the need for user-chosen field offsets.
         std::vector<PuncturePoint> punctures;
-        int n = solve_pv_triangle(V, W, punctures);
+        int n = solve_pv_triangle(V, W, punctures, s.vertices);
 
         // Handle degenerate case (entire triangle is PV surface)
         if (n == std::numeric_limits<int>::max()) {

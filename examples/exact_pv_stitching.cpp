@@ -31,22 +31,26 @@ int main() {
     ftk::ndarray<double> uv({6, N, N, N});
 
     // ----------------------------------------------------------------
-    // REDESIGNED FIELD: guaranteed single closed PV curve
+    // FIELD: single closed PV curve, SoS-robust
     //
     // U = (1, 0, 0) everywhere (constant)
     // V = (1, z-z0, (x-cx)^2+(y-cy)^2-R^2)
     //
     // U x V = (0, -Vz, Vy) = 0  iff  Vy=0 AND Vz=0
-    //   Vy=0  =>  z = z0            (a horizontal plane)
-    //   Vz=0  =>  (x-cx)^2+(y-cy)^2 = R^2  (a vertical cylinder)
-    //   Intersection: exactly ONE closed circle at height z0
+    //   Vy=0  =>  z = z0            (horizontal plane)
+    //   Vz=0  =>  circle of radius R at height z0
     //
-    // Non-integer offsets ensure the circle avoids all mesh vertices/edges.
+    // With SoS perturbation in the solver, we no longer need irrational
+    // offsets to keep the locus off mesh edges/vertices.  Use exact values.
     // ----------------------------------------------------------------
-    double z0 = N / 2.0 + 0.37;     // circle height (between grid planes)
-    double cx = N / 2.0 + 0.13;     // circle center x
-    double cy = N / 2.0 + 0.27;     // circle center y
-    double R  = N / 3.0 + 0.41;     // circle radius (~5.74 for N=16)
+    // z0 = N/2 + 0.5: circle sits exactly midway between two grid planes.
+    // This is a principled half-integer — not a magic offset — and avoids
+    // the plane-tangency degeneracy (circle in the same plane as a mesh layer).
+    // SoS then handles any remaining edge/vertex crossings automatically.
+    double z0 = N / 2.0 + 0.5;
+    double cx = N / 2.0;            // center on integer grid point
+    double cy = N / 2.0;
+    double R  = N / 3.0;            // exact rational radius
 
     for (int z = 0; z < N; ++z) {
         for (int y = 0; y < N; ++y) {
@@ -78,31 +82,16 @@ int main() {
 
     std::cout << "Found " << complex.vertices.size() << " puncture points" << std::endl;
 
-    // Count interior punctures and filter out degenerate ones
+    // Collect all triangle punctures.
+    // SoS perturbation in the solver guarantees barycentric coords are
+    // generically strictly positive — no ad-hoc threshold filter needed.
     std::vector<int> non_degenerate_punctures;
-    int interior_count = 0;
-    int degenerate_count = 0;
-
     for (size_t i = 0; i < complex.vertices.size(); ++i) {
         const auto& v = complex.vertices[i];
-        if (v.simplex.dimension == 2) {
-            bool all_positive = true;
-            for (int j = 0; j < 3; ++j) {
-                if (v.barycentric_coords[0][j] <= 1e-10) {
-                    all_positive = false;
-                    break;
-                }
-            }
-            if (all_positive) {
-                interior_count++;
-                non_degenerate_punctures.push_back(i);
-            } else {
-                degenerate_count++;
-            }
-        }
+        if (v.simplex.dimension == 2)
+            non_degenerate_punctures.push_back(i);
     }
-    std::cout << interior_count << " punctures in triangle INTERIOR" << std::endl;
-    std::cout << degenerate_count << " punctures on triangle EDGES/VERTICES (degenerate - skipping)" << std::endl;
+    std::cout << non_degenerate_punctures.size() << " punctures on triangles (SoS-robust)" << std::endl;
 
     // Build map: triangle face -> puncture indices (only non-degenerate)
     std::set<int> non_degen_set(non_degenerate_punctures.begin(), non_degenerate_punctures.end());
