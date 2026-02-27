@@ -1683,11 +1683,11 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     };
 
     // ----------------------------------------------------------------
-    // Subtask 6: compute bary numerator polynomials N[3][5] and D[5].
+    // Subtasks 6 & 7: compute bary numerator polynomials N[3][5] and D[5].
     //
     // Expresses μ_k(λ) = N_k(λ)/D(λ) with degree-4 polynomials derived
     // from the linear-in-λ M(λ) and b(λ) matrices.
-    // D = det(MᵀM) ≥ 0 is the Gram determinant (non-negative).
+    // D = det(MᵀM) ≥ 0 is the Gram determinant (non-negative by Cauchy-Binet).
     // ----------------------------------------------------------------
     double Mlin[3][2][2], blin_arr[3][2];
     for (int r = 0; r < 3; ++r) {
@@ -1701,6 +1701,28 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     double N_poly[3][5], D_poly[5];
     compute_bary_numerators(Mlin, blin_arr, N_poly, D_poly);
 
+    // ----------------------------------------------------------------
+    // Subtask 7: pre-compute the Sturm sequence for D(λ) once.
+    //
+    // D(λ) = det(MᵀM) ≥ 0 (Cauchy-Binet).  D(λ*) = 0 iff the projection
+    // system is rank-deficient at λ*.  We certify D(λ*) > 0 by showing D
+    // has no root in [λ_lo, λ_hi] — a Sturm root-count test — without any
+    // floating-point threshold.
+    //
+    //   Sturm count V_D(lo) − V_D(hi) = 0  →  D has no root in (lo, hi]
+    //                                    →  D(λ*) > 0  (since D ≥ 0 and D ≠ 0)
+    //   Sturm count V_D(lo) − V_D(hi) ≥ 1  →  D(λ*) = 0  →  degenerate,
+    //                                           apply SoS ownership rule
+    //
+    // This replaces the previous `d_lo > 1e-200` float guard.
+    // ----------------------------------------------------------------
+    SturmSeqDeg4 seq_D;
+    {
+        int degD = 4;
+        while (degD > 0 && std::abs(D_poly[degD]) < 1e-200) --degD;
+        build_sturm_deg4(D_poly, degD, seq_D);
+    }
+
     // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
         if (std::abs(lambda[i]) <= epsilon) continue;  // λ=0 → V=0, trivially parallel
@@ -1710,20 +1732,22 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         eval_nu_at(lambda[i], nu);
 
         // ----------------------------------------------------------------
-        // Subtask 6: determine sign of νₖ(λ*) using Sturm count on N_k.
+        // Subtasks 6 & 7: determine sign of νₖ(λ*) exactly.
         //
         // With isolating interval [λ_lo, λ_hi] for λ*:
-        //   V(λ_lo) − V(λ_hi) = 0  →  N_k has no root in (λ_lo, λ_hi]
-        //                          →  evaluate N_k(λ_lo) for exact sign
-        //   V(λ_lo) − V(λ_hi) ≥ 1  →  N_k(λ*) = 0  →  SoS rule
         //
-        // D(λ) = Gram det ≥ 0.  When D(λ_lo) > 0, sign(μ_k) = sign(N_k).
+        //  Subtask 6: Sturm count on N_k
+        //   V_Nk(lo)−V_Nk(hi) = 0 → N_k has no root → sign(N_k(lo)) is sign
+        //   V_Nk(lo)−V_Nk(hi) ≥ 1 → N_k(λ*) = 0 → SoS ownership rule
         //
-        // Falls back to Subtask 5 threshold check when the interval is
-        // degenerate (Sturm isolation failed for this root).
+        //  Subtask 7: Sturm count on D (when N_k has no root in interval)
+        //   V_D(lo)−V_D(hi) = 0  → D has no root → D(λ*) > 0 certified
+        //                          (D ≥ 0 everywhere; no threshold needed)
+        //   V_D(lo)−V_D(hi) ≥ 1  → D(λ*) = 0, degenerate → SoS rule
         //
         // The SoS ownership rule: triangle T claims the boundary puncture
         // on edge (vᵢ, vⱼ) iff global_idx(vₖ) < min(global_idx(vᵢ), vⱼ)).
+        // Falls back to Subtask 5 threshold when interval is degenerate.
         // ----------------------------------------------------------------
         const T bary_threshold = T(1e-10);
         bool have_interval = (lambda_lo[i] < lambda_hi[i]);
@@ -1740,16 +1764,24 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
                 int v_hi = sturm_count_d4(seq_nk, lambda_hi[i]);
 
                 if (v_lo - v_hi == 0) {
-                    // N_k has no root in (lo, hi]: sign is constant, evaluate at lo
-                    double nk_lo = eval_poly_sturm(N_poly[k], degNk, lambda_lo[i]);
-                    double  d_lo = eval_poly_sturm(D_poly,    4,      lambda_lo[i]);
-                    if (d_lo > 1e-200) {
+                    // N_k has no root in (lo, hi]: sign is constant.
+                    // Subtask 7: certify D(λ*) > 0 via Sturm count on D —
+                    // no floating-point threshold needed.
+                    int vD_lo = sturm_count_d4(seq_D, lambda_lo[i]);
+                    int vD_hi = sturm_count_d4(seq_D, lambda_hi[i]);
+
+                    if (vD_lo - vD_hi == 0) {
+                        // D has no root in (lo, hi]: D(λ*) > 0 certified
+                        // (D ≥ 0 by Cauchy-Binet; no root → strictly positive).
+                        // Evaluate N_k(lo) for the exact sign of μ_k(λ*).
+                        double nk_lo = eval_poly_sturm(N_poly[k], degNk, lambda_lo[i]);
                         if (nk_lo > 0.0) return true;
                         if (nk_lo < 0.0) return false;
-                        // nk_lo == 0.0: root at boundary → fall through to SoS
+                        // nk_lo == 0.0: numerical coincidence → SoS
                     }
+                    // D has a root in (lo, hi]: D(λ*) = 0, system degenerate → SoS
                 }
-                // N_k has a root in [lo, hi] or D ≈ 0: μ_k(λ*) ≈ 0
+                // N_k has a root in [lo, hi] or D degenerate: μ_k(λ*) ≈ 0 → SoS
             } else {
                 // Degenerate interval (isolation failed): Subtask 5 fallback
                 if (nu[k] > bary_threshold)  return true;

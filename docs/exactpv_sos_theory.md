@@ -558,7 +558,7 @@ and are exactly the ones SoS perturbation eliminates.
 ## 7. The Exact Integer Pipeline
 
 To eliminate all floating-point thresholds from the PV solver, we implement a
-five-subtask pipeline that progressively moves decision predicates from float
+seven-subtask pipeline that progressively moves decision predicates from float
 arithmetic into exact integer arithmetic.  The two remaining float operations
 are the root-finding itself (unavoidably irrational) and the least-squares bary
 solve (linear algebra at a float λ*).
@@ -783,6 +783,55 @@ SoS rule applies.
 **Implementation**: `compute_bary_numerators`, `build_sturm_deg4`,
 `sturm_count_d4`, and the `sos_bary_inside` lambda in `solve_pv_triangle`.
 
+### Subtask 7 — Exact Gram-Determinant Positivity Certificate
+
+**Goal**: eliminate the `d_lo > 1e-200` float guard for the Gram determinant
+D(λ) without replacing it with another threshold.
+
+**Background**: in Subtask 6, after confirming N_k has no root in [lo, hi],
+the code evaluates D(lo) in float and checks `D(lo) > 1e-200` to ensure the
+denominator is nonzero.  This constant 1e-200 is an arbitrary threshold.
+
+**Key property**: D(λ) = det(M(λ)ᵀM(λ)) is the Gram determinant of the
+3×2 matrix M(λ), which equals the sum of squared 2×2 minors (Cauchy-Binet):
+
+$$
+D(λ) = \sum_{r < s} \bigl(M_{r0}M_{s1} - M_{r1}M_{s0}\bigr)^2 \;\geq\; 0.
+$$
+
+Therefore D ≥ 0 everywhere, and D(λ*) = 0 if and only if λ* is a root of D.
+
+**Method**: build the Sturm sequence of D(λ) once (before the per-root loop)
+and count its roots at each interval endpoint:
+
+$$
+V_D(l_k) - V_D(h_k) = 0 \;\Longrightarrow\; D \text{ has no root in }(l_k, h_k]
+\;\Longrightarrow\; D(\lambda^*) > 0 \text{ (exact, no threshold)}.
+$$
+
+$$
+V_D(l_k) - V_D(h_k) \geq 1 \;\Longrightarrow\; D(\lambda^*) = 0,
+\text{ system degenerate, apply SoS rule}.
+$$
+
+**Why D(λ*) = 0 triggers SoS**: D(λ*) = 0 means M(λ*)ᵀM(λ*) is singular,
+i.e., the columns of M(λ*) are linearly dependent.  Geometrically, this means
+the two constraint directions of the PV system coincide at λ*, so the
+barycentric coordinate is not uniquely determined — exactly the degenerate case
+that SoS perturbation is designed to resolve.
+
+**Comparison with Subtask 6**:
+
+| What | Subtask 6 | Subtask 7 |
+|---|---|---|
+| N_k positivity | Sturm count on N_k | (unchanged) |
+| D positivity | `eval(D, lo) > 1e-200` | Sturm count on D |
+| D = 0 case | threshold misses it | Sturm detects, → SoS |
+
+**Implementation**: pre-compute `seq_D` via `build_sturm_deg4(D_poly, ...)` once
+before the per-root loop; call `sturm_count_d4(seq_D, lo/hi)` inside
+`sos_bary_inside` when N_k has no root in the interval.
+
 ---
 
 ## 8. Implementation Status
@@ -798,6 +847,7 @@ SoS rule applies.
 | **Subtask 4**: Sturm-sequence root isolation | same | Implemented |
 | **Subtask 5**: Exact bary sign via interval evaluation | same | Implemented |
 | **Subtask 6**: Exact bary sign via Sturm count on N_k(λ) | same | Implemented |
+| **Subtask 7**: Exact D(λ*) > 0 certificate via Sturm count on D(λ) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
