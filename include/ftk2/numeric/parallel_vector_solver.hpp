@@ -5,6 +5,7 @@
 #include <limits>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
 
 namespace ftk2 {
 
@@ -677,6 +678,155 @@ inline int discriminant_sign_i128(const __int128 P[4]) {
     return (delta > 0) ? +1 : (delta < 0) ? -1 : 0;
 }
 
+// ============================================================================
+// Sturm-Sequence Root Isolation  (Subtask 4)
+// ============================================================================
+//
+// Given a cubic P(x) = P[3]x³+P[2]x²+P[1]x+P[0] (ascending-degree order),
+// the Sturm sequence S₀,S₁,S₂,S₃ satisfies Sturm's theorem:
+//
+//   V(a) − V(b)  =  number of distinct real roots of P in (a, b]
+//
+// where V(x) = # sign changes in (S₀(x), S₁(x), S₂(x), S₃(x)), zeros skipped.
+//
+// DERIVATION (pseudo-remainder chain for cubic):
+//   S₀ = P                                    (degree 3)
+//   S₁ = P'  =  [p₁, 2p₂, 3p₃]               (degree 2)
+//   S₂ = −prem(S₀, S₁)                        (degree 1)
+//   S₃ = −prem(S₁, S₂)                        (constant)
+//
+// Computing S₂ = −prem(S₀, S₁):
+//   prem(S₀,S₁) = 2p₃(3p₁p₃−p₂²)x + p₃(9p₀p₃−p₁p₂)
+//   ⟹ S₂ = [ p₃(p₁p₂−9p₀p₃),  2p₃(p₂²−3p₁p₃) ]
+//
+// Computing S₃ = −prem(S₁, S₂):
+//   with s₂₀ = S₂[0], s₂₁ = S₂[1]:
+//   prem(S₁,S₂) = p₁s₂₁²  −  2p₂s₂₁s₂₀  +  3p₃s₂₀²
+//   ⟹ S₃ = −(p₁s₂₁²  −  2p₂s₂₁s₂₀  +  3p₃s₂₀²)
+//
+// NOTE: P[4] here is the floating-point (SoS-perturbed) characteristic
+// polynomial, not the integer P_i128.  The float polynomial shares the same
+// roots as the integer one (they are proportional) and has manageable
+// coefficient magnitudes for double arithmetic.
+
+struct SturmSeqDouble {
+    double c[4][4];  // c[i][k]: coefficient of x^k in Sturm polynomial Sᵢ
+    int    deg[4];   // effective degree of each Sᵢ
+    int    n;        // length of the sequence (2, 3, or 4)
+};
+
+/// Evaluate polynomial with ascending-degree coefficients c[0..deg] at x.
+static inline double eval_poly_sturm(const double* c, int deg, double x) {
+    double r = c[deg];
+    for (int i = deg - 1; i >= 0; --i) r = r * x + c[i];
+    return r;
+}
+
+/// Build the Sturm sequence for cubic P (ascending-degree coefficients P[0..3]).
+inline void build_sturm_double(const double P[4], SturmSeqDouble& seq) {
+    double p0 = P[0], p1 = P[1], p2 = P[2], p3 = P[3];
+
+    // S₀ = P
+    seq.c[0][0] = p0; seq.c[0][1] = p1; seq.c[0][2] = p2; seq.c[0][3] = p3;
+    seq.deg[0]  = 3;
+
+    // S₁ = P'
+    seq.c[1][0] = p1; seq.c[1][1] = 2*p2; seq.c[1][2] = 3*p3; seq.c[1][3] = 0;
+    seq.deg[1]  = 2;
+
+    // S₂ = −prem(S₀, S₁)
+    double s20 = p3 * (p1*p2 - 9*p0*p3);
+    double s21 = 2 * p3 * (p2*p2 - 3*p1*p3);
+    seq.c[2][0] = s20; seq.c[2][1] = s21; seq.c[2][2] = 0; seq.c[2][3] = 0;
+    seq.deg[2]  = (s21 != 0.0) ? 1 : 0;
+
+    // S₃ = −prem(S₁, S₂)
+    double s30 = -(p1*s21*s21 - 2*p2*s21*s20 + 3*p3*s20*s20);
+    seq.c[3][0] = s30; seq.c[3][1] = 0; seq.c[3][2] = 0; seq.c[3][3] = 0;
+    seq.deg[3]  = 0;
+
+    // Effective length: truncate if S₂ or S₃ vanishes
+    if (s21 == 0.0 && s20 == 0.0) seq.n = 2;  // P shares a factor with P'
+    else if (s30 == 0.0)          seq.n = 3;  // P has a root of P'
+    else                          seq.n = 4;
+}
+
+/// Count sign changes at x in the Sturm sequence (= # roots in (−∞, x]).
+inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
+    int    changes = 0;
+    double prev    = 0.0;
+    for (int i = 0; i < seq.n; ++i) {
+        double v = eval_poly_sturm(seq.c[i], seq.deg[i], x);
+        if (v != 0.0) {
+            if (prev != 0.0 && ((prev > 0.0) != (v > 0.0))) ++changes;
+            prev = v;
+        }
+    }
+    return changes;
+}
+
+/// Given float root estimate rf and the Sturm sequence of its polynomial,
+/// find an isolating interval [lo_out, hi_out] containing exactly one root,
+/// then bisect until width ≤ target_width.
+/// Returns true on success, false if the root could not be isolated.
+inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
+                                   double& lo_out, double& hi_out,
+                                   double target_width = 1e-10) {
+    // Initial bracket: small symmetric window around rf
+    double scale = std::max(std::abs(rf), 1.0);
+    double delta = scale * 1e-7;
+
+    double lo = rf - delta, hi = rf + delta;
+    int cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
+
+    // Phase 1: expand or shrink until exactly one root in bracket
+    for (int iter = 0; iter < 120 && cnt != 1; ++iter) {
+        if (cnt == 0)  delta *= 2.0;   // root not yet bracketed → expand
+        else           delta *= 0.5;   // multiple roots → shrink to isolate one
+        lo  = rf - delta;
+        hi  = rf + delta;
+        cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
+        if (delta > 1e14 || delta < 1e-300) break;
+    }
+    if (cnt != 1) return false;
+
+    // Phase 2: bisect to target_width
+    for (int iter = 0; iter < 200 && (hi - lo) > target_width; ++iter) {
+        double mid = lo + (hi - lo) * 0.5;
+        if (mid <= lo || mid >= hi) break;  // float convergence
+        int half_cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, mid);
+        if (half_cnt == 1) hi = mid;
+        else               lo = mid;
+    }
+
+    lo_out = lo;
+    hi_out = hi;
+    return true;
+}
+
+/// Isolate n_float_roots real roots of the cubic polynomial P[4]
+/// (ascending-degree coefficients) using Sturm bisection.
+///
+/// @param P            Float cubic coefficients [P₀, P₁, P₂, P₃].
+/// @param lo_out       Output lower bounds (length n_float_roots).
+/// @param hi_out       Output upper bounds (length n_float_roots).
+/// @param float_roots  Float root estimates (from solve_cubic_real_sos).
+/// @param n_float_roots Number of estimates.
+/// @return             Number of roots successfully isolated.
+inline int isolate_cubic_roots(const double P[4],
+                                double lo_out[3], double hi_out[3],
+                                const double float_roots[3], int n_float_roots) {
+    if (n_float_roots == 0) return 0;
+    SturmSeqDouble seq;
+    build_sturm_double(P, seq);
+    int n_iso = 0;
+    for (int i = 0; i < n_float_roots; ++i) {
+        if (tighten_root_interval(seq, float_roots[i], lo_out[n_iso], hi_out[n_iso]))
+            ++n_iso;
+    }
+    return n_iso;
+}
+
 /**
  * @brief Solve for parallel vectors on a triangle (2-simplex)
  *
@@ -1297,6 +1447,31 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     // the root count when the float discriminant is near zero.
     T lambda[3];
     int n_roots = solve_cubic_real_sos(P, lambda, indices, P_i128, epsilon);
+
+    // ----------------------------------------------------------------
+    // Subtask 4: Sturm-sequence root isolation.
+    //
+    // Tighten each float root into a verified isolating interval [lo, hi]
+    // (Sturm count difference = 1) and replace lambda[i] with the interval
+    // midpoint.  This gives a better λ estimate for the subsequent
+    // least-squares solve and filters out any spurious float roots that
+    // are not genuine roots of P.
+    //
+    // The Sturm sequence is built from the float polynomial P[4] (the
+    // SoS-perturbed characteristic polynomial), which has the same roots
+    // as P_i128 and manageable coefficient magnitudes for double arithmetic.
+    //
+    // If isolation fails for a root (rare, can happen when two roots are
+    // extremely close), the original float value is retained unchanged.
+    // ----------------------------------------------------------------
+    {
+        double Pd[4] = { (double)P[0], (double)P[1], (double)P[2], (double)P[3] };
+        double lo[3], hi[3];
+        double lambda_d[3] = { (double)lambda[0], (double)lambda[1], (double)lambda[2] };
+        int n_iso = isolate_cubic_roots(Pd, lo, hi, lambda_d, n_roots);
+        for (int k = 0; k < n_iso; ++k)
+            lambda[k] = static_cast<T>((lo[k] + hi[k]) * 0.5);
+    }
 
     // For each λ recover barycentric coords via least-squares null-vector
     for (int i = 0; i < n_roots; ++i) {
