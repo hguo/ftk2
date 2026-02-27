@@ -480,6 +480,81 @@ void quantize_field_3x3(const T V[3][3], int64_t Vq[3][3]) {
             Vq[i][j] = quant(static_cast<double>(V[i][j]));
 }
 
+// ============================================================================
+// Exact Integer Characteristic Polynomial  (Subtask 2)
+// ============================================================================
+//
+// Both A and B are quantized field matrices (entries = field × QUANT_SCALE).
+// The characteristic polynomial det(A − λB) has coefficients that are exact
+// integers — no rounding at any step.
+//
+// KEY OBSERVATION: multiplying A and B by the same scalar s gives
+//   det(sA − λ·sB) = s³ · det(A − λB),
+// so the roots λ* are identical to those of the floating-point polynomial.
+// The integer polynomial can therefore be used to determine the discriminant
+// sign (Subtask 3) and to find isolating intervals (Subtask 4) for the same
+// λ values that the float solver would return.
+
+/**
+ * @brief 3×3 integer determinant with __int128 accumulation.
+ *
+ * Each triple product of int64_t values is at most (2^63)^3 / 3 ≈ 2^188,
+ * which exceeds __int128.  BUT with QUANT_BITS=20 and |field| < 5×10^6,
+ * each quantized entry fits in ~43 bits, so each triple product ≤ 2^129 —
+ * still a bit tight.  We therefore cast each factor individually before
+ * the multiply, letting __int128 absorb the products safely.
+ *
+ * Safe range: |a[i][j]| < 2^41  (≈ 2×10^12), giving triple products < 2^123.
+ */
+inline __int128 det3_i128(const int64_t a[3][3]) {
+    auto e = [&](int i, int j) -> __int128 { return (__int128)a[i][j]; };
+    return e(0,0) * (e(1,1)*e(2,2) - e(2,1)*e(1,2))
+         - e(0,1) * (e(1,0)*e(2,2) - e(2,0)*e(1,2))
+         + e(0,2) * (e(1,0)*e(2,1) - e(2,0)*e(1,1));
+}
+
+/**
+ * @brief Exact characteristic polynomial det(A − λB) with __int128 coefficients.
+ *
+ * Transcription of characteristic_polynomial_3x3<T> with every multiplication
+ * promoted to __int128 before accumulation.  The formula is the direct
+ * cofactor expansion of the 3×3 determinant as a polynomial in λ:
+ *
+ *   P[0] =  det(A)            (constant term)
+ *   P[1] = -d/dλ det(A-λB)|λ=0  (18 terms: two A factors, one B factor each)
+ *   P[2] =  ...               (18 terms: one A factor, two B factors each)
+ *   P[3] = -det(B)            (cubic term)
+ *
+ * Coefficient magnitudes (M = max|entry| ≤ |field|_max × QUANT_SCALE):
+ *   |P[0]|, |P[3]| ≤ 6·M³
+ *   |P[1]|, |P[2]| ≤ 18·M³
+ * With M = 10^6 · 2^20 ≈ 2^40: 18·(2^40)^3 = 18·2^120 ≈ 2^124 < 2^127. ✓
+ */
+inline void characteristic_polynomial_3x3_i128(const int64_t A[3][3],
+                                                const int64_t B[3][3],
+                                                __int128 P[4]) {
+    auto a = [&](int i, int j) -> __int128 { return (__int128)A[i][j]; };
+    auto b = [&](int i, int j) -> __int128 { return (__int128)B[i][j]; };
+
+    P[0] = det3_i128(A);
+
+    P[1] = a(1,2)*a(2,1)*b(0,0) - a(1,1)*a(2,2)*b(0,0) - a(1,2)*a(2,0)*b(0,1)
+          +a(1,0)*a(2,2)*b(0,1) + a(1,1)*a(2,0)*b(0,2) - a(1,0)*a(2,1)*b(0,2)
+          -a(0,2)*a(2,1)*b(1,0) + a(0,1)*a(2,2)*b(1,0) + a(0,2)*a(2,0)*b(1,1)
+          -a(0,0)*a(2,2)*b(1,1) - a(0,1)*a(2,0)*b(1,2) + a(0,0)*a(2,1)*b(1,2)
+          +a(0,2)*a(1,1)*b(2,0) - a(0,1)*a(1,2)*b(2,0) - a(0,2)*a(1,0)*b(2,1)
+          +a(0,0)*a(1,2)*b(2,1) + a(0,1)*a(1,0)*b(2,2) - a(0,0)*a(1,1)*b(2,2);
+
+    P[2] =-a(2,2)*b(0,1)*b(1,0) + a(2,1)*b(0,2)*b(1,0) + a(2,2)*b(0,0)*b(1,1)
+          -a(2,0)*b(0,2)*b(1,1) - a(2,1)*b(0,0)*b(1,2) + a(2,0)*b(0,1)*b(1,2)
+          +a(1,2)*b(0,1)*b(2,0) - a(1,1)*b(0,2)*b(2,0) - a(0,2)*b(1,1)*b(2,0)
+          +a(0,1)*b(1,2)*b(2,0) - a(1,2)*b(0,0)*b(2,1) + a(1,0)*b(0,2)*b(2,1)
+          +a(0,2)*b(1,0)*b(2,1) - a(0,0)*b(1,2)*b(2,1) + a(1,1)*b(0,0)*b(2,2)
+          -a(1,0)*b(0,1)*b(2,2) - a(0,1)*b(1,0)*b(2,2) + a(0,0)*b(1,1)*b(2,2);
+
+    P[3] = -det3_i128(B);
+}
+
 /**
  * @brief Solve for parallel vectors on a triangle (2-simplex)
  *
@@ -1016,13 +1091,34 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
 
     // ----------------------------------------------------------------
     // Subtask 1: quantize the original (unperturbed) field to int64_t.
-    // Vq, Wq are exact integer representations scaled by QUANT_SCALE.
-    // They are NOT used by the floating-point path below; Subtask 2 will
-    // route through these for exact characteristic polynomial computation.
     // ----------------------------------------------------------------
     int64_t Vq[3][3], Wq[3][3];
     quantize_field_3x3(V, Vq);
     quantize_field_3x3(W, Wq);
+
+    // ----------------------------------------------------------------
+    // Subtask 2: exact integer characteristic polynomial.
+    //
+    // Transpose Vq and Wq: the characteristic polynomial is
+    //   det(VqT − λ·WqT)  where VqT[component][vertex].
+    // This mirrors how the float path builds VT/WT below.
+    //
+    // P_i128[k] ≈ QUANT_SCALE³ · P_fp[k]   (quantization error only)
+    //
+    // The roots λ* are identical to the float polynomial's roots because
+    // QUANT_SCALE³ is a common factor that cancels in det(A−λB)=0.
+    //
+    // P_i128 is not yet used for root-finding; Subtask 3 will extract
+    // the exact discriminant sign from it.
+    // ----------------------------------------------------------------
+    int64_t VqT[3][3], WqT[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            VqT[i][j] = Vq[j][i];
+            WqT[i][j] = Wq[j][i];
+        }
+    __int128 P_i128[4];
+    characteristic_polynomial_3x3_i128(VqT, WqT, P_i128);
 
     // ----------------------------------------------------------------
     // SoS field perturbation
