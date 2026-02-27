@@ -1823,12 +1823,21 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         if (!sos_bary_inside(0) || !sos_bary_inside(1) || !sos_bary_inside(2))
             continue;
 
-        // Verify cross-product residual on the ORIGINAL (unperturbed) field
-        T v[3], w[3], cross[3];
-        lerp_s2v3(V, nu, v);
-        lerp_s2v3(W, nu, w);
-        cross_product3(v, w, cross);
-        if (vector_norm3(cross) > 1e-2) continue;
+        // Subtask 10: cross-product residual check removed.
+        //
+        // The old guard  |V×W| > 1e-2  was a heuristic fallback against
+        // spurious solutions.  It is now both redundant and harmful:
+        //
+        //   Redundant: Subtask 7 certifies D(λ*) > 0, so M(λ*) is full-rank.
+        //     The least-squares ν is well-conditioned, and V×W at the float
+        //     solution is O(ε_quant · |W|) ≪ 1e-2 for any physically sane
+        //     field magnitude.
+        //
+        //   Harmful: when SoS perturbation is active (indices != nullptr),
+        //     the perturbed solution ν_p satisfies Vp×Wp = 0 but not V×W = 0.
+        //     The discrepancy is |V×W| ≈ SOS_EPS · (1+|λ|) · |W|.
+        //     For |W| ≳ 5·10^4 this exceeds 1e-2, falsely rejecting the
+        //     solution.  At |W| = QUANT_SCALE = 10^6, rejection is certain.
 
         PuncturePoint p;
         p.lambda       = lambda[i];

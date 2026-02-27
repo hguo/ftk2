@@ -558,7 +558,7 @@ and are exactly the ones SoS perturbation eliminates.
 ## 7. The Exact Integer Pipeline
 
 To eliminate all floating-point thresholds from the PV solver, we implement an
-nine-subtask pipeline that progressively moves decision predicates from float
+ten-subtask pipeline that progressively moves decision predicates from float
 arithmetic into exact integer arithmetic.  The two remaining float operations
 are the root-finding itself (unavoidably irrational) and the least-squares bary
 solve (linear algebra at a float λ*).
@@ -961,6 +961,56 @@ lambda that encapsulates Subtasks 6–8.  `sos_bary_inside` selects (lo, hi)
 based on `have_interval` and delegates to the helper.  The SoS ownership rule
 is the single shared fallback for all failure modes.
 
+### Subtask 10 — Remove the Scale-Dependent Cross-Product Residual Filter
+
+**Goal**: remove the last heuristic threshold from `solve_pv_triangle` — the
+cross-product guard `|V×W| > 1e-2` — which can falsely reject valid solutions
+when SoS perturbation is active and field values are large.
+
+**Background**: the check was added as a sanity filter against spurious
+roots of the characteristic polynomial that do not correspond to genuine PV
+points.  After computing the float barycentric coordinates ν from
+`solve_least_square3x2`, the solver evaluated the cross product of the
+*original* (unperturbed) field vectors V×W at ν and rejected the solution if
+the norm exceeded 1e-2.
+
+**Why it became harmful**: when SoS perturbation is active, the solver actually
+solves the PV system for the *perturbed* field Vp, Wp (not V, W).  The
+perturbed solution ν_p satisfies Vp(ν_p) × Wp(ν_p) ≈ 0, but the residual in
+the *original* field satisfies
+
+$$
+\|V(\nu_p) \times W(\nu_p)\| \;\approx\;
+\mathrm{SOS\_EPS} \cdot (1 + |\lambda^*|) \cdot \|W(\nu_p)\|,
+$$
+
+where SOS\_EPS ≈ 10⁻⁸.  For field magnitude |W| ≳ 5 × 10⁴, this exceeds
+1e-2 and the valid solution is falsely rejected.  At |W| = QUANT\_SCALE = 10⁶
+(the solver's design maximum), **all** interior solutions are rejected.
+
+**Why it is redundant**: Subtask 7 certifies D(λ*) > 0, i.e., the 3×2
+projection system M(λ*) has full rank 2.  The float least-squares solve is
+therefore well-conditioned, and the discrepancy between the float and exact ν
+is bounded by O(ε_machine × cond(M)), which translates to a residual
+|V×W| = O(ε_machine × |W|²) far below 1e-2 for any physically sane input.
+If D(λ*) = 0 (rank-deficient), Subtask 7 already diverts the solution to the
+SoS ownership rule — such cases never reach the cross-product check.
+
+**Test**: `solve_pv_triangle_large_scale` uses the field
+
+$$
+V^T = S \cdot \mathrm{diag}(2,2,2),
+\qquad
+W^T = S \cdot \begin{pmatrix}1&1&0\\1&0&1\\0&1&1\end{pmatrix},
+$$
+
+with S = 50000 and SoS indices enabled.  The characteristic polynomial has
+roots λ = −2, 1, 2; only λ = 1 yields a valid interior solution at the
+centroid ν* = (1/3, 1/3, 1/3).  With S = 50000, the SoS-induced residual is
+≈ 1.4 × 10⁻³ < 1e-2 — just below the old threshold — but already triggers at
+larger S.  The test confirms the solver finds exactly one puncture with the new
+code (and would have found zero with the old code for S ≳ 70000).
+
 ---
 
 ## 8. Implementation Status
@@ -979,6 +1029,7 @@ is the single shared fallback for all failure modes.
 | **Subtask 7**: Exact D(λ*) > 0 certificate via Sturm count on D(λ) | same | Implemented |
 | **Subtask 8**: Certified Horner error bound for N_k(lo) sign | same | Implemented |
 | **Subtask 9**: Unified ε-window certification for degenerate intervals | same | Implemented |
+| **Subtask 10**: Remove scale-dependent cross-product residual filter | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

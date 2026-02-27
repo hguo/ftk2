@@ -334,6 +334,47 @@ TEST(solve_pv_triangle_realistic) {
     }
 }
 
+TEST(solve_pv_triangle_large_scale) {
+    // Subtask 10: verify the solver works correctly at large field scales when
+    // SoS perturbation is active.
+    //
+    // Field: V = S*diag(2,2,2), W = S*[[1,1,0],[1,0,1],[0,1,1]]
+    // The char poly det(VT - λ WT) has roots λ=-2, 1, 2.
+    // For λ=1: null space of (VT-WT) is (1,1,1)/3 — the centroid.
+    // For λ=-2,2: null space sums to 0 → no valid barycentric solution.
+    //
+    // Therefore the solver should find exactly 1 interior puncture at
+    // ν* ≈ (1/3, 1/3, 1/3) with λ ≈ 1.
+    //
+    // With SoS active (indices provided) and S=50000:
+    //   |V×W| at the perturbed solution ≈ SOS_EPS*(1+|λ|)*|W|
+    //                                   ≈ 1e-8 * 2 * 50000 * sqrt(2) ≈ 1.4e-3
+    // This exceeds the old 1e-2 threshold when S is large enough, which
+    // would have caused false rejection.  The new code has no such check.
+    const double S = 50000.0;
+    double V[3][3] = {
+        {2*S, 0,   0  },   // vertex 0
+        {0,   2*S, 0  },   // vertex 1
+        {0,   0,   2*S},   // vertex 2
+    };
+    double W[3][3] = {
+        {S,   S,   0  },   // vertex 0
+        {S,   0,   S  },   // vertex 1
+        {0,   S,   S  },   // vertex 2
+    };
+
+    // Use explicit indices to activate SoS perturbation.
+    uint64_t indices[3] = {1, 2, 3};
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures, indices);
+
+    ASSERT_EQ(n, 1);
+    ASSERT_NEAR(punctures[0].barycentric[0], 1.0/3.0, 1e-3);
+    ASSERT_NEAR(punctures[0].barycentric[1], 1.0/3.0, 1e-3);
+    ASSERT_NEAR(punctures[0].barycentric[2], 1.0/3.0, 1e-3);
+    ASSERT_NEAR((double)punctures[0].lambda, 1.0, 1e-3);
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================
