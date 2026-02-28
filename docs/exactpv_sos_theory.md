@@ -1710,7 +1710,7 @@ which the old code would spuriously accept.
 | **Subtask 21a**: Exact integer all-parallel check in `solve_pv_tetrahedron` (replaces `vector_norm3(cross) > epsilon`) | same | Implemented |
 | **Subtask 21b**: Exact-zero Q-coefficient check in `solve_pv_tetrahedron` (replaces `std::abs(Q[i]) > epsilon`) | same | Implemented |
 | **Subtask 22**: Eliminate float SoS perturbation from `solve_pv_triangle`; edge-ownership purely combinatorial via `indices` | same | Implemented |
-| **Subtask 23**: Build N_poly/D_poly from integer VqT/WqT via `compute_bary_numerators_from_integers`; exact `__int128` degree-2 building blocks (A, g) eliminate cancellation | same | Implemented |
+| **Subtask 23**: Build N_poly/D_poly from integer VqT/WqT; exact `__int128` degree-2 (A, g) + exact `__int128` degree-4 products when M ≤ 195 (fallback to double otherwise); `SOS_EPS`/`sos_perturbation` dead code removed | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
@@ -1861,37 +1861,47 @@ New function `compute_bary_numerators_from_integers(Mlin_q, blin_q, N, D)`:
   blin_q[r][0]    = -VqT[r][2];
   blin_q[r][1]    =  WqT[r][2];
   ```
-- **Degree-2 building blocks exact in `__int128`**:
+- **Stage A — degree-2 building blocks exact in `__int128`**:
   ```
   A[p][q][k] = Σ_r Mlin_q[r][p][*] × Mlin_q[r][q][*]  (exact __int128)
   g[p][k]    = Σ_r Mlin_q[r][p][*] × blin_q[r][*]     (exact __int128)
   ```
-  Overflow analysis: `|Mlin_q| ≤ 2 × max_field × QUANT_SCALE ≤ 10^13`;
-  `|A[p][q][k]| ≤ 3 × (10^13)^2 = 3×10^26 < 2^89 << 2^127` ✓
-- **Degree-4 products in double** after converting A and g:
-  The degree-4 D/N products would require `~10^52` — beyond `__int128`
-  (max `~1.7×10^38`).  We convert A and g to double first (1 ULP error,
-  no cancellation), then compute D and N as in `compute_bary_numerators`.
-
-**Key gain**: the degree-2 building blocks — the dominant source of structure in
-the Sturm sequences — are now **exact** before any rounding occurs.  The float
-subtraction cancellation in `Mlin` is eliminated entirely.
+  Overflow: `|Mlin_q| ≤ 2M·QS`, `|A[p][q][k]| ≤ 24M²·QS² < 2^89 << 2^127` ✓
+- **Stage B — degree-4 products: two sub-paths**:
+  - **Exact `__int128` path** (fields with M ≤ 195 at QUANT_SCALE = 2^20):
+    D and N computed entirely in `__int128`.  No rounding, no cancellation in the
+    degree-4 products.  Final double coefficients have ≤ 1 ULP each.
+    Overflow bounds:
+    - `SAFE_A = 10^18`: `6×SAFE_A² = 6×10^36 < 2^127 ≈ 1.70×10^38` ✓
+    - `SAFE_G = 10^19`: `|N[2]| ≤ 6×10^36+12×10^37 = 1.26×10^38 < 2^127` ✓
+    - Checked at runtime: if any `|A[p][q][k]| > SAFE_A` or `|g[p][k]| > SAFE_G`,
+      the fallback path is used.
+  - **Fallback double path** (large fields M > 195):
+    A and g converted to double (1 ULP each, no cancellation), then degree-4
+    products in double.  Still better than the old float-Mlin approach.
 
 #### Scaling note
 
-`Mlin_q` entries are in units of `QUANT_SCALE`, so `A_i128` is in
-`QUANT_SCALE^2` and `D_int`/`N_int` are in `QUANT_SCALE^4`.  The ratio
+`Mlin_q` entries are in units of `QUANT_SCALE`, so `A_i` is in `QUANT_SCALE^2`
+and `D_int`/`N_int` are in `QUANT_SCALE^4`.  The ratio
 `N_int[k](λ) / D_int(λ) = N_fp[k](λ) / D_fp(λ)` is scale-invariant: the
 `QUANT_SCALE^4` factor cancels in the barycentric coordinate `μ_k`, and the
-Sturm *sign* is also invariant under positive scaling.  The solver is correct.
+Sturm *sign* is invariant under positive scaling.  The solver is correct in
+both paths.
 
-#### New tests (140/140 pass)
+#### Dead code removal
 
-- `compute_bary_numerators_from_integers_consistency`: Evaluates both versions
-  at `λ = 0.5` and verifies `N_int[k]/D_int ≈ N_fp[k]/D_fp` to `10^-4` relative.
-- `solve_pv_triangle_integer_npoly_nearly_constant_field`: Field with large base
-  component (`V[*][0] = 10`) and small variation (`V[*][1] ∈ {0.1,-0.1,0}`),
-  directly stressing the cancellation scenario.
+`SOS_EPS` (= 1e-8) and `sos_perturbation()` had no call sites after Subtask 22
+and are now removed entirely.
+
+#### New tests (175/175 pass)
+
+- `compute_bary_numerators_from_integers_consistency`: N_int/D_int ≈ N_fp/D_fp.
+- `solve_pv_triangle_integer_npoly_nearly_constant_field`: Nearly-constant V.
+- `compute_bary_numerators_from_integers_exact_path`: Integer-valued field, verifies
+  the algebraic identity N[0]+N[1]+N[2] = D coefficient-by-coefficient, and D ≥ 0.
+- `compute_bary_numerators_from_integers_large_field_fallback`: Large Mlin_q values
+  triggering the fallback path; verifies result is finite and N[0]+N[1]+N[2] ≈ D.
 
 ---
 
@@ -1923,36 +1933,36 @@ evaluations are simultaneously near-zero, an event of measure zero.
 |---|---|
 | Root values λ* | Float via cubic solver + bisection (position is inherently float) |
 | Barycentric coordinates μ_k | Evaluated as `N_k(λ*) / D(λ*)` in double |
-| N_k and D polynomial *coefficients* | Degree-2 (A, g) are exact __int128; degree-4 products use double |
+| N_k and D polynomial *coefficients* | Degree-2 (A, g) exact __int128; degree-4 exact __int128 for M ≤ 195, else 1-ULP double |
 
 The user confirmed: "puncture position being floating-point is fine."
 
-### Remaining gap: degree-4 N_k/D coefficient exactness
+### Remaining gap: degree-4 coefficients for large fields (M > 195)
 
-The only remaining source of non-combinatorial error is the degree-4 product
-step in `compute_bary_numerators_from_integers`.  `A` coefficients `~10^26`
-give degree-4 products `~10^52`, beyond `__int128`.  A Sturm sequence built
-from these double-precision degree-4 coefficients has coefficient error
-`~10^52 × 2^-52 ≈ 10^36` absolute.
+For fields with max field magnitude M > 195 (at QUANT_SCALE = 2^20), the degree-4
+D/N coefficients fall back to the double path, which has rounding error
+O(A²·2^-53) in each coefficient.  If D(λ*) or N_k(λ*) is genuinely very near
+zero, the Sturm sign count could theoretically be wrong.
 
-In practice this is not a problem for non-degenerate fields, because the
-Sturm evaluations at `[lo, hi]` land away from zero.  The scenario where it
-*could* fail is when `N_k(λ*)` is genuinely near zero (puncture very close to
-an edge) — but that is exactly when the combinatorial ownership rule kicks in
-(Subtask 22) and we fall back to `sos_bary_inside`, not the float sign.
+In practice this is not a problem because:
+- Non-degenerate punctures: Sturm evaluations land well away from zero.
+- Degenerate punctures (near an edge): the combinatorial ownership rule (Subtask 22)
+  handles this via `sos_bary_inside`, independent of the float sign.
 
-To make the degree-4 products fully exact would require 256-bit integer
-arithmetic or a big-integer library.  This is future work if needed.
+To make the degree-4 products fully exact for arbitrarily large fields would
+require 256-bit integer arithmetic.  This is future work if needed.
 
 ### Summary verdict
 
 **The current ExactPV is not fully combinatorial, but the non-combinatorial
 parts are confined to the puncture *position* (floating-point by design) and
-the degree-4 polynomial coefficient rounding (no threshold, certified by Sturm
-sign count, degenerate case handled by exact combinatorial rule).  The three
-discrete decisions — existence, count, ownership — are all exact.**
+the degree-4 polynomial coefficient rounding for large fields M > 195 (certified
+by Sturm sign count with no thresholds; degenerate case handled combinatorially).
+The three discrete decisions — existence, count, ownership — are all exact.
+For typical simulation fields (M ≤ 195), even the degree-4 coefficients are now
+computed exactly in `__int128`.**
 
-**Tests:** 140/140 tests pass.
+**Tests:** 175/175 tests pass.
 
 ---
 

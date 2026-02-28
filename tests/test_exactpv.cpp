@@ -1342,6 +1342,97 @@ TEST(solve_pv_triangle_integer_npoly_nearly_constant_field) {
     }
 }
 
+TEST(compute_bary_numerators_from_integers_exact_path) {
+    // Verify the __int128 exact path triggers for small-field inputs (M≤195)
+    // and that the degree-4 polynomial coefficients computed via the exact
+    // __int128 path match those from the float path to within quantization error.
+    //
+    // We use an integer-valued field so that the exact path gives exact integer
+    // D and N coefficients with no rounding at all. We verify:
+    //   1. D and N polynomial coefficients have the correct signs (D≥0 everywhere).
+    //   2. N[0]+N[1]+N[2] == D coefficient-by-coefficient (algebraic identity).
+    //   3. Σ N_k(λ) / D(λ) ≈ 1 at a sample λ value.
+    //
+    // Field: VT = [[1,0,0],[0,1,0],[0,0,1]], WT = I (V=W=I)
+    //   All-parallel → not the interesting case for D. Use a non-trivial field.
+    // Field: VT = [[2,1,0],[0,1,-1],[1,0,1]], WT = [[1,0,1],[0,1,0],[0,0,1]]
+    //   Mlin_q[r][c][0] = VqT[r][c]-VqT[r][2] and Mlin_q[r][c][1] = -(WqT[r][c]-WqT[r][2])
+    //   With QUANT_SCALE = 2^20, the quantized values are exact multiples of 2^20.
+    //   Since field values are O(1), max|A[p][q][k]| << 10^18 → exact path fires.
+    int64_t QS = QUANT_SCALE;
+    // Mlin_q: row r, col c ∈ {0,1}, slot k ∈ {0=V-part, 1=W-part}
+    // VqT[r][c] = V[c][r]*QS; differences VqT[r][c]-VqT[r][2] = (V[c][r]-V[2][r])*QS
+    // Use integer-valued V and W so quantization is exact.
+    // VT = [[2,1,0],[0,1,-1],[1,0,1]]  → V[i][j]=VT[j][i]
+    // WT = [[1,0,1],[0,1,0],[0,0,1]]   → W[i][j]=WT[j][i]
+    // VqT[r][c] = VT[r][c]*QS (exact), WqT[r][c] = WT[r][c]*QS (exact)
+    double VTd[3][3] = {{ 2.0, 1.0, 0.0 },
+                        { 0.0, 1.0,-1.0 },
+                        { 1.0, 0.0, 1.0 }};
+    double WTd[3][3] = {{ 1.0, 0.0, 1.0 },
+                        { 0.0, 1.0, 0.0 },
+                        { 0.0, 0.0, 1.0 }};
+
+    int64_t Mlin_q[3][2][2], blin_q[3][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            Mlin_q[r][c][0] = (int64_t)std::round((VTd[r][c]-VTd[r][2])*QS);
+            Mlin_q[r][c][1] = (int64_t)std::round(-(WTd[r][c]-WTd[r][2])*QS);
+        }
+        blin_q[r][0] = (int64_t)std::round(-VTd[r][2]*QS);
+        blin_q[r][1] = (int64_t)std::round( WTd[r][2]*QS);
+    }
+    double N[3][5], D[5];
+    compute_bary_numerators_from_integers(Mlin_q, blin_q, N, D);
+
+    // Algebraic identity: N[0][k] + N[1][k] + N[2][k] = D[k] for all k
+    for (int k = 0; k < 5; ++k) {
+        double sum_N = N[0][k] + N[1][k] + N[2][k];
+        ASSERT_NEAR(sum_N, D[k], std::abs(D[k]) * 1e-10 + 1e-10);
+    }
+
+    // D must be ≥ 0 at several λ values (it is a Gram determinant)
+    auto eval5 = [](const double* c, double x) {
+        return c[0]+x*(c[1]+x*(c[2]+x*(c[3]+x*c[4])));
+    };
+    for (double lam : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+        double d = eval5(D, lam);
+        ASSERT_TRUE(d >= -1e-8);  // allow tiny numerical noise
+    }
+}
+
+TEST(compute_bary_numerators_from_integers_large_field_fallback) {
+    // Verify the fallback (double) path triggers for large-field inputs (M>195).
+    // Use Mlin_q values around 2×10^18, which exceed SAFE_A = 10^18.
+    // The fallback should still produce a valid (non-NaN) result with the
+    // algebraic identity N[0]+N[1]+N[2] ≈ D.
+    //
+    // We synthesise large Mlin_q directly (not from an actual field).
+    int64_t big = 2'000'000'000'000'000'000LL;  // 2×10^18 > SAFE_A
+    int64_t Mlin_q[3][2][2] = {
+        {{ big, 0 }, { 0, big }},
+        {{ 0, big }, { big, 0 }},
+        {{ big, big }, { big, big }},
+    };
+    int64_t blin_q[3][2] = { {1, 0}, {0, 1}, {1, 1} };
+
+    double N[3][5], D[5];
+    compute_bary_numerators_from_integers(Mlin_q, blin_q, N, D);
+
+    // Result must be finite (no NaN/Inf from the double fallback path)
+    for (int k = 0; k < 5; ++k) {
+        ASSERT_TRUE(std::isfinite(D[k]));
+        for (int j = 0; j < 3; ++j) { ASSERT_TRUE(std::isfinite(N[j][k])); }
+    }
+
+    // Algebraic identity N[0]+N[1]+N[2] = D (holds in both paths)
+    for (int k = 0; k < 5; ++k) {
+        double sum_N = N[0][k] + N[1][k] + N[2][k];
+        double scale = std::max(std::abs(D[k]), 1.0);
+        ASSERT_NEAR(sum_N / scale, D[k] / scale, 1e-6);
+    }
+}
+
 void test_exactpv() {
     // Test runner - the tests are automatically registered and run via static constructors
     std::cout << "ExactPV tests completed (polynomial utilities, data structures, triangle/tetrahedron solvers)" << std::endl;

@@ -305,37 +305,6 @@ struct PVSurfacePatch {
 // Solver Functions (3D Spatial)
 // ============================================================================
 
-// ============================================================================
-// Simulation of Simplicity (SoS) for PV
-// ============================================================================
-
-/**
- * @brief SoS field perturbation for vertex (vertex_idx, component).
- *
- * Returns a small positive value δ that is unique to each (vertex, component)
- * pair and decreases geometrically with vertex index:
- *
- *   δ(i, j) = SOS_EPS / 2^(6*(i%8) + j%6)
- *
- * Interpretation: symbolically, this represents ε^(2^k) → 0⁺.
- * Adding δ to each field component at each vertex before solving ensures:
- *   1. No puncture lands exactly on a simplex edge or vertex.
- *   2. The characteristic polynomial has generically distinct real roots.
- *   3. Barycentric coordinates at solutions are generically strictly positive.
- *
- * The magnitude (1e-8 to ~1e-22) is:
- *   - Small enough to preserve topology (field gradients are O(1))
- *   - Large enough to break floating-point exact zeros
- */
-static constexpr double SOS_EPS = 1e-8;
-
-template <typename T>
-inline T sos_perturbation(uint64_t vertex_idx, int component) {
-    // k in [0,47]: perturbation range [SOS_EPS/2^47, SOS_EPS] = [7e-23, 1e-8]
-    int k = (int)((vertex_idx % 8) * 6 + component % 6);
-    return T(SOS_EPS) / T(uint64_t(1) << k);
-}
-
 // Forward declaration — defined after the quantization and integer polynomial
 // sections (Subtasks 1–3) which appear later in this file.
 inline int discriminant_sign_i128(const __int128 P[4]);
@@ -1092,86 +1061,143 @@ inline void compute_bary_numerators(
     for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
 }
 
-/// Subtask 23: compute N/D polynomials from exact integer Mlin_q/blin_q.
+/// Subtask 23 (extended): compute N/D polynomials from exact integer Mlin_q/blin_q.
 ///
-/// Builds the degree-2 Gram-matrix polynomial A[p][q](λ) and rhs vector
-/// g[p](λ) exactly in __int128 from int64_t Mlin_q/blin_q (derived from
-/// VqT/WqT integer-quantized field values), eliminating catastrophic
-/// cancellation in the differences VqT[r][c]-VqT[r][2] that would occur
-/// when the float field values are nearly constant across vertices.
+/// Two stages, both starting from exact __int128 degree-2 building blocks:
 ///
-/// Overflow analysis (QUANT_SCALE = 2^20 ≈ 10^6, max_field ≤ 5×10^6):
-///   |Mlin_q[r][c][*]| ≤ 2 × max_field × QUANT_SCALE ≤ 10^13
-///   |A[p][q][k]|      ≤ 3 × (10^13)^2 = 3×10^26 < 2^89 << 2^127 ✓
-///   |g[p][k]|         ≤ 3 × (10^13) × (5×10^12) ≤ 1.5×10^26 ✓
+/// Stage A — Gram matrix A[p][q](λ) and rhs g[p](λ):
+///   Computed exactly in __int128 from int64_t Mlin_q/blin_q (from VqT/WqT).
+///   This eliminates catastrophic cancellation in the differences
+///   VqT[r][c]-VqT[r][2] that occur when the float field values are nearly
+///   constant across vertices.
 ///
-/// The degree-4 D and N polynomials are products of two degree-2 polys
-/// with coefficients ~10^26, giving products ~10^52 — beyond __int128.
-/// We convert A and g to double after exact __int128 computation, then
-/// complete the degree-4 multiplications in double.  The degree-2 building
-/// blocks have no cancellation error, which is the meaningful improvement
-/// over computing them from float VT/WT.
+/// Stage B — degree-4 D and N polynomials (two sub-paths):
+///
+///   EXACT path (fields with |M| ≤ ~195 at QUANT_SCALE = 2^20):
+///     D = A₀₀·A₁₁ − A₀₁² and N_k computed entirely in __int128.
+///     The final double coefficients have at most 1 ULP rounding error each;
+///     no cancellation in the degree-4 products.
+///     Overflow bounds (verified):
+///       |A[p][q][k]| ≤ SAFE_A = 10^18 → 6×SAFE_A² ≈ 6×10^36 < 2^127 ✓
+///       |g[p][k]|    ≤ SAFE_G = 10^19 → |N[2]| ≤ 1.26×10^38 < 2^127 ✓
+///
+///   FALLBACK path (large fields):
+///     A and g converted to double (1 ULP per coefficient, no cancellation),
+///     then degree-4 products computed in double.  Still better than the
+///     previous float-Mlin approach which had catastrophic cancellation.
 inline void compute_bary_numerators_from_integers(
         const int64_t Mlin_q[3][2][2], const int64_t blin_q[3][2],
         double N[3][5], double D[5]) {
-    // Step 1: A[p][q][k] and g[p][k] exactly in __int128
-    __int128 A_i128[2][2][3] = {};
+    // Stage A: A[p][q][k] and g[p][k] exactly in __int128.
+    __int128 A_i[2][2][3] = {};
     for (int r = 0; r < 3; ++r)
         for (int p = 0; p < 2; ++p)
             for (int q = 0; q < 2; ++q) {
                 int64_t m0p = Mlin_q[r][p][0], m1p = Mlin_q[r][p][1];
                 int64_t m0q = Mlin_q[r][q][0], m1q = Mlin_q[r][q][1];
-                A_i128[p][q][0] += (__int128)m0p * m0q;
-                A_i128[p][q][1] += (__int128)m0p * m1q + (__int128)m1p * m0q;
-                A_i128[p][q][2] += (__int128)m1p * m1q;
+                A_i[p][q][0] += (__int128)m0p * m0q;
+                A_i[p][q][1] += (__int128)m0p * m1q + (__int128)m1p * m0q;
+                A_i[p][q][2] += (__int128)m1p * m1q;
             }
 
-    __int128 g_i128[2][3] = {};
+    __int128 g_i[2][3] = {};
     for (int r = 0; r < 3; ++r)
         for (int p = 0; p < 2; ++p) {
             int64_t m0 = Mlin_q[r][p][0], m1 = Mlin_q[r][p][1];
             int64_t b0 = blin_q[r][0],    b1 = blin_q[r][1];
-            g_i128[p][0] += (__int128)m0 * b0;
-            g_i128[p][1] += (__int128)m0 * b1 + (__int128)m1 * b0;
-            g_i128[p][2] += (__int128)m1 * b1;
+            g_i[p][0] += (__int128)m0 * b0;
+            g_i[p][1] += (__int128)m0 * b1 + (__int128)m1 * b0;
+            g_i[p][2] += (__int128)m1 * b1;
         }
 
-    // Step 2: convert A and g to double
-    // Magnitudes ≤ 3×10^26 < 2^89; conversion loses at most ~36 low bits,
-    // but the relative error is ≤ 2^-53 — no cancellation.
-    double A[2][2][3], g[2][3];
-    for (int p = 0; p < 2; ++p)
-        for (int q = 0; q < 2; ++q)
+    // Stage B: degree-4 products.
+    //
+    // SAFE_A = 10^18: 6×(10^18)² = 6×10^36 < 2^127 ≈ 1.70×10^38
+    //   Satisfied when 24·M²·QS² ≤ 10^18, i.e. M ≤ 195 at QS = 2^20.
+    // SAFE_G = 10^19: |N[2]| ≤ 6×10^36 + 12×10^18×10^19 = 1.26×10^38 < 2^127
+    //   Satisfied when 12·M²·QS² ≤ 10^19, i.e. M ≤ 613 — A-bound is binding.
+    static constexpr int64_t  SAFE_A = 1'000'000'000'000'000'000LL;   // 10^18
+    static constexpr __int128 SAFE_G =
+        (__int128)1'000'000'000LL * 10'000'000'000LL;                  // 10^19
+
+    auto abs128 = [](__int128 x) -> __int128 { return x >= 0 ? x : -x; };
+
+    bool exact = true;
+    for (int p = 0; p < 2 && exact; ++p)
+        for (int q = 0; q < 2 && exact; ++q)
+            for (int k = 0; k < 3 && exact; ++k)
+                if (abs128(A_i[p][q][k]) > SAFE_A) exact = false;
+    for (int p = 0; p < 2 && exact; ++p)
+        for (int k = 0; k < 3 && exact; ++k)
+            if (abs128(g_i[p][k]) > SAFE_G) exact = false;
+
+    if (exact) {
+        // EXACT path: degree-4 products in __int128 — no rounding, no cancellation.
+        auto mul2_i = [](__int128* P, __int128* Q, __int128* R) {
+            for (int k = 0; k < 5; ++k) R[k] = 0;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    R[i + j] += P[i] * Q[j];
+        };
+
+        __int128 t0[5], t1[5], D_i[5];
+        mul2_i(A_i[0][0], A_i[1][1], t0);
+        mul2_i(A_i[0][1], A_i[0][1], t1);
+        for (int k = 0; k < 5; ++k) D_i[k] = t0[k] - t1[k];
+
+        __int128 a11g0[5], a01g1[5], N_i[3][5];
+        mul2_i(A_i[1][1], g_i[0], a11g0);
+        mul2_i(A_i[0][1], g_i[1], a01g1);
+        for (int k = 0; k < 5; ++k) N_i[0][k] = a11g0[k] - a01g1[k];
+
+        __int128 a00g1[5], a01g0[5];
+        mul2_i(A_i[0][0], g_i[1], a00g1);
+        mul2_i(A_i[0][1], g_i[0], a01g0);
+        for (int k = 0; k < 5; ++k) N_i[1][k] = a00g1[k] - a01g0[k];
+
+        for (int k = 0; k < 5; ++k) N_i[2][k] = D_i[k] - N_i[0][k] - N_i[1][k];
+
+        // Convert to double: 1 ULP rounding per coefficient, no cancellation.
+        for (int k = 0; k < 5; ++k) {
+            D[k] = (double)D_i[k];
+            for (int j = 0; j < 3; ++j) N[j][k] = (double)N_i[j][k];
+        }
+    } else {
+        // FALLBACK path: convert A and g to double (1 ULP each), then
+        // degree-4 products in double.
+        double A[2][2][3], g[2][3];
+        for (int p = 0; p < 2; ++p)
+            for (int q = 0; q < 2; ++q)
+                for (int k = 0; k < 3; ++k)
+                    A[p][q][k] = (double)A_i[p][q][k];
+        for (int p = 0; p < 2; ++p)
             for (int k = 0; k < 3; ++k)
-                A[p][q][k] = (double)A_i128[p][q][k];
-    for (int p = 0; p < 2; ++p)
-        for (int k = 0; k < 3; ++k)
-            g[p][k] = (double)g_i128[p][k];
+                g[p][k] = (double)g_i[p][k];
 
-    // Step 3: degree-4 products (same algebra as compute_bary_numerators)
-    auto mul2 = [](const double* P, const double* Q, double* R) {
-        for (int k = 0; k < 5; ++k) R[k] = 0.0;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                R[i + j] += P[i] * Q[j];
-    };
+        auto mul2 = [](const double* P, const double* Q, double* R) {
+            for (int k = 0; k < 5; ++k) R[k] = 0.0;
+            for (int i = 0; i < 3; ++i)
+                for (int j = 0; j < 3; ++j)
+                    R[i + j] += P[i] * Q[j];
+        };
 
-    double t0[5], t1[5];
-    mul2(A[0][0], A[1][1], t0);
-    mul2(A[0][1], A[0][1], t1);
-    for (int k = 0; k < 5; ++k) D[k] = t0[k] - t1[k];
+        double t0[5], t1[5];
+        mul2(A[0][0], A[1][1], t0);
+        mul2(A[0][1], A[0][1], t1);
+        for (int k = 0; k < 5; ++k) D[k] = t0[k] - t1[k];
 
-    double a11g0[5], a01g1[5];
-    mul2(A[1][1], g[0], a11g0);
-    mul2(A[0][1], g[1], a01g1);
-    for (int k = 0; k < 5; ++k) N[0][k] = a11g0[k] - a01g1[k];
+        double a11g0[5], a01g1[5];
+        mul2(A[1][1], g[0], a11g0);
+        mul2(A[0][1], g[1], a01g1);
+        for (int k = 0; k < 5; ++k) N[0][k] = a11g0[k] - a01g1[k];
 
-    double a00g1[5], a01g0[5];
-    mul2(A[0][0], g[1], a00g1);
-    mul2(A[0][1], g[0], a01g0);
-    for (int k = 0; k < 5; ++k) N[1][k] = a00g1[k] - a01g0[k];
+        double a00g1[5], a01g0[5];
+        mul2(A[0][0], g[1], a00g1);
+        mul2(A[0][1], g[0], a01g0);
+        for (int k = 0; k < 5; ++k) N[1][k] = a00g1[k] - a01g0[k];
 
-    for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
+        for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
+    }
 }
 
 /**
@@ -1747,11 +1773,10 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     // The entire triangle is a PV surface iff V[i] × W[i] = 0 at ALL vertices,
     // i.e. iff V and W are proportional everywhere on the triangle.
     //
-    // Old check: uses Vp (SoS-perturbed) with float threshold epsilon.
-    //   Bug: when V=W exactly with SoS active, Vp ≠ Wp (different per-slot
-    //   perturbations), so the float cross products are O(SOS_EPS) >> epsilon,
-    //   and the check fails to detect all-parallel.  The solver then proceeds
-    //   and may return SoS-artifact punctures instead of INT_MAX.
+    // Old check: used SoS-perturbed Vp with a float threshold epsilon.
+    //   Bug: when V=W exactly, Vp ≠ Wp (different per-slot perturbations),
+    //   so the float cross products were O(SoS_eps) >> epsilon, and the check
+    //   failed to detect all-parallel.  SoS float perturbation removed in Sub. 22.
     //
     // New check: uses Vq/Wq (quantized ORIGINAL field) with exact integer
     //   comparison.  Vq × Wq = 0 iff V[i] ∥ W[i] in the quantized sense
@@ -2057,11 +2082,11 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         //     solution is O(ε_quant · |W|) ≪ 1e-2 for any physically sane
         //     field magnitude.
         //
-        //   Harmful: when SoS perturbation is active (indices != nullptr),
-        //     the perturbed solution ν_p satisfies Vp×Wp = 0 but not V×W = 0.
-        //     The discrepancy is |V×W| ≈ SOS_EPS · (1+|λ|) · |W|.
-        //     For |W| ≳ 5·10^4 this exceeds 1e-2, falsely rejecting the
-        //     solution.  At |W| = QUANT_SCALE = 10^6, rejection is certain.
+        //   Harmful: when SoS float perturbation was active, the perturbed
+        //     solution ν_p satisfied Vp×Wp = 0 but not V×W = 0.
+        //     The discrepancy grew as O(sos_eps · |W|), falsely rejecting
+        //     valid punctures at large field magnitudes.
+        //     (SoS float perturbation removed in Subtask 22.)
 
         PuncturePoint p;
         p.lambda       = lambda[i];
