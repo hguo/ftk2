@@ -104,6 +104,39 @@ TEST(polynomial_multiplication) {
     ASSERT_NEAR(r.coeffs[2], 8.0, 1e-10);
 }
 
+TEST(sturm_sequence_repeated_root) {
+    // Subtask 16: tests the == 0.0 zero-detection in poly_rem_d.
+    //
+    // P(λ) = (λ−1)²(λ−2)(λ−3) = λ⁴ − 7λ³ + 17λ² − 17λ + 6.
+    // P has a repeated root at λ=1.  gcd(P, P') is non-trivial, so the
+    // Sturm sequence remainder rem(S₀, S₁) inside build_sturm_deg4 is zero
+    // for the monic factor (λ−1).  With EPS_ZERO = 1e-200 this zero would be
+    // caught by < 1e-200; with == 0.0 it must be exactly 0.0.
+    //
+    // The Sturm theorem counts DISTINCT real roots.  P has 3 distinct real roots
+    // (1, 2, 3), so the count in (0, 4) must be 3.
+    //
+    // Ascending-degree coefficients: [6, -17, 17, -7, 1]
+    double P[5] = {6.0, -17.0, 17.0, -7.0, 1.0};
+
+    SturmSeqDeg4 seq;
+    build_sturm_deg4(P, 4, seq);
+
+    // Count distinct roots in (0, 4): V(0) − V(4) should be 3.
+    int v0 = sturm_count_d4(seq, 0.0);
+    int v4 = sturm_count_d4(seq, 4.0);
+    ASSERT_EQ(v0 - v4, 3);
+
+    // No roots in (−1, 0): V(−1) − V(0) should be 0.
+    int vm1 = sturm_count_d4(seq, -1.0);
+    ASSERT_EQ(vm1 - v0, 0);
+
+    // Exactly one distinct root in (0.5, 1.5) — the double root at λ=1.
+    int v05 = sturm_count_d4(seq, 0.5);
+    int v15 = sturm_count_d4(seq, 1.5);
+    ASSERT_EQ(v05 - v15, 1);
+}
+
 // ============================================================================
 // Bivariate Polynomial Tests
 // ============================================================================

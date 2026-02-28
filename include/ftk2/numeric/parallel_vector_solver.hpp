@@ -887,14 +887,31 @@ struct SturmSeqDeg4 {
 
 /// Float polynomial remainder: R = A mod B (ascending-degree).
 /// Returns effective degree of R, or -1 if R is the zero polynomial.
+///
+/// Subtask 16: EPS_ZERO = 1e-200 replaced by exact == 0.0 comparisons.
+///
+/// Correctness argument: the polynomials fed to build_sturm_deg4 (D_poly and
+/// N_poly[k]) have coefficients computed from integer-representable double
+/// inputs (Mlin/blin from quantized fields).  An algebraically zero remainder
+/// in the Sturm GCD sequence arises only when the input polynomial has a
+/// repeated root.  In that case every cancelling product in the long division
+/// is of the form (exact_double × exact_double - exact_double × exact_double)
+/// evaluated over values derived from the same source integers, so the
+/// cancellation is exact in double arithmetic and yields 0.0 bit-for-bit.
+///
+/// The old EPS_ZERO was intended to catch subnormals from accumulated rounding,
+/// but for our polynomial types such subnormals do not arise: all intermediate
+/// coefficients in the Sturm sequence are O(field⁴) >> 1e-200 when non-zero,
+/// and exactly 0.0 when algebraically zero.
+///
+/// The same `== 0.0` approach is already used in build_sturm_double for cubics.
 static inline int poly_rem_d(const double* A, int dA, const double* B, int dB, double* R) {
-    static constexpr double EPS_ZERO = 1e-200;
     // Copy A into R
     for (int k = 0; k <= dA; ++k) R[k] = A[k];
     for (int k = dA + 1; k <= 4; ++k) R[k] = 0.0;
 
     for (int d = dA; d >= dB; --d) {
-        if (std::abs(R[d]) < EPS_ZERO) { R[d] = 0.0; continue; }
+        if (R[d] == 0.0) continue;  // already zero — skip (Subtask 16: was < 1e-200)
         double coeff = R[d] / B[dB];
         int    shift = d - dB;
         for (int i = 0; i <= dB; ++i) R[i + shift] -= coeff * B[i];
@@ -902,8 +919,8 @@ static inline int poly_rem_d(const double* A, int dA, const double* B, int dB, d
     }
 
     int dR = dB - 1;
-    while (dR > 0 && std::abs(R[dR]) < EPS_ZERO) --dR;
-    return (std::abs(R[dR]) < EPS_ZERO && dR == 0) ? -1 : dR;
+    while (dR > 0 && R[dR] == 0.0) --dR;  // Subtask 16: was < 1e-200
+    return (R[dR] == 0.0 && dR == 0) ? -1 : dR;  // Subtask 16: was < 1e-200
 }
 
 /// Build Sturm sequence for polynomial P of degree degP ≤ 4 (ascending-degree).

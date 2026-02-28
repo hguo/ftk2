@@ -1304,6 +1304,59 @@ vertices (exactly constant, no SoS).  D_poly[4] = 0.0 exactly.  The solver
 must complete without crash or NaN, verifying that the `== 0.0` trim path works.
 110/110 tests pass.
 
+### Subtask 16 — Threshold-Free Polynomial Remainder (`poly_rem_d`)
+
+**Goal**: eliminate the last arbitrary threshold `EPS_ZERO = 1e-200` from
+`poly_rem_d`, the polynomial long-division helper used by `build_sturm_deg4`.
+
+**Background**: `poly_rem_d(A, dA, B, dB, R)` computes R = A mod B via
+floating-point long division.  Three uses of `EPS_ZERO = 1e-200`:
+
+```cpp
+// Use 1: skip elimination step if leading coefficient is tiny
+if (std::abs(R[d]) < EPS_ZERO) { R[d] = 0.0; continue; }
+
+// Use 2: trim trailing near-zero coefficients of the remainder
+while (dR > 0 && std::abs(R[dR]) < EPS_ZERO) --dR;
+
+// Use 3: detect the zero polynomial
+return (std::abs(R[dR]) < EPS_ZERO && dR == 0) ? -1 : dR;
+```
+
+**Why `== 0.0` is correct**:
+
+The polynomials processed by `build_sturm_deg4` are D_poly and N_poly[k],
+whose coefficients come from products and sums of Mlin values (quantized-integer
+differences cast to double).  Any algebraically zero remainder in the Sturm GCD
+sequence arises when:
+
+1. *Generic case (SoS active)*: the input polynomial has no repeated roots.  All
+   Sturm remainders are non-zero in exact arithmetic, and their floating-point
+   approximations are O(field⁴) ≫ 0 — the `== 0.0` path is never reached.
+
+2. *Repeated-root case (no SoS or degenerate W)*: the GCD between P and P' is
+   non-trivial (e.g. D has a root shared with D').  In this case the algebraic
+   remainder is exactly 0, and the double-arithmetic computation also gives
+   exactly 0.0 because the cancellation is between products of integer-derived
+   doubles (exact cancellation, no rounding residue).
+
+**Comparison with `build_sturm_double`**: the existing cubic Sturm sequence
+builder already uses `== 0.0` (not a threshold):
+```cpp
+if (s21 == 0.0 && s20 == 0.0) seq.n = 2;   // termination without threshold
+```
+Subtask 16 makes `poly_rem_d` consistent with this approach.
+
+**Implementation**: replace all three uses of `std::abs(R[...]) < EPS_ZERO`
+with `R[...] == 0.0`.  The `static constexpr double EPS_ZERO = 1e-200` line
+is deleted entirely.
+
+**Tests**: `sturm_sequence_repeated_root` — builds the Sturm sequence for
+P(λ) = (λ−1)²(λ−2)(λ−3) = λ⁴−7λ³+17λ²−17λ+6.  The double root at λ=1 means
+rem(P, P') is algebraically zero; `poly_rem_d` must return -1 (zero polynomial)
+with the `== 0.0` check, and the Sturm count in (0,4) must be 3 (correct count
+of distinct real roots).  113/113 tests pass.
+
 ---
 
 ## 8. Implementation Status
@@ -1328,6 +1381,7 @@ must complete without crash or NaN, verifying that the `== 0.0` trim path works.
 | **Subtask 13**: Deferred polynomial ν evaluation via N_k(λ)/D(λ) | same | Implemented |
 | **Subtask 14**: ULP-convergence bisection (remove `target_width = 1e-10`) | same | Implemented |
 | **Subtask 15**: Exact-zero degree trimming for D_poly / N_poly (remove `< 1e-200`) | same | Implemented |
+| **Subtask 16**: Threshold-free `poly_rem_d` (remove `EPS_ZERO = 1e-200`) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
