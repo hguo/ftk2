@@ -1092,6 +1092,88 @@ inline void compute_bary_numerators(
     for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
 }
 
+/// Subtask 23: compute N/D polynomials from exact integer Mlin_q/blin_q.
+///
+/// Builds the degree-2 Gram-matrix polynomial A[p][q](λ) and rhs vector
+/// g[p](λ) exactly in __int128 from int64_t Mlin_q/blin_q (derived from
+/// VqT/WqT integer-quantized field values), eliminating catastrophic
+/// cancellation in the differences VqT[r][c]-VqT[r][2] that would occur
+/// when the float field values are nearly constant across vertices.
+///
+/// Overflow analysis (QUANT_SCALE = 2^20 ≈ 10^6, max_field ≤ 5×10^6):
+///   |Mlin_q[r][c][*]| ≤ 2 × max_field × QUANT_SCALE ≤ 10^13
+///   |A[p][q][k]|      ≤ 3 × (10^13)^2 = 3×10^26 < 2^89 << 2^127 ✓
+///   |g[p][k]|         ≤ 3 × (10^13) × (5×10^12) ≤ 1.5×10^26 ✓
+///
+/// The degree-4 D and N polynomials are products of two degree-2 polys
+/// with coefficients ~10^26, giving products ~10^52 — beyond __int128.
+/// We convert A and g to double after exact __int128 computation, then
+/// complete the degree-4 multiplications in double.  The degree-2 building
+/// blocks have no cancellation error, which is the meaningful improvement
+/// over computing them from float VT/WT.
+inline void compute_bary_numerators_from_integers(
+        const int64_t Mlin_q[3][2][2], const int64_t blin_q[3][2],
+        double N[3][5], double D[5]) {
+    // Step 1: A[p][q][k] and g[p][k] exactly in __int128
+    __int128 A_i128[2][2][3] = {};
+    for (int r = 0; r < 3; ++r)
+        for (int p = 0; p < 2; ++p)
+            for (int q = 0; q < 2; ++q) {
+                int64_t m0p = Mlin_q[r][p][0], m1p = Mlin_q[r][p][1];
+                int64_t m0q = Mlin_q[r][q][0], m1q = Mlin_q[r][q][1];
+                A_i128[p][q][0] += (__int128)m0p * m0q;
+                A_i128[p][q][1] += (__int128)m0p * m1q + (__int128)m1p * m0q;
+                A_i128[p][q][2] += (__int128)m1p * m1q;
+            }
+
+    __int128 g_i128[2][3] = {};
+    for (int r = 0; r < 3; ++r)
+        for (int p = 0; p < 2; ++p) {
+            int64_t m0 = Mlin_q[r][p][0], m1 = Mlin_q[r][p][1];
+            int64_t b0 = blin_q[r][0],    b1 = blin_q[r][1];
+            g_i128[p][0] += (__int128)m0 * b0;
+            g_i128[p][1] += (__int128)m0 * b1 + (__int128)m1 * b0;
+            g_i128[p][2] += (__int128)m1 * b1;
+        }
+
+    // Step 2: convert A and g to double
+    // Magnitudes ≤ 3×10^26 < 2^89; conversion loses at most ~36 low bits,
+    // but the relative error is ≤ 2^-53 — no cancellation.
+    double A[2][2][3], g[2][3];
+    for (int p = 0; p < 2; ++p)
+        for (int q = 0; q < 2; ++q)
+            for (int k = 0; k < 3; ++k)
+                A[p][q][k] = (double)A_i128[p][q][k];
+    for (int p = 0; p < 2; ++p)
+        for (int k = 0; k < 3; ++k)
+            g[p][k] = (double)g_i128[p][k];
+
+    // Step 3: degree-4 products (same algebra as compute_bary_numerators)
+    auto mul2 = [](const double* P, const double* Q, double* R) {
+        for (int k = 0; k < 5; ++k) R[k] = 0.0;
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                R[i + j] += P[i] * Q[j];
+    };
+
+    double t0[5], t1[5];
+    mul2(A[0][0], A[1][1], t0);
+    mul2(A[0][1], A[0][1], t1);
+    for (int k = 0; k < 5; ++k) D[k] = t0[k] - t1[k];
+
+    double a11g0[5], a01g1[5];
+    mul2(A[1][1], g[0], a11g0);
+    mul2(A[0][1], g[1], a01g1);
+    for (int k = 0; k < 5; ++k) N[0][k] = a11g0[k] - a01g1[k];
+
+    double a00g1[5], a01g0[5];
+    mul2(A[0][0], g[1], a00g1);
+    mul2(A[0][1], g[0], a01g0);
+    for (int k = 0; k < 5; ++k) N[1][k] = a00g1[k] - a01g0[k];
+
+    for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
+}
+
 /**
  * @brief Solve for parallel vectors on a triangle (2-simplex)
  *
@@ -1743,23 +1825,30 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     }
 
     // ----------------------------------------------------------------
-    // Subtasks 6 & 7: compute bary numerator polynomials N[3][5] and D[5].
+    // Subtasks 6, 7, & 23: compute bary numerator polynomials N[3][5] and D[5].
     //
     // Expresses μ_k(λ) = N_k(λ)/D(λ) with degree-4 polynomials derived
     // from the linear-in-λ M(λ) and b(λ) matrices.
     // D = det(MᵀM) ≥ 0 is the Gram determinant (non-negative by Cauchy-Binet).
+    //
+    // Subtask 23: build Mlin_q and blin_q from integer VqT/WqT to eliminate
+    // catastrophic cancellation in the differences VqT[r][c]-VqT[r][2].
+    // The degree-2 Gram-matrix coefficients A[p][q] and rhs g[p] are then
+    // computed exactly in __int128 before being converted to double for the
+    // degree-4 multiplications in compute_bary_numerators_from_integers.
     // ----------------------------------------------------------------
-    double Mlin[3][2][2], blin_arr[3][2];
+    int64_t Mlin_q[3][2][2];
+    int64_t blin_q[3][2];
     for (int r = 0; r < 3; ++r) {
         for (int c = 0; c < 2; ++c) {
-            Mlin[r][c][0] = (double)(VT[r][c] - VT[r][2]);
-            Mlin[r][c][1] = -(double)(WT[r][c] - WT[r][2]);
+            Mlin_q[r][c][0] = VqT[r][c] - VqT[r][2];
+            Mlin_q[r][c][1] = -(WqT[r][c] - WqT[r][2]);
         }
-        blin_arr[r][0] = -(double)VT[r][2];
-        blin_arr[r][1] =  (double)WT[r][2];
+        blin_q[r][0] = -VqT[r][2];
+        blin_q[r][1] =  WqT[r][2];
     }
     double N_poly[3][5], D_poly[5];
-    compute_bary_numerators(Mlin, blin_arr, N_poly, D_poly);
+    compute_bary_numerators_from_integers(Mlin_q, blin_q, N_poly, D_poly);
 
     // ----------------------------------------------------------------
     // Subtask 7: pre-compute the Sturm sequence for D(λ) once.

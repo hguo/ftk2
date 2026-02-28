@@ -1241,6 +1241,107 @@ TEST(solve_pv_tetrahedron_q_zero_exact) {
     }
 }
 
+// ============================================================
+// Subtask 23: integer Mlin_q/blin_q for N_poly/D_poly computation
+// ============================================================
+
+TEST(compute_bary_numerators_from_integers_consistency) {
+    // Verify compute_bary_numerators_from_integers produces N/D polynomials
+    // whose ratio N_k/D agrees with the float version at a sample of λ values.
+    //
+    // N_int and D_int are both scaled by QUANT_SCALE^4 relative to N_fp/D_fp
+    // (since Mlin_q entries are QUANT_SCALE × the float Mlin entries).
+    // The ratio N_int[k](λ)/D_int(λ) = N_fp[k](λ)/D_fp(λ) is scale-invariant,
+    // so we compare at a few λ values.
+    //
+    // Use the interior-puncture field (Field A from earlier tests):
+    //   VT = [[0.5,0,0],[1,-3,0],[1,0,-4]], WT = I
+    double VT[3][3] = {{ 0.5, 1.0, 1.0 },
+                       { 0.0,-3.0, 0.0 },
+                       { 0.0, 0.0,-4.0 }};
+    double WT[3][3] = {{ 1.0, 0.0, 0.0 },
+                       { 0.0, 1.0, 0.0 },
+                       { 0.0, 0.0, 1.0 }};
+
+    // Float Mlin/blin (direct from VT/WT)
+    double Mlin[3][2][2], blin[3][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            Mlin[r][c][0] = VT[r][c] - VT[r][2];
+            Mlin[r][c][1] = -(WT[r][c] - WT[r][2]);
+        }
+        blin[r][0] = -VT[r][2];
+        blin[r][1] =  WT[r][2];
+    }
+    double N_fp[3][5], D_fp[5];
+    compute_bary_numerators(Mlin, blin, N_fp, D_fp);
+
+    // Integer Mlin_q/blin_q (quantized via quant())
+    int64_t Mlin_q[3][2][2], blin_q[3][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            Mlin_q[r][c][0] = quant(VT[r][c] - VT[r][2]);
+            Mlin_q[r][c][1] = quant(-(WT[r][c] - WT[r][2]));
+        }
+        blin_q[r][0] = quant(-VT[r][2]);
+        blin_q[r][1] = quant( WT[r][2]);
+    }
+    double N_int[3][5], D_int[5];
+    compute_bary_numerators_from_integers(Mlin_q, blin_q, N_int, D_int);
+
+    // Evaluate both at λ = 0.5 (interior of root range [0,1]).
+    // N_int/D_int should agree with N_fp/D_fp to within ~2×10^-5 relative
+    // error (QUANT_SCALE = 2^20 gives quantization error ~10^-6 per coefficient).
+    double lam = 0.5;
+    auto eval = [](const double* c, double x) {
+        return c[0] + x*(c[1] + x*(c[2] + x*(c[3] + x*c[4])));
+    };
+    double D_fp_val  = eval(D_fp, lam);
+    double D_int_val = eval(D_int, lam);
+    // Both D values must have the same sign (D = det(MᵀM) ≥ 0 here)
+    ASSERT_TRUE(D_fp_val >= 0.0);
+    ASSERT_TRUE(D_int_val >= 0.0);
+    for (int k = 0; k < 3; ++k) {
+        double nf = eval(N_fp[k],  lam);
+        double ni = eval(N_int[k], lam);
+        // Ratio ni/D_int vs nf/D_fp should agree to ~10^-4 relative
+        double mu_fp  = nf / D_fp_val;
+        double mu_int = ni / D_int_val;
+        ASSERT_NEAR(mu_int, mu_fp, 1e-4);
+    }
+}
+
+TEST(solve_pv_triangle_integer_npoly_nearly_constant_field) {
+    // Field where V is nearly constant across vertices — small Mlin differences.
+    // Float subtraction of nearby doubles loses precision; integer arithmetic does not.
+    //
+    // V[0] = (10.0,  0.1, 0.0)
+    // V[1] = (10.0, -0.1, 0.0)
+    // V[2] = (10.0,  0.0, 0.0)
+    // W[0] = (0.0,   1.0, 0.0)
+    // W[1] = (0.0,  -1.0, 0.0)
+    // W[2] = (0.0,   0.0, 1.0)
+    //
+    // On the edge from V[0] to V[1], V component [0] is constant (10.0)
+    // while component [1] varies — exactly the scenario that stresses
+    // float subtraction in Mlin[r][c][0] = VT[r][c] - VT[r][2].
+    double V[3][3] = {{10.0,  0.1, 0.0},
+                      {10.0, -0.1, 0.0},
+                      {10.0,  0.0, 0.0}};
+    double W[3][3] = {{ 0.0,  1.0, 0.0},
+                      { 0.0, -1.0, 0.0},
+                      { 0.0,  0.0, 1.0}};
+    std::vector<PuncturePoint> pts;
+    int n = solve_pv_triangle(V, W, pts, nullptr);
+    // Should not crash; result is an integer count ≥ 0
+    ASSERT_TRUE(n >= 0);
+    // Each puncture must have valid barycentric coordinates summing to 1
+    for (int i = 0; i < n; ++i) {
+        double sum = pts[i].barycentric[0] + pts[i].barycentric[1] + pts[i].barycentric[2];
+        ASSERT_NEAR(sum, 1.0, 1e-9);
+    }
+}
+
 void test_exactpv() {
     // Test runner - the tests are automatically registered and run via static constructors
     std::cout << "ExactPV tests completed (polynomial utilities, data structures, triangle/tetrahedron solvers)" << std::endl;
