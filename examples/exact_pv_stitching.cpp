@@ -7,6 +7,9 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <cmath>
+#include <functional>
+#include <algorithm>
 #include <vtkPolyData.h>
 #include <vtkPoints.h>
 #include <vtkCellArray.h>
@@ -16,455 +19,406 @@
 
 using namespace ftk2;
 
+// Field evaluation: (x,y,z) -> {Ux,Uy,Uz,Vx,Vy,Vz}
+using FieldEval = std::function<std::array<double,6>(double,double,double)>;
+
+struct TestCase {
+    std::string name;
+    std::string description;
+    FieldEval   eval;
+};
+
 struct PunctureConnection {
-    int puncture1_idx;
-    int puncture2_idx;
+    int puncture1_idx, puncture2_idx;
     uint64_t tet_id;
 };
 
-int main() {
-    std::cout << "ExactPV with Stitching - Creating single closed curve" << std::endl;
-
-    // Same field configuration as before
-    const int N = 16;
-    auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{N, N, N});
-    ftk::ndarray<double> uv({6, N, N, N});
-
-    // ----------------------------------------------------------------
-    // FIELD: single closed PV curve, SoS-robust
-    //
-    // U = (1, 0, 0) everywhere (constant)
-    // V = (1, z-z0, (x-cx)^2+(y-cy)^2-R^2)
-    //
-    // U x V = (0, -Vz, Vy) = 0  iff  Vy=0 AND Vz=0
-    //   Vy=0  =>  z = z0            (horizontal plane)
-    //   Vz=0  =>  circle of radius R at height z0
-    //
-    // With SoS perturbation in the solver, we no longer need irrational
-    // offsets to keep the locus off mesh edges/vertices.  Use exact values.
-    // ----------------------------------------------------------------
-    // z0 = N/2 + 0.5: circle sits exactly midway between two grid planes.
-    // This is a principled half-integer — not a magic offset — and avoids
-    // the plane-tangency degeneracy (circle in the same plane as a mesh layer).
-    // SoS then handles any remaining edge/vertex crossings automatically.
-    double z0 = N / 2.0 + 0.5;
-    double cx = N / 2.0;            // center on integer grid point
-    double cy = N / 2.0;
-    double R  = N / 3.0;            // exact rational radius
-
-    for (int z = 0; z < N; ++z) {
-        for (int y = 0; y < N; ++y) {
-            for (int x = 0; x < N; ++x) {
-                // U = (1, 0, 0) — constant first vector field
-                double ux = 1.0, uy = 0.0, uz = 0.0;
-
-                // V designed so PV locus is circle at z=z0
-                double vx = 1.0;
-                double vy = (double)z - z0;                                    // 0 on plane z=z0
-                double vz = (x - cx)*(x - cx) + (y - cy)*(y - cy) - R*R;     // 0 on cylinder
-
-                uv.f(0, x, y, z) = ux; uv.f(1, x, y, z) = uy; uv.f(2, x, y, z) = uz;
-                uv.f(3, x, y, z) = vx; uv.f(4, x, y, z) = vy; uv.f(5, x, y, z) = vz;
-            }
-        }
+// ─── Real roots of Q[0]+Q[1]λ+Q[2]λ²+Q[3]λ³=0, sorted ─────────────────────
+static std::vector<double> q_real_roots(const double Q[4]) {
+    std::vector<double> roots;
+    int deg = 3;
+    while (deg > 0 && Q[deg] == 0.0) --deg;
+    if (deg == 0) return roots;
+    if (deg == 1) { roots.push_back(-Q[0]/Q[1]); return roots; }
+    if (deg == 2) {
+        double d = Q[1]*Q[1] - 4.0*Q[0]*Q[2];
+        if (d < 0) return roots;
+        double sq = std::sqrt(d);
+        roots.push_back((-Q[1]-sq)/(2.0*Q[2]));
+        if (d > 0) roots.push_back((-Q[1]+sq)/(2.0*Q[2]));
+        std::sort(roots.begin(), roots.end());
+        return roots;
     }
-
-    std::map<std::string, ftk::ndarray<double>> data;
-    data["uv"] = uv;
-
-    ExactPVPredicate<double> pred;
-    pred.vector_var_name = "uv";
-    SimplicialEngine<double, ExactPVPredicate<double>> engine(mesh, pred);
-
-    std::cout << "Extracting puncture points from triangles..." << std::endl;
-    engine.execute(data, {"uv"});
-    auto complex = engine.get_complex();
-
-    std::cout << "Found " << complex.vertices.size() << " puncture points" << std::endl;
-
-    // Collect all triangle punctures.
-    // SoS perturbation in the solver guarantees barycentric coords are
-    // generically strictly positive — no ad-hoc threshold filter needed.
-    std::vector<int> non_degenerate_punctures;
-    for (size_t i = 0; i < complex.vertices.size(); ++i) {
-        const auto& v = complex.vertices[i];
-        if (v.simplex.dimension == 2)
-            non_degenerate_punctures.push_back(i);
+    // Cubic: normalize to monic x³+bx²+cx+d
+    double inv = 1.0/Q[3];
+    double b = Q[2]*inv, c = Q[1]*inv, d = Q[0]*inv;
+    // Depress: x = t - b/3  →  t³ + pt + q = 0
+    double p = c - b*b/3.0;
+    double q = d - b*c/3.0 + 2.0*b*b*b/27.0;
+    double shift = -b/3.0;
+    double disc = -4.0*p*p*p - 27.0*q*q;  // >0: three real roots
+    if (disc >= 0.0 && p < 0.0) {
+        // Three real roots via trigonometric method
+        double m     = 2.0*std::sqrt(-p/3.0);
+        double arg   = std::max(-1.0, std::min(1.0, (1.5*q/p)*std::sqrt(-3.0/p)));
+        double theta = std::acos(arg)/3.0;
+        for (int k = 0; k < 3; ++k)
+            roots.push_back(shift + m*std::cos(theta - 2.0*M_PI*k/3.0));
+    } else {
+        // One real root via Cardano
+        double sq_arg = q*q/4.0 + p*p*p/27.0;
+        double D = (sq_arg >= 0.0) ? std::sqrt(sq_arg) : 0.0;
+        double u = std::cbrt(-q/2.0 + D);
+        double v = std::cbrt(-q/2.0 - D);
+        roots.push_back(shift + u + v);
     }
-    std::cout << non_degenerate_punctures.size() << " punctures on triangles (SoS-robust)" << std::endl;
+    std::sort(roots.begin(), roots.end());
+    return roots;
+}
 
-    // Diagnostic: per-triangle puncture count histogram
-    {
-        std::map<std::set<uint64_t>, int> tri_count;
-        for (int i : non_degenerate_punctures) {
-            const auto& v = complex.vertices[i];
-            std::set<uint64_t> verts(v.simplex.vertices, v.simplex.vertices + 3);
-            tri_count[verts]++;
-        }
-        std::map<int, int> count_hist;
-        for (const auto& [k, v] : tri_count) count_hist[v]++;
-        std::cout << "Per-triangle puncture count histogram:" << std::endl;
-        for (const auto& [n, cnt] : count_hist)
-            std::cout << "  " << cnt << " triangles with " << n << " puncture(s)" << std::endl;
+// ─── Correct stitching for tet with any even number of punctures ─────────────
+// Algorithm (no proximity):
+//   1. Sort punctures by λ (stored in complex.vertices[i].scalar)
+//   2. Find real roots of Q → interval boundaries
+//   3. Within each Q-interval: pair adjacent punctures (0,1), (2,3), ...
+static void stitch_ambiguous_tet(
+    const std::vector<int>&    tet_punctures,
+    const FeatureComplex&      complex,
+    const double               Q_poly[4],
+    bool                       q_zero,
+    uint64_t                   tet_id,
+    std::vector<PunctureConnection>& connections)
+{
+    // 1. Sort by λ
+    std::vector<std::pair<double,int>> lam_idx;
+    lam_idx.reserve(tet_punctures.size());
+    for (int p : tet_punctures)
+        lam_idx.push_back({(double)complex.vertices[p].scalar, p});
+    std::sort(lam_idx.begin(), lam_idx.end());
 
-        // Print first few 3-puncture triangles with their lambda values
-        int shown = 0;
-        for (int i : non_degenerate_punctures) {
-            const auto& v = complex.vertices[i];
-            std::set<uint64_t> verts(v.simplex.vertices, v.simplex.vertices + 3);
-            if (tri_count[verts] == 3 && shown < 2) {
-                // Find all punctures on this triangle
-                bool first = true;
-                for (int j : non_degenerate_punctures) {
-                    const auto& w = complex.vertices[j];
-                    std::set<uint64_t> verts2(w.simplex.vertices, w.simplex.vertices + 3);
-                    if (verts2 == verts) {
-                        if (first) {
-                            std::cout << "  3-punc tri {";
-                            for (auto v2 : verts) std::cout << v2 << " ";
-                            std::cout << "}: ";
-                            first = false;
-                            ++shown;
-                        }
-                        std::cout << "lambda=" << w.scalar << " bary=("
-                                  << w.barycentric_coords[0][0] << ","
-                                  << w.barycentric_coords[0][1] << ","
-                                  << w.barycentric_coords[0][2] << ") ";
-                    }
-                }
-                if (!first) std::cout << std::endl;
-            }
-        }
+    // 2. Build interval boundary list: {-∞, r₁, r₂, ..., +∞}
+    std::vector<double> bounds = {-1e300};
+    if (!q_zero) {
+        auto roots = q_real_roots(Q_poly);
+        for (double r : roots) bounds.push_back(r);
     }
+    bounds.push_back(1e300);
 
-    // Build map: triangle face -> puncture indices (only non-degenerate)
-    std::set<int> non_degen_set(non_degenerate_punctures.begin(), non_degenerate_punctures.end());
-    std::map<std::set<uint64_t>, std::vector<int>> face_to_punctures;
-    for (int i : non_degenerate_punctures) {
-        const auto& v = complex.vertices[i];
-        if (v.simplex.dimension == 2) {
-            std::set<uint64_t> tri_verts(v.simplex.vertices, v.simplex.vertices + 3);
-            face_to_punctures[tri_verts].push_back(i);
+    // 3. Walk through sorted punctures; emit pairs within each Q-interval
+    size_t bi = 0;      // index into bounds (left edge of current interval)
+    std::vector<int> group;
+    for (auto& [lam, pidx] : lam_idx) {
+        // Advance to the interval that contains lam
+        while (bi + 2 < bounds.size() && lam > bounds[bi+1]) {
+            for (size_t j = 0; j + 1 < group.size(); j += 2)
+                connections.push_back({group[j], group[j+1], tet_id});
+            group.clear();
+            ++bi;
         }
+        group.push_back(pidx);
     }
+    // Emit remaining group
+    for (size_t j = 0; j + 1 < group.size(); j += 2)
+        connections.push_back({group[j], group[j+1], tet_id});
+}
 
-    std::cout << "\nStitching punctures through tetrahedra..." << std::endl;
-
-    std::vector<PunctureConnection> connections;
-    int tets_checked = 0;
-    int tets_with_punctures = 0;
-    int tets_with_2_punctures = 0;
-    int tets_with_more = 0;
-    std::map<int, int> puncture_count_histogram;
-
-    mesh->iterate_simplices(3, [&](const Simplex& s) {
-        tets_checked++;
-
-        // Get 4 faces of this tet
-        std::vector<std::set<uint64_t>> faces = {
-            {s.vertices[0], s.vertices[1], s.vertices[2]},
-            {s.vertices[0], s.vertices[1], s.vertices[3]},
-            {s.vertices[0], s.vertices[2], s.vertices[3]},
-            {s.vertices[1], s.vertices[2], s.vertices[3]}
-        };
-
-        // Collect all punctures on this tet's faces
-        std::vector<int> tet_punctures;
-        for (const auto& face : faces) {
-            if (face_to_punctures.count(face)) {
-                for (int p_idx : face_to_punctures[face]) {
-                    tet_punctures.push_back(p_idx);
-                }
-            }
-        }
-
-        if (tet_punctures.empty()) {
-            return true;  // Continue iteration
-        }
-
-        tets_with_punctures++;
-        puncture_count_histogram[tet_punctures.size()]++;
-
-        // Debug: check for odd counts
-        if (tet_punctures.size() % 2 == 1) {
-            if (puncture_count_histogram[tet_punctures.size()] <= 5) {
-                std::cout << "  ODD COUNT! Tet with " << tet_punctures.size() << " punctures:" << std::endl;
-                std::cout << "    Tet vertices: ";
-                for (int i = 0; i < 4; ++i) std::cout << s.vertices[i] << " ";
-                std::cout << std::endl;
-
-                // Show which faces have punctures
-                for (size_t f = 0; f < faces.size(); ++f) {
-                    if (face_to_punctures.count(faces[f])) {
-                        std::cout << "    Face " << f << ": {";
-                        for (auto v : faces[f]) std::cout << v << " ";
-                        std::cout << "} has " << face_to_punctures[faces[f]].size() << " puncture(s)" << std::endl;
-                    }
-                }
-            }
-        }
-
-        // Stitch according to number of punctures
-        if (tet_punctures.size() == 2) {
-            // Simple case: connect the two punctures
-            tets_with_2_punctures++;
-            PunctureConnection conn;
-            conn.puncture1_idx = tet_punctures[0];
-            conn.puncture2_idx = tet_punctures[1];
-            conn.tet_id = s.vertices[0];  // Use first vertex as tet ID
-            connections.push_back(conn);
-        } else if (tet_punctures.size() > 2) {
-            // Ambiguous case: use ExactPV characteristic polynomials + all valid
-            // λ-intervals to determine which punctures pair with which.
-            tets_with_more++;
-
-            // Get field values at tet vertices, separate U and V
-            double V_arr[4][3], W_arr[4][3];
-            for (int i = 0; i < 4; ++i) {
-                auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                V_arr[i][0] = uv.f(0, coords[0], coords[1], coords[2]);
-                V_arr[i][1] = uv.f(1, coords[0], coords[1], coords[2]);
-                V_arr[i][2] = uv.f(2, coords[0], coords[1], coords[2]);
-                W_arr[i][0] = uv.f(3, coords[0], coords[1], coords[2]);
-                W_arr[i][1] = uv.f(4, coords[0], coords[1], coords[2]);
-                W_arr[i][2] = uv.f(5, coords[0], coords[1], coords[2]);
-            }
-
-            // Compute characteristic polynomials for this tet
-            double Q_poly[4], P_poly[4][4];
-            characteristic_polynomials_pv_tetrahedron(V_arr, W_arr, Q_poly, P_poly);
-
-            bool q_zero = true;
-            for (int k = 0; k <= 3; ++k) if (Q_poly[k] != 0.0) { q_zero = false; break; }
-
-            if (!q_zero) {
-                // Get ALL valid λ-intervals where the PV curve is inside the tet
-                auto intervals = solve_barycentric_inequalities(P_poly, Q_poly, 1e-10);
-
-                // Diagnostic: print first few ambiguous tets
-                static int diag_count = 0;
-                if (diag_count < 5) {
-                    ++diag_count;
-                    std::cout << "[DIAG] Tet with " << tet_punctures.size()
-                              << " punctures, intervals=" << intervals.size() << ":";
-                    for (const auto& iv : intervals)
-                        std::cout << " [" << iv.min << "," << iv.max << "]";
-                    std::cout << std::endl;
-                }
-
-                // Build curve segment with polynomials and tet vertex positions
-                PVCurveSegment seg;
-                for (int k = 0; k < 4; ++k) seg.Q.coeffs[k] = Q_poly[k];
-                for (int i = 0; i < 4; ++i)
-                    for (int k = 0; k < 4; ++k) seg.P[i].coeffs[k] = P_poly[i][k];
-                for (int i = 0; i < 4; ++i) {
-                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                    for (int j = 0; j < 3; ++j) seg.tet_vertices[i][j] = coords[j];
-                }
-
-                // Helper: physical position of a puncture from its barycentric coords
-                auto get_phys = [&](int p_idx) -> std::array<double, 3> {
-                    const auto& punc = complex.vertices[p_idx];
-                    std::array<double, 3> pos = {0.0, 0.0, 0.0};
-                    for (int i = 0; i < 3; ++i) {
-                        auto vc = mesh->get_vertex_coordinates(punc.simplex.vertices[i]);
-                        for (int j = 0; j < 3; ++j)
-                            pos[j] += punc.barycentric_coords[0][i] * vc[j];
-                    }
-                    return pos;
-                };
-
-                std::vector<bool> paired(tet_punctures.size(), false);
-
-                // For each interval the PV curve is inside the tet, its two
-                // endpoints correspond to the entry/exit faces.  Pair the
-                // unpaired puncture closest (in physical space) to each endpoint.
-                for (const auto& interval : intervals) {
-                    double lam_lo = std::max(interval.min, -100.0);
-                    double lam_hi = std::min(interval.max,  100.0);
-
-                    auto pos_lo = seg.get_physical_coords(lam_lo);
-                    auto pos_hi = seg.get_physical_coords(lam_hi);
-
-                    // Closest unpaired puncture to entry endpoint
-                    int best_lo = -1; double d_lo = 1e10;
-                    for (size_t i = 0; i < tet_punctures.size(); ++i) {
-                        if (paired[i]) continue;
-                        auto pos = get_phys(tet_punctures[i]);
-                        double d = 0;
-                        for (int j = 0; j < 3; ++j) d += (pos[j]-pos_lo[j])*(pos[j]-pos_lo[j]);
-                        if (d < d_lo) { d_lo = d; best_lo = (int)i; }
-                    }
-                    if (best_lo < 0) continue;
-                    paired[best_lo] = true;  // claim entry puncture
-
-                    // Closest unpaired puncture to exit endpoint
-                    int best_hi = -1; double d_hi = 1e10;
-                    for (size_t i = 0; i < tet_punctures.size(); ++i) {
-                        if (paired[i]) continue;
-                        auto pos = get_phys(tet_punctures[i]);
-                        double d = 0;
-                        for (int j = 0; j < 3; ++j) d += (pos[j]-pos_hi[j])*(pos[j]-pos_hi[j]);
-                        if (d < d_hi) { d_hi = d; best_hi = (int)i; }
-                    }
-
-                    if (best_hi < 0) { paired[best_lo] = false; continue; }  // release
-                    paired[best_hi] = true;
-                    connections.push_back({tet_punctures[best_lo], tet_punctures[best_hi], s.vertices[0]});
-                }
-
-                // Fallback: pair any remaining unpaired punctures
-                for (size_t i = 0; i < tet_punctures.size(); ++i) {
-                    if (paired[i]) continue;
-                    for (size_t j = i + 1; j < tet_punctures.size(); ++j) {
-                        if (paired[j]) continue;
-                        connections.push_back({tet_punctures[i], tet_punctures[j], s.vertices[0]});
-                        paired[i] = paired[j] = true;
-                        break;
-                    }
-                }
-            } else {
-                // Degenerate (Q=0): pair sequentially as fallback
-                for (size_t i = 0; i + 1 < tet_punctures.size(); i += 2)
-                    connections.push_back({tet_punctures[i], tet_punctures[i + 1], s.vertices[0]});
-            }
-        }
-
-        return true;  // Continue iteration
-    });
-
-    std::cout << "Checked " << tets_checked << " tetrahedra" << std::endl;
-    std::cout << "  " << tets_with_punctures << " tets have punctures on faces" << std::endl;
-    std::cout << "  " << tets_with_2_punctures << " tets have exactly 2 punctures (unambiguous)" << std::endl;
-    std::cout << "  " << tets_with_more << " tets have >2 punctures (ambiguous)" << std::endl;
-
-    std::cout << "\nPuncture count histogram:" << std::endl;
-    for (const auto& pair : puncture_count_histogram) {
-        std::cout << "  " << pair.second << " tets with " << pair.first << " punctures";
-        if (pair.first % 2 == 1) std::cout << " <-- ODD (SHOULD NOT HAPPEN!)";
-        std::cout << std::endl;
-    }
-
-    std::cout << "\nCreated " << connections.size() << " connections" << std::endl;
-
-    // Build adjacency graph from connections
-    std::map<int, std::vector<int>> adjacency;
-    for (const auto& conn : connections) {
-        adjacency[conn.puncture1_idx].push_back(conn.puncture2_idx);
-        adjacency[conn.puncture2_idx].push_back(conn.puncture1_idx);
-    }
-
-    // Check for unpaired punctures
-    int unpaired_count = 0;
-    for (int i : non_degenerate_punctures) {
-        if (adjacency[i].size() == 0) {
-            unpaired_count++;
-        } else if (adjacency[i].size() != 2) {
-            // Degree != 2 means not a simple path/loop
-            if (unpaired_count < 10) {
-                std::cout << "  Puncture " << i << " has degree " << adjacency[i].size() << std::endl;
-            }
-        }
-    }
-    std::cout << "Unpaired punctures (degree 0): " << unpaired_count << std::endl;
-
-    // Trace connected curves as ordered paths.
-    // Each node in a well-formed PV curve has degree exactly 2, so we can
-    // walk the adjacency list step-by-step (never revisiting the previous
-    // node) until we return to the start (closed) or hit a dead end (open).
-    std::set<int> visited;
-    struct Curve { std::vector<int> pts; bool closed; };
-    std::vector<Curve> curves;
-
-    for (size_t start_idx = 0; start_idx < complex.vertices.size(); ++start_idx) {
-        if (visited.count(start_idx) || adjacency[start_idx].empty()) continue;
-
-        Curve curve;
-        int curr = (int)start_idx;
-        int prev = -1;
-
-        // Walk until we revisit a node (closed) or run out of unvisited neighbours (open).
-        while (true) {
-            if (visited.count(curr)) {
-                // Closed back to a previously visited node.
-                curve.closed = (curr == (int)start_idx);
-                break;
-            }
-            visited.insert(curr);
-            curve.pts.push_back(curr);
-
-            // Pick the neighbour that is not where we came from.
-            int next = -1;
-            for (int nb : adjacency[curr]) {
-                if (nb != prev) { next = nb; break; }
-            }
-            if (next == -1) { curve.closed = false; break; }  // open end
-            prev = curr;
-            curr = next;
-        }
-
-        if (curve.pts.size() > 1)
-            curves.push_back(std::move(curve));
-    }
-
-    std::cout << "\nExtracted " << curves.size() << " connected curve(s)" << std::endl;
-    for (size_t i = 0; i < std::min(curves.size(), (size_t)5); ++i) {
-        std::cout << "  Curve " << i << ": " << curves[i].pts.size() << " punctures"
-                  << (curves[i].closed ? " (closed)" : " (open)") << std::endl;
-    }
-
-    // Write each curve as a single vtkPolyLine cell.
-    // For a closed curve, repeat the first point ID at the end so VTK
-    // draws the closing segment back to the start.
+// ─── Write curves to VTP ─────────────────────────────────────────────────────
+static void write_curves(
+    const std::vector<std::vector<int>>&  curves,   // each curve: list of puncture indices
+    const std::vector<bool>&              closed,
+    const FeatureComplex&                 complex,
+    std::shared_ptr<Mesh>                 mesh,
+    const std::string&                    filename)
+{
     auto polydata = vtkSmartPointer<vtkPolyData>::New();
     auto points   = vtkSmartPointer<vtkPoints>::New();
     auto lines    = vtkSmartPointer<vtkCellArray>::New();
 
-    std::map<int, vtkIdType> puncture_to_point;
-    vtkIdType point_id = 0;
+    std::map<int,vtkIdType> pid_to_vtk;
+    vtkIdType next_id = 0;
 
-    // Insert all unique points.
-    for (const auto& curve : curves) {
-        for (int p_idx : curve.pts) {
-            if (puncture_to_point.count(p_idx)) continue;
-            const auto& v = complex.vertices[p_idx];
-            std::vector<double> phys_pos(3, 0.0);
+    // Insert unique points
+    for (size_t ci = 0; ci < curves.size(); ++ci) {
+        for (int p : curves[ci]) {
+            if (pid_to_vtk.count(p)) continue;
+            const auto& v = complex.vertices[p];
+            double pos[3] = {0,0,0};
             for (int i = 0; i < 3; ++i) {
-                auto vert_coords = mesh->get_vertex_coordinates(v.simplex.vertices[i]);
-                for (int j = 0; j < 3; ++j)
-                    phys_pos[j] += v.barycentric_coords[0][i] * vert_coords[j];
+                auto vc = mesh->get_vertex_coordinates(v.simplex.vertices[i]);
+                for (int j = 0; j < 3; ++j) pos[j] += v.barycentric_coords[0][i]*vc[j];
             }
-            points->InsertNextPoint(phys_pos[0], phys_pos[1], phys_pos[2]);
-            puncture_to_point[p_idx] = point_id++;
+            points->InsertNextPoint(pos);
+            pid_to_vtk[p] = next_id++;
         }
     }
 
-    // Insert one polyline cell per curve.
-    int total_segments = 0;
-    for (const auto& curve : curves) {
-        std::vector<vtkIdType> cell_pts;
-        cell_pts.reserve(curve.pts.size() + 1);
-        for (int p_idx : curve.pts)
-            cell_pts.push_back(puncture_to_point[p_idx]);
-        if (curve.closed)
-            cell_pts.push_back(cell_pts[0]);  // close the loop
-        lines->InsertNextCell((vtkIdType)cell_pts.size(), cell_pts.data());
-        total_segments += (int)cell_pts.size() - 1;
+    // Insert polyline cells
+    int total_segs = 0;
+    for (size_t ci = 0; ci < curves.size(); ++ci) {
+        std::vector<vtkIdType> cell;
+        for (int p : curves[ci]) cell.push_back(pid_to_vtk[p]);
+        if (closed[ci] && !cell.empty()) cell.push_back(cell[0]);
+        lines->InsertNextCell((vtkIdType)cell.size(), cell.data());
+        total_segs += (int)cell.size() - 1;
     }
 
     polydata->SetPoints(points);
     polydata->SetLines(lines);
 
     auto writer = vtkSmartPointer<vtkXMLPolyDataWriter>::New();
-    writer->SetFileName("exactpv_stitched.vtp");
+    writer->SetFileName(filename.c_str());
     writer->SetInputData(polydata);
     writer->SetDataModeToAscii();
     writer->Write();
 
-    std::cout << "\nWrote stitched curves to: exactpv_stitched.vtp" << std::endl;
-    std::cout << "  " << points->GetNumberOfPoints() << " points" << std::endl;
-    std::cout << "  " << lines->GetNumberOfCells() << " polyline cell(s), "
-              << total_segments << " segments" << std::endl;
+    std::cout << "  Wrote " << filename << ": "
+              << points->GetNumberOfPoints() << " pts, "
+              << curves.size() << " curve(s), "
+              << total_segs << " segs\n";
+}
 
+// ─── Run one test case ────────────────────────────────────────────────────────
+static void run_test_case(const TestCase& tc, int N)
+{
+    // Build ndarray from field eval
+    auto mesh = std::make_shared<RegularSimplicialMesh>(std::vector<uint64_t>{(uint64_t)N,(uint64_t)N,(uint64_t)N});
+    ftk::ndarray<double> uv({6, (size_t)N, (size_t)N, (size_t)N});
+    for (int z = 0; z < N; ++z)
+        for (int y = 0; y < N; ++y)
+            for (int x = 0; x < N; ++x) {
+                auto fv = tc.eval((double)x, (double)y, (double)z);
+                for (int c = 0; c < 6; ++c)
+                    uv.f(c, x, y, z) = fv[c];
+            }
+
+    std::map<std::string, ftk::ndarray<double>> data;
+    data["uv"] = uv;
+
+    // Extract punctures
+    ExactPVPredicate<double> pred;
+    pred.vector_var_name = "uv";
+    SimplicialEngine<double, ExactPVPredicate<double>> engine(mesh, pred);
+    engine.execute(data, {"uv"});
+    auto complex = engine.get_complex();
+
+    // Collect non-degenerate punctures (dimension==2 face)
+    std::vector<int> plist;
+    for (size_t i = 0; i < complex.vertices.size(); ++i)
+        if (complex.vertices[i].simplex.dimension == 2)
+            plist.push_back((int)i);
+    std::cout << "  " << plist.size() << " face punctures\n";
+
+    // Per-triangle histogram
+    {
+        std::map<std::set<uint64_t>,int> tri_cnt;
+        for (int i : plist) {
+            const auto& v = complex.vertices[i];
+            tri_cnt[{v.simplex.vertices, v.simplex.vertices+3}]++;
+        }
+        std::map<int,int> hist;
+        for (auto& [k,v] : tri_cnt) hist[v]++;
+        std::cout << "  Per-triangle puncture histogram:\n";
+        for (auto& [n,cnt] : hist)
+            std::cout << "    " << cnt << " triangles with " << n << " puncture(s)\n";
+    }
+
+    // Build face → puncture list map
+    std::map<std::set<uint64_t>, std::vector<int>> face_to_punc;
+    for (int i : plist) {
+        const auto& v = complex.vertices[i];
+        face_to_punc[{v.simplex.vertices, v.simplex.vertices+3}].push_back(i);
+    }
+
+    // Stitch through tetrahedra
+    std::vector<PunctureConnection> connections;
+    int n2=0, n_more=0;
+    std::map<int,int> tet_hist;
+
+    mesh->iterate_simplices(3, [&](const Simplex& s) {
+        std::vector<std::set<uint64_t>> faces = {
+            {s.vertices[0],s.vertices[1],s.vertices[2]},
+            {s.vertices[0],s.vertices[1],s.vertices[3]},
+            {s.vertices[0],s.vertices[2],s.vertices[3]},
+            {s.vertices[1],s.vertices[2],s.vertices[3]}
+        };
+        std::vector<int> tp;
+        for (auto& f : faces)
+            if (face_to_punc.count(f))
+                for (int p : face_to_punc[f]) tp.push_back(p);
+        if (tp.empty()) return true;
+
+        tet_hist[tp.size()]++;
+
+        if (tp.size() == 2) {
+            n2++;
+            connections.push_back({tp[0], tp[1], s.vertices[0]});
+        } else if (tp.size() > 2) {
+            n_more++;
+            // Get Q_poly for this tet
+            double V_arr[4][3], W_arr[4][3];
+            for (int i = 0; i < 4; ++i) {
+                auto c = mesh->get_vertex_coordinates(s.vertices[i]);
+                auto fv = tc.eval(c[0], c[1], c[2]);
+                for (int j = 0; j < 3; ++j) V_arr[i][j] = fv[j];
+                for (int j = 0; j < 3; ++j) W_arr[i][j] = fv[3+j];
+            }
+            double Q_poly[4], P_poly[4][4];
+            characteristic_polynomials_pv_tetrahedron(V_arr, W_arr, Q_poly, P_poly);
+
+            bool q_zero = true;
+            for (int k = 0; k <= 3; ++k) if (Q_poly[k] != 0.0) { q_zero = false; break; }
+
+            // Q-interval + λ-sort pairing (no proximity)
+            stitch_ambiguous_tet(tp, complex, Q_poly, q_zero, s.vertices[0], connections);
+        }
+        return true;
+    });
+
+    std::cout << "  Tet histogram: ";
+    for (auto& [n,c] : tet_hist) std::cout << c << "×" << n << "  ";
+    std::cout << "\n";
+    std::cout << "  " << n2 << " tets with 2, " << n_more << " tets with >2 punctures\n";
+    std::cout << "  " << connections.size() << " connections\n";
+
+    // Build adjacency graph
+    std::map<int,std::vector<int>> adj;
+    for (auto& c : connections) {
+        adj[c.puncture1_idx].push_back(c.puncture2_idx);
+        adj[c.puncture2_idx].push_back(c.puncture1_idx);
+    }
+
+    // Check degrees
+    int bad = 0;
+    for (int i : plist) if (adj[i].size() != 2) bad++;
+    std::cout << "  Punctures with degree≠2: " << bad << "\n";
+
+    // Trace curves
+    std::set<int> visited;
+    std::vector<std::vector<int>> curves;
+    std::vector<bool> curve_closed;
+    for (int start : plist) {
+        if (visited.count(start) || adj[start].empty()) continue;
+        std::vector<int> path;
+        int curr = start, prev = -1;
+        bool closed = false;
+        while (true) {
+            if (visited.count(curr)) { closed = (curr == start); break; }
+            visited.insert(curr);
+            path.push_back(curr);
+            int next = -1;
+            for (int nb : adj[curr]) if (nb != prev) { next = nb; break; }
+            if (next == -1) break;
+            prev = curr; curr = next;
+        }
+        if (path.size() > 1) {
+            curves.push_back(std::move(path));
+            curve_closed.push_back(closed);
+        }
+    }
+    std::cout << "  " << curves.size() << " curve(s):";
+    for (size_t i = 0; i < curves.size(); ++i)
+        std::cout << " [" << curves[i].size() << "pts,"
+                  << (curve_closed[i] ? "closed" : "open") << "]";
+    std::cout << "\n";
+
+    write_curves(curves, curve_closed, complex, mesh, tc.name + ".vtp");
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+int main()
+{
+    const int N = 16;
+    const double cx = N/2.0, cy = N/2.0;
+    const double z0 = N/2.0 + 0.5;   // half-integer to avoid plane coincidence
+    const double R  = N/3.0;         // single-circle radius
+    const double R1 = N/4.5;         // inner concentric radius
+    const double R2 = N/3.0;         // outer concentric radius
+    const double z1 = N/3.0 + 0.5;  // lower stacked circle height
+    const double z2 = 2.0*N/3.0 + 0.5; // upper stacked circle height
+
+    std::vector<TestCase> cases = {
+        // ── F1: baseline, single circle, Q≡0 ────────────────────────────────
+        // U constant → A=0.  V_x=1 constant → det(B)=0.  Q≡0.
+        // PV locus: z=z0, r=R.  λ=1 everywhere on PV curve.
+        // Expected: 1 closed curve.
+        {
+            "field1_one_circle",
+            "Q≡0 | 1 circle | U=(1,0,0), V=(1,z-z0,r²-R²)",
+            [=](double x, double y, double z) -> std::array<double,6> {
+                double r2 = (x-cx)*(x-cx)+(y-cy)*(y-cy);
+                return {1,0,0, 1,z-z0,r2-R*R};
+            }
+        },
+        // ── F2: two circles at different heights, Q≡0 ───────────────────────
+        // V_y = (z-z1)(z-z2) vanishes at z=z1 and z=z2.
+        // PV locus: two circles, one at z=z1 and one at z=z2, both radius R.
+        // Expected: 2 closed curves.
+        {
+            "field2_two_stacked_circles",
+            "Q≡0 | 2 circles (stacked) | U=(1,0,0), V=(1,(z-z1)(z-z2),r²-R²)",
+            [=](double x, double y, double z) -> std::array<double,6> {
+                double r2 = (x-cx)*(x-cx)+(y-cy)*(y-cy);
+                return {1,0,0, 1,(z-z1)*(z-z2),r2-R*R};
+            }
+        },
+        // ── F3: two concentric circles at same height, Q≡0 ──────────────────
+        // V_z = (r²-R1²)(r²-R2²) vanishes on two cylinders r=R1 and r=R2.
+        // PV locus: two concentric circles at z=z0.
+        // Within each tet straddling R1 or R2: one puncture (linear approx).
+        // Expected: 2 closed curves.
+        {
+            "field3_two_concentric_circles",
+            "Q≡0 | 2 concentric circles | U=(1,0,0), V=(1,z-z0,(r²-R1²)(r²-R2²))",
+            [=](double x, double y, double z) -> std::array<double,6> {
+                double r2 = (x-cx)*(x-cx)+(y-cy)*(y-cy);
+                return {1,0,0, 1,z-z0,(r2-R1*R1)*(r2-R2*R2)};
+            }
+        },
+        // ── F4: V constant → Q = det(A) = constant (non-zero) ───────────────
+        // B=0 → Q(λ) = det(A) = constant (degree-0 polynomial).
+        // No Q-roots → single interval (-∞,+∞) → pair by λ-sort.
+        // PV: U ∥ (1,0,0) → y=cy AND z=z0 → a horizontal line in x.
+        // λ at a puncture = (x-cx)/1 = x-cx (varies along line).
+        // Expected: 1 open line (enters/exits mesh boundary).
+        {
+            "field4_v_constant",
+            "Q=det(A)≠0 (constant) | open PV line | U=(x-cx,y-cy,z-z0), V=(1,0,0)",
+            [=](double x, double y, double z) -> std::array<double,6> {
+                return {x-cx, y-cy, z-z0, 1,0,0};
+            }
+        },
+        // ── F5: cyclic field with irrational offsets → Q genuine cubic ───────
+        // U=(y-p,z-q,x-r), V=(z-q,x-r,y-p): both vary in all 3 directions.
+        // Q(λ)=det(A-λB) is a genuine cubic per tet (both A and B full-rank).
+        //
+        // PV: U×V=0 gives TWO lines:
+        //   Line 1: x-r = y-p = z-q  (direction (1,1,1))
+        //   Line 2: x-r = z-q, y-p = -(x-r)  (direction (1,-1,1))
+        // Both lines intersect at the center (r,p,q); tets near that point
+        // may carry punctures from BOTH lines → >2 punctures per tet.
+        //
+        // Offsets (r,p,q) chosen non-integer so the lines avoid all mesh
+        // vertices, edges, and faces of the RegularSimplicialMesh, preventing
+        // the "line on tet-edge" degeneracy that gave 52×1-puncture tets when
+        // the center was at the integer-aligned diagonal.
+        {
+            "field5_cyclic_q_cubic",
+            "Q cubic | 2 open PV lines (intersecting) | U=(y-p,z-q,x-r), V=(z-q,x-r,y-p)",
+            [=](double x, double y, double z) -> std::array<double,6> {
+                // Center deliberately off-grid and non-symmetric to avoid all
+                // mesh-edge alignments.
+                const double r = 8.37, p = 8.13, q = 8.51;
+                return {y-p, z-q, x-r,   z-q, x-r, y-p};
+            }
+        },
+    };
+
+    for (const auto& tc : cases) {
+        std::cout << "\n" << std::string(60,'=') << "\n";
+        std::cout << "CASE: " << tc.name << "\n";
+        std::cout << "DESC: " << tc.description << "\n";
+        std::cout << std::string(60,'=') << "\n";
+        run_test_case(tc, N);
+    }
     return 0;
 }
