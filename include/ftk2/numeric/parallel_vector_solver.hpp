@@ -376,75 +376,77 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
     T disc = q*q*q + r*r;
     T term1 = b/3;
 
-    // SoS threshold: proportional to scale of discriminant terms
-    T sos_disc_eps = epsilon * (std::abs(q*q*q) + std::abs(r*r) + epsilon);
+    // Subtask 17: always use exact integer discriminant for root count.
+    //
+    // discriminant_sign_i128 uses the STANDARD discriminant convention:
+    //   Δ = 18abcd − 4b³d + b²c² − 4ac³ − 27a²d²
+    //   +1 → Δ > 0 → THREE distinct real roots  (trigonometric formula)
+    //   -1 → Δ < 0 → ONE  real root             (Cardano formula)
+    //    0 → Δ = 0 (repeated root) OR integer overflow guard
+    //
+    // Relationship to the Cardano discriminant (disc = q³+r²):
+    //   Δ_standard = −108 × disc_Cardano  (opposite signs)
+    //   disc > 0 → Δ < 0 → ONE  root;  disc < 0 → Δ > 0 → THREE roots
+    //
+    // When exact_sign == 0 (overflow guard for very large coefficients, or
+    // true repeated root), fall back to the raw float disc sign — no threshold.
+    int exact_sign = P_i128 ? discriminant_sign_i128(P_i128) : 0;
+    if (exact_sign == 0) {
+        // Overflow guard OR true repeated root.
+        // Map Cardano disc sign → equivalent Δ sign for the branches below.
+        if      (disc > T(0)) exact_sign = -1;  // disc > 0 → Δ < 0 → ONE  root
+        else if (disc < T(0)) exact_sign = +1;  // disc < 0 → Δ > 0 → THREE roots
+        // disc == 0.0 exactly → exact_sign stays 0 → SoS tie-break
+    }
 
-    if (disc > sos_disc_eps) {
-        // One real root (float disc clearly positive)
-        T s = r + std::sqrt(disc);
-        s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
-        T t = r - std::sqrt(disc);
-        t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
+    if (exact_sign < 0) {
+        // Δ < 0 → ONE real root.  Cardano formula, clamping disc ≥ 0 in case
+        // float rounding (or the exact-sign/disc-sign disagreement) made it
+        // slightly negative.
+        T safe = (disc > T(0)) ? disc : T(0);
+        T sq   = std::sqrt(safe);
+        T s = r + sq; s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
+        T t = r - sq; t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
         roots[0] = -term1 + s + t;
         return 1;
-    } else if (disc < -sos_disc_eps) {
-        // Three distinct real roots (float disc clearly negative)
-        T mq = -q;
-        T dum1 = std::acos(r / std::sqrt(mq*mq*mq));
-        T r13 = 2*std::sqrt(mq);
-        roots[0] = -term1 + r13*std::cos(dum1/3);
-        roots[1] = -term1 + r13*std::cos((dum1 + 2*M_PI)/3);
-        roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
-        return 3;
-    } else {
-        // Float disc ≈ 0: consult exact integer discriminant (Subtask 3).
-        // discriminant_sign_i128 returns:
-        //   +1 → exactly one real root       (Δ > 0 for cubic convention)
-        //   -1 → exactly three distinct roots (Δ < 0)
-        //    0 → repeated root OR overflow guard → fall through to SoS tie-break
-        int exact_sign = P_i128 ? discriminant_sign_i128(P_i128) : 0;
-
-        if (exact_sign > 0) {
-            // Exact: one real root.  Use disc > 0 formula, clamping disc ≥ 0.
+    } else if (exact_sign > 0) {
+        // Δ > 0 → THREE distinct real roots.  Trigonometric formula, clamping
+        // -q ≥ 0 in case float rounding made q slightly positive.
+        T mq = -q > T(0) ? -q : T(0);
+        if (mq == 0.0) {
+            // Subtask 17: was mq < epsilon.  Float q rounded to exactly 0 even
+            // though exact arithmetic says Δ > 0 (three distinct roots).
+            // The trig formula requires sqrt(mq³) > 0; fall back to a single
+            // Cardano-style root from clamped disc (dominant real root).
             T safe = (disc > T(0)) ? disc : T(0);
             T sq   = std::sqrt(safe);
             T s = r + sq; s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
             T t = r - sq; t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
             roots[0] = -term1 + s + t;
             return 1;
-        } else if (exact_sign < 0) {
-            // Exact: three distinct real roots.  Use disc < 0 formula,
-            // clamping -q ≥ 0 in case float rounding made q slightly positive.
-            T mq = -q > T(0) ? -q : T(0);
-            if (mq < epsilon) {
-                // Numerically indistinguishable from triple root — single root.
-                T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
-                roots[0] = -term1 + 2*r13;
-                return 1;
-            }
-            T arg  = r / std::sqrt(mq*mq*mq);
-            // clamp to [-1,1] in case float rounding pushes it slightly out
-            arg = arg < T(-1) ? T(-1) : (arg > T(1) ? T(1) : arg);
-            T dum1 = std::acos(arg);
-            T r13  = 2*std::sqrt(mq);
-            roots[0] = -term1 + r13*std::cos(dum1/3);
-            roots[1] = -term1 + r13*std::cos((dum1 + 2*M_PI)/3);
-            roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
-            return 3;
+        }
+        T arg  = r / std::sqrt(mq*mq*mq);
+        // clamp to [-1,1] in case float rounding pushes it slightly out
+        arg = arg < T(-1) ? T(-1) : (arg > T(1) ? T(1) : arg);
+        T dum1 = std::acos(arg);
+        T r13  = 2*std::sqrt(mq);
+        roots[0] = -term1 + r13*std::cos(dum1/3);
+        roots[1] = -term1 + r13*std::cos((dum1 + 2*M_PI)/3);
+        roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
+        return 3;
+    } else {
+        // Exact discriminant is zero (or disc == 0.0 after overflow fallback):
+        // true repeated root → SoS min-idx tie-break.
+        uint64_t min_idx = indices ? std::min({indices[0], indices[1], indices[2]})
+                                   : uint64_t(0);
+        T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
+        roots[0] = -term1 + 2*r13;
+        roots[1] = -(r13 + term1);
+        if (min_idx % 2 == 0) {
+            return 1;   // tangent excluded
         } else {
-            // Exact discriminant is zero (or overflow guard returned 0):
-            // true repeated root → SoS min-idx tie-break.
-            uint64_t min_idx = indices ? std::min({indices[0], indices[1], indices[2]})
-                                       : uint64_t(0);
-            T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
-            roots[0] = -term1 + 2*r13;
-            roots[1] = -(r13 + term1);
-            if (min_idx % 2 == 0) {
-                return 1;   // tangent excluded
-            } else {
-                roots[2] = roots[1];
-                return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;
-            }
+            roots[2] = roots[1];
+            return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;
         }
     }
 }

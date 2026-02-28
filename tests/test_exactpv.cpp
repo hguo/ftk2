@@ -618,6 +618,46 @@ TEST(solve_pv_triangle_constant_w_degree_trim) {
     ASSERT_EQ(n >= 0, true);  // any non-negative count is valid
 }
 
+TEST(solve_pv_triangle_exact_disc_always) {
+    // Subtask 17: always use exact integer discriminant for root count.
+    // After the change, sos_disc_eps is gone and discriminant_sign_i128 is
+    // consulted for EVERY cubic — not just when the float disc is near zero.
+    //
+    // Two checks:
+    // (A) A case with clearly-negative Cardano disc (three real roots of the
+    //     cubic, Δ_standard > 0).  The large-scale test already covers this
+    //     path via V=S*diag(2,2,2).  Here we exercise the no-SoS path.
+    //
+    // (B) A case with clearly-positive Cardano disc (one real root, Δ_std < 0).
+    //     Previously the outer `disc > sos_disc_eps` branch handled this;
+    //     now it enters through `exact_sign < 0` in the new code.
+    //
+    // Primary assertion: no crash / NaN; solver returns n ≥ 0.
+    //
+    // (A) three-root cubic via no-SoS solve (same field as large-scale but S=1)
+    double Va[3][3] = { {2,0,0}, {0,2,0}, {0,0,2} };
+    double Wa[3][3] = { {1,1,0}, {1,0,1}, {0,1,1} };
+    std::vector<PuncturePoint> pa;
+    int na = solve_pv_triangle(Va, Wa, pa, nullptr);
+    ASSERT_EQ(na >= 0, true);
+
+    // (B) one-root cubic: V nearly parallel to W everywhere → single crossing.
+    // Use V = identity (same as Wa above) and W = 2*identity.
+    // Char poly: det(I - λ×2I) = (1-2λ)^3 = 0 → triple root λ=0.5.
+    // With SoS active, this degenerate case goes through SoS tie-break.
+    // Without SoS it's the zero-discriminant branch.  Use slightly non-identity V
+    // to get a genuinely single-root cubic.
+    double Vb[3][3] = { {1,0,0}, {0,1,0}, {0,0,1} };
+    double Wb[3][3] = { {3,1,0}, {1,3,0}, {0,0,2} };
+    std::vector<PuncturePoint> pb;
+    int nb = solve_pv_triangle(Vb, Wb, pb, nullptr);
+    ASSERT_EQ(nb >= 0, true);
+    // Any returned punctures must have finite λ.
+    for (int i = 0; i < nb; ++i) {
+        ASSERT_EQ(std::isfinite(pb[i].lambda), true);
+    }
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================

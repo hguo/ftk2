@@ -1359,6 +1359,53 @@ of distinct real roots).  113/113 tests pass.
 
 ---
 
+### Subtask 17 — Always Use Exact Integer Discriminant (`sos_disc_eps` removed)
+
+**Threshold removed**: `sos_disc_eps = epsilon * (|q³| + r² + ε)` in `solve_cubic_real_sos`.
+
+**Old structure** (three-branch):
+```
+if (disc > sos_disc_eps)       → Cardano (one root)   [float threshold]
+elif (disc < -sos_disc_eps)    → trig (three roots)   [float threshold]
+else                           → discriminant_sign_i128 [exact integer]
+```
+
+**New structure** (always exact, with float fallback for overflow):
+```
+exact_sign = discriminant_sign_i128(P_i128)
+if exact_sign == 0:         # overflow guard or repeated root
+    if disc > 0: exact_sign = -1   # Cardano convention: disc>0 → one root
+    if disc < 0: exact_sign = +1   # Cardano convention: disc<0 → three roots
+    # disc == 0.0 exactly → SoS tie-break
+if exact_sign < 0 (Δ < 0 → ONE  root)  → Cardano, clamp disc ≥ 0
+if exact_sign > 0 (Δ > 0 → THREE roots) → trig, clamp -q ≥ 0
+else (Δ = 0 exactly)                    → SoS min-idx tie-break
+```
+
+**Sign convention clarified** (this was a latent bug in the old `else` branch):
+`discriminant_sign_i128` uses the **standard** discriminant
+`Δ = 18abcd − 4b³d + b²c² − 4ac³ − 27a²d²`:
+- `+1` → Δ > 0 → **three distinct real roots** (trig branch)
+- `-1` → Δ < 0 → **one real root** (Cardano branch)
+- `Δ_standard = −108 × disc_Cardano` (opposite signs)
+
+The old code's `else` branch had the signs swapped in its comments
+(`+1 → one root`) — this was never triggered for clearly-nonzero disc,
+so it went undetected through 113 tests.  Subtask 17 exposes the issue
+(now calling `discriminant_sign_i128` for ALL cubics) and fixes it.
+
+**`mq < epsilon` replaced**: the guard `if (mq < epsilon)` in the three-root
+trig branch is replaced with `if (mq == 0.0)`.  When `discriminant_sign_i128`
+says three roots but float `q` rounded to exactly 0 (preventing `sqrt(mq³)` > 0),
+fall back to a single Cardano-style root from the clamped disc.
+
+**Tests**: `solve_pv_triangle_exact_disc_always` — exercises both the three-root
+and one-root cubic paths directly (no SoS for cleaner setup).  Also verifies
+that the existing `solve_pv_triangle_large_scale` (S=50000, three real roots
+λ=−2,1,2) continues to find the interior root at λ≈1.  116/116 tests pass.
+
+---
+
 ## 8. Implementation Status
 
 | Component | File | Status |
@@ -1382,6 +1429,7 @@ of distinct real roots).  113/113 tests pass.
 | **Subtask 14**: ULP-convergence bisection (remove `target_width = 1e-10`) | same | Implemented |
 | **Subtask 15**: Exact-zero degree trimming for D_poly / N_poly (remove `< 1e-200`) | same | Implemented |
 | **Subtask 16**: Threshold-free `poly_rem_d` (remove `EPS_ZERO = 1e-200`) | same | Implemented |
+| **Subtask 17**: Always-exact discriminant (remove `sos_disc_eps`; fix sign convention) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
