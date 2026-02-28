@@ -1709,6 +1709,7 @@ which the old code would spuriously accept.
 | **Subtask 20b**: Conservative `return false` (replacing `lambda[i] >= 0.0`) in no-SoS boundary-zone path | same | Implemented |
 | **Subtask 21a**: Exact integer all-parallel check in `solve_pv_tetrahedron` (replaces `vector_norm3(cross) > epsilon`) | same | Implemented |
 | **Subtask 21b**: Exact-zero Q-coefficient check in `solve_pv_tetrahedron` (replaces `std::abs(Q[i]) > epsilon`) | same | Implemented |
+| **Subtask 22**: Eliminate float SoS perturbation from `solve_pv_triangle`; edge-ownership purely combinatorial via `indices` | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
@@ -1779,6 +1780,54 @@ float computation also yields exactly 0.0; any nonzero value (however small)
 indicates a valid polynomial.
 
 **Tests:** 131/131 tests pass.
+
+---
+
+### Subtask 22 — Eliminate Float SoS Perturbation from `solve_pv_triangle`
+
+#### Motivation
+
+The numerical SoS perturbation (`Vp[i][j] = V[i][j] + sos_perturbation(...)`) was the last remaining use of a concrete float ε in `solve_pv_triangle`. It served three purposes:
+
+1. **Non-degenerate char poly** — ensure no repeated roots → replaced by Subtasks 3/19 (exact discriminant)
+2. **Move edge punctures into triangle interior** → unnecessary since `try_certify_nk_sign` + `sos_bary_inside` already detect N_k = 0 and apply the combinatorial ownership rule
+3. **Ensure D_poly has full degree 4** → unnecessary since Subtask 15 degree-trimming uses exact `== 0.0`
+
+With all three purposes covered by earlier subtasks, the float perturbation became dead code wrapped in a conditional.
+
+#### Change
+
+**Removed** the `Vp`/`Wp` computation block entirely (~18 lines).
+
+**Changed** the float transpose from:
+```cpp
+VT[i][j] = Vp[j][i];
+WT[i][j] = Wp[j][i];
+```
+to:
+```cpp
+VT[i][j] = V[j][i];
+WT[i][j] = W[j][i];
+```
+
+The `sos_perturbation` helper and `SOS_EPS` constant remain in the file but are now dead code (no call sites). The `indices` parameter remains — it is still used **combinatorially** in `sos_bary_inside` for edge-ownership: when `try_certify_nk_sign` detects N_k(λ*) = 0 (puncture exactly on edge k), the min-index vertex rule applied via `indices` assigns the puncture to exactly one triangle.
+
+#### What changes at runtime
+
+| Case | Before (perturbed) | After (unperturbed) |
+|---|---|---|
+| Interior puncture | Root of perturbed poly; bary cert on perturbed N_k | Root of true poly; bary cert on true N_k — more accurate |
+| Edge puncture | Perturbed away → treated as interior of one triangle | Detected as N_k = 0 → combinatorial ownership via `indices` |
+| Vertex puncture | Perturbed away → interior | N_k = 0 for 2+ coords → combinatorial |
+| Constant W (D_poly deg < 4) | SoS makes D_poly deg 4 | `== 0.0` trim handles deg < 4 (already Subtask 15) |
+
+The topology (which triangle owns each puncture) is unchanged. Puncture **positions** are now the true field roots rather than slightly perturbed ones.
+
+#### New test
+
+`solve_pv_triangle_combinatorial_edge_ownership`: Two triangles sharing an edge {2,3} with global indices {1,2,3} and {10,2,3}. A puncture lands exactly on that edge. Verified that nA + nB = 1 (puncture counted exactly once across both triangles).
+
+**Tests:** 134/134 tests pass.
 
 ---
 

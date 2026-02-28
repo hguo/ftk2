@@ -1660,35 +1660,6 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     characteristic_polynomial_3x3_i128(VqT, WqT, P_i128);
 
     // ----------------------------------------------------------------
-    // SoS field perturbation
-    //
-    // Add a unique, tiny positive delta to each field component at each
-    // vertex.  The delta is based on the global vertex index so it is:
-    //   - Deterministic and reproducible across calls
-    //   - Unique per (vertex, component) pair
-    //   - Ordered: lower vertex index → larger perturbation (dominates)
-    //
-    // Effect: any puncture that the unperturbed field would place exactly
-    // on a simplex edge/vertex is displaced slightly into the interior of
-    // exactly one triangle, removing the need for ad-hoc epsilon thresholds
-    // or user-chosen field offsets.
-    //
-    // If indices == nullptr the perturbation is skipped (legacy behaviour).
-    // ----------------------------------------------------------------
-    T Vp[3][3], Wp[3][3];
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            if (indices) {
-                Vp[i][j] = V[i][j] + sos_perturbation<T>(indices[i], j);
-                Wp[i][j] = W[i][j] + sos_perturbation<T>(indices[i], j + 3);
-            } else {
-                Vp[i][j] = V[i][j];
-                Wp[i][j] = W[i][j];
-            }
-        }
-    }
-
-    // ----------------------------------------------------------------
     // Subtask 12: certified all-parallel check via exact integer cross products.
     //
     // The entire triangle is a PV surface iff V[i] × W[i] = 0 at ALL vertices,
@@ -1719,12 +1690,16 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
             return std::numeric_limits<int>::max();  // entire triangle is PV surface
     }
 
-    // Transpose for characteristic polynomial: columns = components, rows = vertices
+    // Subtask 22: use the unperturbed field directly for the float transpose.
+    // The float characteristic polynomial, root refinement, and N_k/D
+    // polynomials are all computed from the true V/W — no SoS float
+    // perturbation.  Edge/vertex degeneracies are resolved purely
+    // combinatorially via the `indices` ordering in sos_bary_inside.
     T VT[3][3], WT[3][3];
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j) {
-            VT[i][j] = Vp[j][i];
-            WT[i][j] = Wp[j][i];
+            VT[i][j] = V[j][i];
+            WT[i][j] = W[j][i];
         }
 
     // Characteristic polynomial: det(VT - λ WT) = 0  (cubic in λ)
@@ -1747,7 +1722,7 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     // are not genuine roots of P.
     //
     // The Sturm sequence is built from the float polynomial P[4] (the
-    // SoS-perturbed characteristic polynomial), which has the same roots
+    // true unperturbed characteristic polynomial), which has the same roots
     // as P_i128 and manageable coefficient magnitudes for double arithmetic.
     //
     // If isolation fails for a root (rare, can happen when two roots are

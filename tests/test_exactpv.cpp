@@ -1114,6 +1114,54 @@ TEST(solve_pv_tetrahedron_realistic_field) {
 }
 
 // ============================================================
+// Subtask 22: SoS float perturbation eliminated — purely combinatorial
+// edge-ownership via indices ordering
+// ============================================================
+
+TEST(solve_pv_triangle_combinatorial_edge_ownership) {
+    // Field B from the no-SoS test: puncture lands exactly on the shared
+    // edge between vertex 1 and vertex 2 (barycentric coordinate ν₀ = 0).
+    //
+    // With SoS active, the puncture should be assigned to exactly one of
+    // the two triangles that share that edge, determined purely by which
+    // triangle's index set contains the minimum global vertex index on
+    // the shared edge.
+    //
+    //   Triangle A indices: {1, 2, 3}  (vertex 0 of triangle has global idx 1)
+    //   Triangle B indices: {10, 2, 3} (vertex 0 of triangle has global idx 10)
+    //
+    // Edge {2, 3} is shared.  Min index on edge = 2.
+    // Triangle A has lower global index at its non-shared vertex (1 < 10),
+    // but edge ownership is determined by the minimum index ACROSS both
+    // triangles' vertices on the shared edge — both have indices 2 and 3.
+    // The SoS convention: the triangle containing the vertex with the
+    // globally smallest index on the shared feature "owns" it.
+    // Both triangles contain vertices 2 and 3, so we look at which has
+    // the smaller non-shared vertex: triangle A (idx 1) vs B (idx 10).
+    // Triangle A with idx=1 dominates → A gets the puncture, B does not.
+    //
+    // Key invariant: the two calls together should count the puncture
+    // exactly once (sum of counts = 1, each individually 0 or 1).
+
+    double Vb[3][3] = {{0.0,0.0,1.0},{1.0,1.0,0.0},{-1.0,1.0,0.0}};
+    double Wb[3][3] = {{1.0,0.0,0.0},{0.0,1.0,0.0},{0.0,1.0,0.0}};
+
+    uint64_t idxA[3] = {1, 2, 3};
+    uint64_t idxB[3] = {10, 2, 3};
+
+    std::vector<PuncturePoint> pA, pB;
+    int nA = solve_pv_triangle(Vb, Wb, pA, idxA);
+    int nB = solve_pv_triangle(Vb, Wb, pB, idxB);
+
+    // Each result must be 0 or 1 (no spurious duplicates)
+    ASSERT_TRUE(nA == 0 || nA == 1);
+    ASSERT_TRUE(nB == 0 || nB == 1);
+
+    // Together they must count the puncture exactly once
+    ASSERT_EQ(nA + nB, 1);
+}
+
+// ============================================================
 // Subtask 21: exact-threshold tests for solve_pv_tetrahedron
 // ============================================================
 
