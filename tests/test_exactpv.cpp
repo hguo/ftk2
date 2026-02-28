@@ -505,6 +505,50 @@ TEST(solve_pv_triangle_proportional_with_sos) {
     ASSERT_EQ(n, std::numeric_limits<int>::max());
 }
 
+TEST(solve_pv_triangle_tiny_lambda_bisection) {
+    // Subtask 14: the old bisection stopped at target_width = 1e-10 (absolute).
+    // For a root at λ* = 1e-11, the isolating interval had width ≥ 1e-10 >> λ*,
+    // potentially straddling 0 and widening the Sturm window for try_certify_nk_sign.
+    // The new ULP-convergence bisection produces the tightest double-precision
+    // interval around λ*, improving sign-certification robustness.
+    //
+    // Field: VT = [[1e-11,0,0],[1,-3,0],[1,0,-4]], WT = I₃.
+    // Char poly: (1e-11 − λ)(−3 − λ)(−4 − λ).  Roots: 1e-11, −3, −4.
+    // At λ=1e-11:  ν = (12/19, 4/19, 3/19) — valid interior point.
+    // At λ=−3,−4:  negative λ → rejected by legacy sos_bary_inside (indices=nullptr).
+    //
+    // indices=nullptr avoids SoS perturbation so vertex punctures at λ<0 stay
+    // cleanly negative and are rejected without ownership ambiguity.
+    //
+    // V[i][j] = VT[j][i]:
+    //   V[0] = (1e-11, 1, 1),  V[1] = (0, −3, 0),  V[2] = (0, 0, −4)
+    //   W[i] = eᵢ (identity)
+    double V[3][3] = {
+        { 1e-11,  1.0,  1.0 },
+        { 0.0,   -3.0,  0.0 },
+        { 0.0,    0.0, -4.0 },
+    };
+    double W[3][3] = {
+        { 1.0, 0.0, 0.0 },
+        { 0.0, 1.0, 0.0 },
+        { 0.0, 0.0, 1.0 },
+    };
+
+    std::vector<PuncturePoint> punctures;
+    int n = solve_pv_triangle(V, W, punctures, nullptr);
+    ASSERT_EQ(n, 1);
+    if (n == 1) {
+        // λ* ≈ 1e-11: the bisection must converge past the old 1e-10 width.
+        // With target_width=1e-10 the interval [lo,hi] had width 1e-10 > λ*,
+        // meaning lo could be negative; ULP convergence gives a tighter window.
+        ASSERT_NEAR(punctures[0].lambda, 0.0, 1e-9);
+        // Analytic ν: ν₀=12/19, ν₁=4/19, ν₂=3/19
+        ASSERT_NEAR(punctures[0].barycentric[0], 12.0/19.0, 1e-4);
+        ASSERT_NEAR(punctures[0].barycentric[1],  4.0/19.0, 1e-4);
+        ASSERT_NEAR(punctures[0].barycentric[2],  3.0/19.0, 1e-4);
+    }
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================

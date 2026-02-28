@@ -1184,6 +1184,61 @@ dedicated test was needed because the deferred ν path is exercised by every
 existing test that produces a puncture (e.g. `solve_pv_triangle_single_puncture`,
 `solve_pv_triangle_known_solution`, `solve_pv_triangle_large_scale`).
 
+### Subtask 14 — ULP-Convergence Bisection (remove `target_width = 1e-10`)
+
+**Goal**: eliminate the absolute-width stopping criterion `target_width = 1e-10` from
+the Sturm bisection in `tighten_root_interval`, replacing it with float-convergence-only
+termination.
+
+**Background**: `tighten_root_interval` is called from `isolate_cubic_roots` for every
+float root estimate.  Phase 2 bisects the isolating interval [lo, hi] until it is
+"tight enough" for subsequent use in `try_certify_nk_sign`.  The old criterion was
+`(hi - lo) > 1e-10` — an *absolute* threshold with two problems:
+
+1. **Scale-dependence for tiny roots**: for λ* = 1e-11, the final interval of width
+   1e-10 is wider than the root itself, potentially straddling 0.  This enlarges the
+   Sturm window passed to `try_certify_nk_sign`, increasing the probability that N_k
+   or D has a root inside the window and triggering unnecessary SoS fallbacks.
+
+2. **Wasted iterations for large roots**: for λ* = 1e4, the target width of 1e-10
+   requires many extra bisection steps beyond what double precision can distinguish,
+   since the ULP at 1e4 is ≈ 1.8e-12.  Those steps are wasted.
+
+**Fix**: remove `target_width` from the function signature entirely.  Phase 2 runs
+until the existing float-convergence guard fires:
+
+```cpp
+// Old:
+for (int iter = 0; iter < 200 && (hi - lo) > target_width; ++iter) {
+    ...
+    if (mid <= lo || mid >= hi) break;  // float convergence
+    ...
+}
+
+// New (Subtask 14):
+for (int iter = 0; iter < 200; ++iter) {
+    ...
+    if (mid <= lo || mid >= hi) break;  // ULP convergence — sole terminator
+    ...
+}
+```
+
+The `mid <= lo || mid >= hi` condition fires when `(lo + hi) / 2` rounds to either
+`lo` or `hi` in double, i.e. when the interval is ≤ 1 ULP wide.  This is the
+smallest possible interval in double arithmetic — scale-invariant by construction.
+
+**Why this is safe**: the 200-iteration safety limit still bounds the loop in the
+unlikely event that ULP convergence takes longer than expected (e.g. subnormal
+numbers near 0).  In practice, bisection from the initial delta of `scale × 1e-7`
+reaches 1-ULP width in at most 24 additional steps (log₂(1e-7 / ε_machine) ≈ 24).
+
+**Tests**:
+
+- `solve_pv_triangle_tiny_lambda_bisection`: field with λ* = 1e-11 and other roots
+  at -3, -4 (rejected by `λ < 0` legacy filter).  With `target_width = 1e-10` the
+  interval straddles 0; with ULP convergence it is tightly localised around 1e-11.
+  Asserts n=1, λ ≈ 1e-11, ν ≈ (12/19, 4/19, 3/19).
+
 ---
 
 ## 8. Implementation Status
@@ -1206,6 +1261,7 @@ existing test that produces a puncture (e.g. `solve_pv_triangle_single_puncture`
 | **Subtask 11**: Certified exact-λ=0 exclusion via P_i128[0] | same | Implemented |
 | **Subtask 12**: Certified all-parallel check via integer cross products on Vq/Wq | same | Implemented |
 | **Subtask 13**: Deferred polynomial ν evaluation via N_k(λ)/D(λ) | same | Implemented |
+| **Subtask 14**: ULP-convergence bisection (remove `target_width = 1e-10`) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

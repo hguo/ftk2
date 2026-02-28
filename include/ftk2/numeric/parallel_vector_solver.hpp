@@ -767,11 +767,19 @@ inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
 
 /// Given float root estimate rf and the Sturm sequence of its polynomial,
 /// find an isolating interval [lo_out, hi_out] containing exactly one root,
-/// then bisect until width ≤ target_width.
+/// then bisect to ULP convergence (no absolute width threshold).
+///
+/// Subtask 14: removed the previous `target_width = 1e-10` absolute stopping
+/// criterion.  Phase 2 now runs until double precision cannot separate lo from
+/// hi (the `mid <= lo || mid >= hi` float-convergence guard), or until the
+/// 200-iteration safety limit fires.  This is scale-invariant: a root near
+/// 1e-8 gets the same relative tightness as a root near 1e5, and the
+/// [lo_out, hi_out] window passed to try_certify_nk_sign is as narrow as
+/// double arithmetic allows, minimising spurious SoS fallbacks.
+///
 /// Returns true on success, false if the root could not be isolated.
 inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
-                                   double& lo_out, double& hi_out,
-                                   double target_width = 1e-10) {
+                                   double& lo_out, double& hi_out) {
     // Initial bracket: small symmetric window around rf
     double scale = std::max(std::abs(rf), 1.0);
     double delta = scale * 1e-7;
@@ -790,10 +798,12 @@ inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
     }
     if (cnt != 1) return false;
 
-    // Phase 2: bisect to target_width
-    for (int iter = 0; iter < 200 && (hi - lo) > target_width; ++iter) {
+    // Phase 2: bisect to ULP convergence (Subtask 14: no absolute threshold).
+    // The `mid <= lo || mid >= hi` guard fires when lo and hi are adjacent
+    // doubles, i.e. the interval is as tight as double precision allows.
+    for (int iter = 0; iter < 200; ++iter) {
         double mid = lo + (hi - lo) * 0.5;
-        if (mid <= lo || mid >= hi) break;  // float convergence
+        if (mid <= lo || mid >= hi) break;  // ULP convergence
         int half_cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, mid);
         if (half_cnt == 1) hi = mid;
         else               lo = mid;
