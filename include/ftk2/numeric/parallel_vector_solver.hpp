@@ -1681,29 +1681,6 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     }
 
     // ----------------------------------------------------------------
-    // Subtask 5 & 6: barycentric sign determination.
-    //
-    // Helper: evaluate ν at a given λ via the 3×2 least-squares solve.
-    // ----------------------------------------------------------------
-    auto eval_nu_at = [&](T lam, T nu_out[3]) {
-        const T Ml[3][2] = {
-            {(VT[0][0]-VT[0][2]) - lam*(WT[0][0]-WT[0][2]),
-             (VT[0][1]-VT[0][2]) - lam*(WT[0][1]-WT[0][2])},
-            {(VT[1][0]-VT[1][2]) - lam*(WT[1][0]-WT[1][2]),
-             (VT[1][1]-VT[1][2]) - lam*(WT[1][1]-WT[1][2])},
-            {(VT[2][0]-VT[2][2]) - lam*(WT[2][0]-WT[2][2]),
-             (VT[2][1]-VT[2][2]) - lam*(WT[2][1]-WT[2][2])}
-        };
-        const T bl[3] = {
-            -(VT[0][2] - lam*WT[0][2]),
-            -(VT[1][2] - lam*WT[1][2]),
-            -(VT[2][2] - lam*WT[2][2])
-        };
-        solve_least_square3x2(Ml, bl, nu_out, epsilon);
-        nu_out[2] = T(1) - nu_out[0] - nu_out[1];
-    };
-
-    // ----------------------------------------------------------------
     // Subtasks 6 & 7: compute bary numerator polynomials N[3][5] and D[5].
     //
     // Expresses μ_k(λ) = N_k(λ)/D(λ) with degree-4 polynomials derived
@@ -1771,10 +1748,6 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         // Subtask 11: skip only the certified-exact λ=0 root.
         if (zero_is_exact_root && lambda_lo[i] <= 0.0 && 0.0 <= lambda_hi[i])
             continue;
-
-        // Bary coords at the Sturm-isolated midpoint
-        T nu[3];
-        eval_nu_at(lambda[i], nu);
 
         // ----------------------------------------------------------------
         // Subtasks 6–9: determine sign of νₖ(λ*) with certified exactness.
@@ -1867,6 +1840,28 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         };
         if (!sos_bary_inside(0) || !sos_bary_inside(1) || !sos_bary_inside(2))
             continue;
+
+        // Subtask 13: compute ν via N_k(λ)/D(λ), DEFERRED to after certification.
+        //
+        // Previously, ν was computed by eval_nu_at (→ solve_least_square3x2)
+        // BEFORE the sos_bary_inside gate, wasting work for rejected roots and
+        // introducing an `|det(MᵀM)| < epsilon` float guard.
+        //
+        // Now ν is computed only for roots that passed all certification steps.
+        // Subtask 7 certifies D(λ*) > 0 here, guaranteeing D_val > 0 and
+        // making the division exact (no singular-matrix epsilon guard needed).
+        //
+        // μ_k(λ) = N_k(λ) / D(λ)  for k = 0, 1, 2.
+        // By construction Σ N_k(λ) = D(λ), so ν sums to 1 automatically.
+        T nu[3];
+        {
+            double lam_d = (double)lambda[i];
+            double d_val = eval_poly_sturm(D_poly, 4, lam_d);
+            for (int k = 0; k < 3; ++k) {
+                double nk_val = eval_poly_sturm(N_poly[k], 4, lam_d);
+                nu[k] = (d_val > 0.0) ? T(nk_val / d_val) : T(0);
+            }
+        }
 
         // Subtask 10: cross-product residual check removed.
         //

@@ -1108,6 +1108,82 @@ this correctly for exact proportionality.
   Old code produced spurious punctures; new code returns `INT_MAX`.
 - `solve_pv_triangle_proportional_with_sos`: `W = 3V` with SoS indices → `INT_MAX`.
 
+### Subtask 13 — Deferred Polynomial ν Evaluation via N_k(λ)/D(λ)
+
+**Goal**: eliminate `solve_least_square3x2` and its singular-matrix `|det(MᵀM)| < ε`
+guard from the hot path by deferring ν computation to *after* the certification gate.
+
+**Background**: barycentric coordinates ν = (ν₀, ν₁, ν₂) of the puncture on the
+triangle are needed only for the output `PuncturePoint.barycentric`.  They are
+**not** used in any certification decision — `sos_bary_inside` operates exclusively
+on the N_k / D polynomial Sturm counts and the SoS index ordering.  Nevertheless,
+the old code called `eval_nu_at(λ)` *before* the `sos_bary_inside` gate, on every
+candidate root — including those that are immediately rejected.
+
+**Old flow** (three floats thresholds in the path):
+
+```
+for each root λᵢ:
+    eval_nu_at(λᵢ)          ← solve_least_square3x2 (|det(MᵀM)|<ε guard HERE)
+    if !sos_bary_inside(k)  ← Sturm + Higham (no threshold)
+        continue
+    emit puncture
+```
+
+The `eval_nu_at` lambda built a 3×2 overdetermined system from `V(λ)x = W(λ)x`
+(two linearly-independent equations from the three rows after fixing ‖x‖=1) and
+solved it via `solve_least_square3x2`, which internally checks `|det(MᵀM)| < ε`.
+That check is a float threshold with no rigorous bound.
+
+**New flow** (no float threshold in the path):
+
+```
+for each root λᵢ:
+    if !sos_bary_inside(k)  ← Sturm + Higham (no threshold)
+        continue
+    // Subtask 7 has already certified D(λᵢ) > 0, so d_val > 0.
+    d_val = D(λᵢ)           ← direct polynomial evaluation (no threshold)
+    νₖ   = Nₖ(λᵢ) / d_val  ← k = 0,1,2
+    emit puncture
+```
+
+**Why D(λ*) > 0 makes division safe**: Subtask 7 runs a Sturm count on `D(λ)` over
+the certified interval [lo, hi] and only accepts a root if `D` has no sign change
+there.  Because `D(λ) > 0` on the domain where the PV problem has a solution (proven
+in §3.3), this guarantees `d_val > 0` at every accepted root, making the division
+`Nₖ(λ) / d_val` safe and non-degenerate.
+
+**Formula**: the N_k and D polynomials are the same objects already computed by
+Subtasks 5–8.  Evaluating them at a double approximation `lam_d = (double)λᵢ` via
+`eval_poly_sturm` (Horner) suffices for the output barycentric coordinates, which
+are used only for visualization and not for any topological decision.
+
+**Implementation** (in `parallel_vector_solver.hpp`):
+
+```cpp
+// DELETED: auto eval_nu_at = [&](T lam, T nu_out[3]) { ... solve_least_square3x2 ... };
+// DELETED: T nu[3]; eval_nu_at(lambda[i], nu);   // before sos_bary_inside
+
+// ADDED: after the sos_bary_inside gate:
+T nu[3];
+{
+    double lam_d = (double)lambda[i];
+    double d_val = eval_poly_sturm(D_poly, 4, lam_d);
+    for (int k = 0; k < 3; ++k) {
+        double nk_val = eval_poly_sturm(N_poly[k], 4, lam_d);
+        nu[k] = (d_val > 0.0) ? T(nk_val / d_val) : T(0);
+    }
+}
+```
+
+**What is eliminated**: the `eval_nu_at` lambda (~17 lines), the `solve_least_square3x2`
+call, and its `|det(MᵀM)| < ε` singular-matrix guard — all removed from the hot path.
+
+**Tests**: all 104 existing tests pass with the deferred computation.  No new
+dedicated test was needed because the deferred ν path is exercised by every
+existing test that produces a puncture (e.g. `solve_pv_triangle_single_puncture`,
+`solve_pv_triangle_known_solution`, `solve_pv_triangle_large_scale`).
+
 ---
 
 ## 8. Implementation Status
@@ -1129,6 +1205,7 @@ this correctly for exact proportionality.
 | **Subtask 10**: Remove scale-dependent cross-product residual filter | same | Implemented |
 | **Subtask 11**: Certified exact-λ=0 exclusion via P_i128[0] | same | Implemented |
 | **Subtask 12**: Certified all-parallel check via integer cross products on Vq/Wq | same | Implemented |
+| **Subtask 13**: Deferred polynomial ν evaluation via N_k(λ)/D(λ) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
