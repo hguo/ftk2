@@ -355,18 +355,40 @@ inline int discriminant_sign_i128(const __int128 P[4]);
  */
 template <typename T>
 int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
-                         const __int128* P_i128 = nullptr,
-                         T epsilon = std::numeric_limits<T>::epsilon()) {
-    if (std::abs(P[3]) < epsilon) {
-        // Degenerate to quadratic / linear — same as solve_cubic_real
-        if (std::abs(P[2]) < epsilon) {
-            if (std::abs(P[1]) < epsilon) return 0;
+                         const __int128* P_i128 = nullptr) {
+    // Subtask 19: degree-trimming uses exact == 0.0 (not < epsilon).
+    //
+    // P is computed by characteristic_polynomial_3x3(VpT, WpT) from field
+    // values that are either exact doubles (no SoS) or SoS-perturbed with a
+    // structurally full-rank WpT (SoS ensures distinct vertex perturbations).
+    //
+    // Case 1 — SoS inactive (indices=nullptr): P coefficients are sums and
+    //   products of the original double-valued field.  An algebraically zero
+    //   coefficient (e.g. P[3] = -det3(WpT) when W is constant) survives
+    //   as 0.0 exactly because the cancellation in det3 is between equal
+    //   integer-derived terms, with no rounding residue.
+    //
+    // Case 2 — SoS active: the SoS perturbation makes WpT generically
+    //   full-rank, so P[3] ≠ 0.  The == 0.0 check fires only in case 1.
+    //
+    // Therefore == 0.0 is the principled replacement for < epsilon:
+    //   - Catches exactly-zero (algebraically degenerate) coefficients.
+    //   - Does NOT catch near-zero but nonzero coefficients (correct: a
+    //     nearly-degenerate cubic is still genuinely degree-3 and should be
+    //     handled by the cubic path, not the lower-degree fallback).
+    if (P[3] == T(0)) {
+        // Degenerate to quadratic / linear.
+        if (P[2] == T(0)) {
+            if (P[1] == T(0)) return 0;
             roots[0] = -P[0] / P[1];
             return 1;
         }
         T disc = P[1]*P[1] - 4*P[2]*P[0];
         if (disc < 0) return 0;
-        if (std::abs(disc) < epsilon) { roots[0] = -P[1]/(2*P[2]); return 1; }
+        // Subtask 19: quadratic repeated-root detected by disc == 0.0 exactly.
+        // An algebraically repeated root gives P[1]² = 4·P[2]·P[0] with exact
+        // cancellation in double when the inputs are integer-derived.
+        if (disc == T(0)) { roots[0] = -P[1]/(2*P[2]); return 1; }
         T sq = std::sqrt(disc);
         roots[0] = (-P[1]+sq)/(2*P[2]);
         roots[1] = (-P[1]-sq)/(2*P[2]);
@@ -449,7 +471,14 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
             return 1;   // tangent excluded
         } else {
             roots[2] = roots[1];
-            return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;
+            // Subtask 19: triple-root detected by r == 0.0 exactly.
+            // In exact arithmetic, a triple root α satisfies q = 0 AND r = 0
+            // (from the depressed cubic reduction p = q³+r² = 0 with q = r = 0).
+            // In double arithmetic, r = (-27d + b(9c−2b²))/54 collapses to 0.0
+            // exactly when all inputs are integer-derived (no rounding residue).
+            // A double+simple root has r ≠ 0, giving roots[0] ≠ roots[1] with
+            // magnitude O(r^(1/3)) ≫ machine_epsilon.
+            return (r == T(0)) ? 1 : 3;
         }
     }
 }
@@ -1072,14 +1101,17 @@ inline void compute_bary_numerators(
  * @param W Vectors at 3 triangle vertices [3][3]
  * @param punctures Output vector of puncture points
  * @param indices Global vertex indices for SoS perturbation (nullptr = no SoS)
- * @param epsilon Tolerance for numerical comparisons
  * @return Number of punctures found (0-3), or INT_MAX if degenerate (entire triangle is PV)
+ *
+ * Subtask 19: the `epsilon` parameter has been removed.  All threshold
+ * comparisons in the certification path now use exact == 0.0 tests or
+ * machine-epsilon-derived expressions (e.g. EVAL_GAMMA, SQRT_EPS) that
+ * are principled, not arbitrary.
  */
 template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
-                     const uint64_t* indices = nullptr,
-                     T epsilon = std::numeric_limits<T>::epsilon());
+                     const uint64_t* indices = nullptr);
 
 /**
  * @brief Solve for parallel vector curve in a tetrahedron (3-simplex)
@@ -1593,8 +1625,7 @@ void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3],
 template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
-                     const uint64_t* indices,
-                     T epsilon) {
+                     const uint64_t* indices) {
     punctures.clear();
 
     // ----------------------------------------------------------------
@@ -1703,7 +1734,8 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     // Solve cubic: use exact integer discriminant (Subtask 3) to decide
     // the root count when the float discriminant is near zero.
     T lambda[3];
-    int n_roots = solve_cubic_real_sos(P, lambda, indices, P_i128, epsilon);
+    // Subtask 19: epsilon parameter removed from solve_cubic_real_sos.
+    int n_roots = solve_cubic_real_sos(P, lambda, indices, P_i128);
 
     // ----------------------------------------------------------------
     // Subtask 4: Sturm-sequence root isolation.

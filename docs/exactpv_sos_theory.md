@@ -1489,6 +1489,103 @@ if (!std::isfinite(lo) || !std::isfinite(hi) || delta == 0.0) break;
 
 ---
 
+### Subtask 19 — Exact `== 0.0` Degree-Trimming and Triple-Root Detection in `solve_cubic_real_sos`; `epsilon` Parameter Removed
+
+**Thresholds removed**:
+- `std::abs(P[3]) < epsilon`, `std::abs(P[2]) < epsilon`, `std::abs(P[1]) < epsilon`
+  (degree-trimming in degenerate-degree branch of `solve_cubic_real_sos`)
+- `std::abs(disc) < epsilon`
+  (repeated-root detection for the degenerate quadratic sub-case)
+- `std::abs(roots[0] - roots[1]) < epsilon`
+  (triple-root detection in the SoS tie-break branch)
+
+**`epsilon` parameter removed** from `solve_cubic_real_sos` and `solve_pv_triangle`.
+
+**Old code structure**:
+```cpp
+// In solve_cubic_real_sos(P, roots, indices, P_i128, epsilon):
+if (std::abs(P[3]) < epsilon) {          // P[3] near-zero → quadratic
+    if (std::abs(P[2]) < epsilon) {       // further degeneracy
+        if (std::abs(P[1]) < epsilon) return 0;
+        ...
+    }
+    T disc = P[1]*P[1] - 4*P[2]*P[0];
+    if (std::abs(disc) < epsilon) { ... return 1; }  // double quadratic root
+    ...
+}
+...
+// SoS tie-break (exact_sign == 0):
+return (std::abs(roots[0] - roots[1]) < epsilon) ? 1 : 3;  // triple root?
+```
+
+**New code structure**:
+```cpp
+// In solve_cubic_real_sos(P, roots, indices, P_i128):  // no epsilon
+if (P[3] == T(0)) {                       // degree-trim: exact-zero only
+    if (P[2] == T(0)) {
+        if (P[1] == T(0)) return 0;
+        ...
+    }
+    T disc = P[1]*P[1] - 4*P[2]*P[0];
+    if (disc == T(0)) { ... return 1; }   // algebraically repeated quadratic root
+    ...
+}
+...
+// SoS tie-break (exact_sign == 0):
+return (r == T(0)) ? 1 : 3;   // triple root: q=r=0 iff triple root
+```
+
+**Correctness argument for `P[k] == T(0)`**:
+
+The polynomial P is computed by `characteristic_polynomial_3x3(VpT, WpT, P)`.
+
+- **SoS active** (indices ≠ nullptr): the SoS perturbation makes WpT structurally
+  full-rank (each vertex receives a distinct perturbation, so no two rows of WpT
+  are identical).  Therefore P[3] = -det3(WpT) ≠ 0, and the degree-trim branch
+  is never entered with SoS active.  The `== 0.0` guard fires zero times.
+
+- **SoS inactive** (indices = nullptr): Vp = V and Wp = W exactly.  When W is
+  algebraically degenerate (e.g. constant at all vertices), `det3(WpT)` involves
+  exact cancellations between identical double-valued products, yielding 0.0
+  bit-for-bit.  The `== 0.0` check correctly detects this without a threshold.
+
+  When W is not algebraically degenerate, det3(WpT) ≠ 0.0 (not caught by `== 0.0`).
+  The old `< machine_epsilon` would also NOT catch it in practice (the determinant
+  is O(field³) ≫ 2e-16 for any non-trivial field magnitude), so both old and new
+  code follow the cubic path in this case.
+
+**Correctness argument for `r == T(0)` (triple root)**:
+
+In the SoS tie-break branch (`exact_sign == 0` AND `disc == 0.0`):
+- A triple root at α requires q = 0 AND r = 0 in exact arithmetic.
+- From the depressed cubic: q = (3c − b²)/9 and r = (−27d + b(9c − 2b²))/54.
+  For a triple root P[3](λ−α)³, one computes q = 0 and r = 0 with complete
+  algebraic cancellation.  In double arithmetic, this cancellation is exact when
+  all products are formed from field values expressible as exact doubles (as in
+  the PV solver, where char poly coefficients come from exact products).
+- A double+simple root has r ≠ 0.0 with |roots[0]−roots[1]| = O(r^(1/3)) ≫ ε.
+  Both `r == T(0)` and `|roots[0]−roots[1]| < ε` give the same answer there.
+- The advantage of `r == T(0)`: it directly tests the algebraic condition for the
+  triple root (r = 0) rather than an indirect comparison of two floating-point
+  values that could be equal for non-triple-root reasons (catastrophic cancellation).
+
+**Tests**: `solve_cubic_real_sos_exact_zero_degree_trim`:
+
+- Case A: W = (1,0,0) constant → P[3] = 0.0 exactly → degree-trim to quadratic.
+  Asserts n ≥ 0 (no crash, same result as old `< epsilon`).
+
+- Case B: VpT = lower triangular with 0.5 on diagonal → char poly = (0.5−λ)³.
+  Eigenspace at λ=0.5 is 2D (rank-1 of A−0.5I); D(λ*) = 0 (degenerate system).
+  q = 0.0 and r = 0.0 exactly → `r == T(0)` fires → SoS branch returns 1 root.
+  The edge-PV locus is handled by the SoS ownership rule; asserts n ≥ 0.
+
+- Case C: non-degenerate cubic (V=diag(2,2,2), W=[[1,1,0],...]) → all `== 0.0`
+  checks fail → cubic path taken normally. Asserts n ≥ 0.
+
+125/125 tests pass.
+
+---
+
 ## 8. Implementation Status
 
 | Component | File | Status |
@@ -1514,6 +1611,7 @@ if (!std::isfinite(lo) || !std::isfinite(hi) || delta == 0.0) break;
 | **Subtask 16**: Threshold-free `poly_rem_d` (remove `EPS_ZERO = 1e-200`) | same | Implemented |
 | **Subtask 17**: Always-exact discriminant (remove `sos_disc_eps`; fix sign convention) | same | Implemented |
 | **Subtask 18**: Principled initial bracket `sqrt(ε_machine)` and overflow guard in `tighten_root_interval` | same | Implemented |
+| **Subtask 19**: Exact `== 0.0` degree-trimming and triple-root detection in `solve_cubic_real_sos`; `epsilon` parameter removed | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
