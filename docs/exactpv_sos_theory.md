@@ -1707,7 +1707,78 @@ which the old code would spuriously accept.
 | **Subtask 19**: Exact `== 0.0` degree-trimming and triple-root detection in `solve_cubic_real_sos`; `epsilon` parameter removed | same | Implemented |
 | **Subtask 20a**: Tighter EVAL_GAMMA using actual `degNk` instead of hardcoded 4 in `try_certify_nk_sign` | same | Implemented |
 | **Subtask 20b**: Conservative `return false` (replacing `lambda[i] >= 0.0`) in no-SoS boundary-zone path | same | Implemented |
+| **Subtask 21a**: Exact integer all-parallel check in `solve_pv_tetrahedron` (replaces `vector_norm3(cross) > epsilon`) | same | Implemented |
+| **Subtask 21b**: Exact-zero Q-coefficient check in `solve_pv_tetrahedron` (replaces `std::abs(Q[i]) > epsilon`) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
+
+---
+
+### Subtask 21 — Exact Threshold Elimination in `solve_pv_tetrahedron`
+
+Two threshold-related fixes in the old tet curve solver (`solve_pv_tetrahedron`),
+which is used by `predicate.hpp::extract_tetrahedron` and the stitching pipeline.
+
+#### 21a — All-parallel check (integer cross product)
+
+**Old code:**
+```cpp
+for (int i = 0; i < 4; ++i) {
+    T cross[3];
+    cross_product3(V[i], W[i], cross);
+    if (vector_norm3(cross) > epsilon) {
+        all_parallel = false; break;
+    }
+}
+```
+
+**Problem:** `epsilon` is arbitrary.  A field that is algebraically all-parallel
+but has `||V×W|| ≈ ε` (due to floating-point cancellation) could pass the guard
+and generate spurious PV curve segments.
+
+**New code (Subtask 21a):**
+```cpp
+{
+    bool all_parallel = true;
+    for (int i = 0; i < 4; ++i) {
+        int64_t vq[3] = {quant((double)V[i][0]), quant((double)V[i][1]), quant((double)V[i][2])};
+        int64_t wq[3] = {quant((double)W[i][0]), quant((double)W[i][1]), quant((double)W[i][2])};
+        __int128 cx = (__int128)vq[1]*wq[2] - (__int128)vq[2]*wq[1];
+        __int128 cy = (__int128)vq[2]*wq[0] - (__int128)vq[0]*wq[2];
+        __int128 cz = (__int128)vq[0]*wq[1] - (__int128)vq[1]*wq[0];
+        if (cx != 0 || cy != 0 || cz != 0) { all_parallel = false; break; }
+    }
+    if (all_parallel) return false;  // degenerate — entire tet is PV region
+}
+```
+
+Mirrors Subtask 12 for the triangle case.  Overflow analysis: `|Vq[j]| ≤ 5×10^6 × 2^20 ≈ 5×10^12`; cross product ≤ `2×(5×10^12)^2 = 5×10^25 < 2^127`.
+
+#### 21b — Q-zero check (exact comparison)
+
+**Old code:**
+```cpp
+for (int i = 0; i <= 3; ++i) {
+    if (std::abs(Q[i]) > epsilon) { q_zero = false; break; }
+}
+```
+
+**Problem:** `epsilon` could suppress a legitimately small-but-nonzero Q
+coefficient, causing the solver to falsely declare the Q polynomial identically
+zero and discard a valid PV curve.
+
+**New code (Subtask 21b):**
+```cpp
+for (int i = 0; i <= 3; ++i) {
+    if (Q[i] != T(0)) { q_zero = false; break; }
+}
+```
+
+Q coefficients come from `characteristic_polynomials_pv_tetrahedron`, which
+computes floating-point values.  If a coefficient is algebraically zero the
+float computation also yields exactly 0.0; any nonzero value (however small)
+indicates a valid polynomial.
+
+**Tests:** 131/131 tests pass.
 
 ---
 

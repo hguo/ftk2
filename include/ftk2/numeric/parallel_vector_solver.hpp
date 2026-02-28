@@ -2015,33 +2015,53 @@ template <typename T>
 bool solve_pv_tetrahedron(const T V[4][3], const T W[4][3],
                          PVCurveSegment& segment,
                          T epsilon) {
-    // Check for degenerate case: all vectors parallel at vertices
-    bool all_parallel = true;
-    for (int i = 0; i < 4; ++i) {
-        T cross[3];
-        cross_product3(V[i], W[i], cross);
-        if (vector_norm3(cross) > epsilon) {
-            all_parallel = false;
-            break;
+    // ----------------------------------------------------------------
+    // Subtask 21: certified all-parallel check via exact integer cross products.
+    //
+    // The entire tetrahedron is a PV region iff V[i] × W[i] = 0 at ALL
+    // four vertices, i.e. iff V and W are proportional everywhere.
+    //
+    // Old check: float cross product norm vs epsilon — arbitrary threshold.
+    //
+    // New check: quantize V[i], W[i] to int64_t and compute cross product
+    // in __int128. Cross = 0 iff V[i] ∥ W[i] in the quantized sense (no
+    // threshold). Mirrors Subtask 12 for the triangle case.
+    //
+    // Overflow: |Vq[j]| ≤ |field|_max × QUANT_SCALE ≤ 5×10^6 × 2^20 ≈ 5×10^12.
+    //   Cross product component ≤ 2×(5×10^12)^2 = 5×10^25 < 2^127. Safe.
+    // ----------------------------------------------------------------
+    {
+        bool all_parallel = true;
+        for (int i = 0; i < 4; ++i) {
+            int64_t vq[3] = {quant((double)V[i][0]), quant((double)V[i][1]), quant((double)V[i][2])};
+            int64_t wq[3] = {quant((double)W[i][0]), quant((double)W[i][1]), quant((double)W[i][2])};
+            __int128 cx = (__int128)vq[1]*wq[2] - (__int128)vq[2]*wq[1];
+            __int128 cy = (__int128)vq[2]*wq[0] - (__int128)vq[0]*wq[2];
+            __int128 cz = (__int128)vq[0]*wq[1] - (__int128)vq[1]*wq[0];
+            if (cx != 0 || cy != 0 || cz != 0) { all_parallel = false; break; }
         }
-    }
-
-    if (all_parallel) {
-        // Entire tetrahedron is a PV region - this is degenerate
-        return false;
+        if (all_parallel)
+            return false;  // entire tetrahedron is a PV region — degenerate
     }
 
     // Compute characteristic polynomials
     T Q[4], P[4][4];
     characteristic_polynomials_pv_tetrahedron(V, W, Q, P);
 
-    // Check if Q is zero (degenerate)
+    // ----------------------------------------------------------------
+    // Subtask 21: exact-zero check for Q polynomial coefficients.
+    //
+    // Old: std::abs(Q[i]) > epsilon — arbitrary threshold that could
+    // suppress a legitimately small-but-nonzero coefficient.
+    //
+    // New: Q[i] != T(0) — exact comparison. Q is computed from the field
+    // values by characteristic_polynomials_pv_tetrahedron; if a coefficient
+    // is algebraically zero the float computation will also give exactly 0.
+    // Any nonzero value (however small) signals a valid Q polynomial.
+    // ----------------------------------------------------------------
     bool q_zero = true;
     for (int i = 0; i <= 3; ++i) {
-        if (std::abs(Q[i]) > epsilon) {
-            q_zero = false;
-            break;
-        }
+        if (Q[i] != T(0)) { q_zero = false; break; }
     }
     if (q_zero) return false;
 
