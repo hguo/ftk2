@@ -341,14 +341,17 @@ inline T sos_perturbation(uint64_t vertex_idx, int component) {
 inline int discriminant_sign_i128(const __int128 P[4]);
 
 /**
- * @brief Solve cubic with SoS tie-breaking for the disc == 0 (tangent) case.
+ * @brief Solve cubic with SoS tie-breaking using the always-exact integer discriminant.
  *
- * Identical to solve_cubic_real except: when |disc| is below the SoS threshold,
- * first query the exact integer discriminant (Subtask 3).  If that returns a
- * definite sign, use the appropriate root formula.  Only if the exact sign is
- * also zero (true repeated root) does the SoS min-idx tie-break fire.
+ * Subtask 17: the float `disc = q³+r²` is no longer used to decide root count.
+ * Instead, `discriminant_sign_i128(P_i128)` is consulted for EVERY cubic:
+ *   +1 → Δ_std > 0 → three distinct real roots → trigonometric formula
+ *   -1 → Δ_std < 0 → one real root              → Cardano formula
+ *    0 → overflow guard OR true repeated root   → float-sign fallback or SoS tie-break
+ * The SoS min-idx tie-break fires only when Δ_std = 0 exactly and disc ≈ 0.0.
  *
  * @param P_i128  Integer polynomial from Subtask 2 (may be nullptr for legacy calls).
+ *                When nullptr, exact_sign is treated as 0 → float fallback.
  */
 template <typename T>
 int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
@@ -779,24 +782,47 @@ inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
 /// [lo_out, hi_out] window passed to try_certify_nk_sign is as narrow as
 /// double arithmetic allows, minimising spurious SoS fallbacks.
 ///
+/// Subtask 18: principled initial bracket and overflow guards.
+///   OLD: delta = scale * 1e-7,  guards: delta > 1e14 || delta < 1e-300.
+///   NEW: delta = scale * sqrt(ε_machine),  guard: !isfinite(lo/hi) || delta == 0.
+///
+///   sqrt(ε_machine) ≈ 1.49e-8 is the natural scale for the Cardano/trig root
+///   formula error in the near-degenerate regime: when two roots of the cubic
+///   are separated by δ, the float estimates are accurate to O(sqrt(ε) × scale)
+///   (the condition number of a near-double-root grows as 1/sqrt(δ)).  Using
+///   sqrt(ε_machine) as the initial half-width makes the bracket tight enough
+///   for well-isolated roots (no shrink iterations) yet covers the near-double-
+///   root case without needing expansion.
+///
+///   The guards `delta > 1e14 || delta < 1e-300` are replaced by direct float
+///   overflow/underflow detection:
+///     !isfinite(lo/hi) : delta expanded past the representable float range.
+///     delta == 0.0     : delta shrunk below the subnormal floor (underflow).
+///   These are the actual conditions that would cause incorrect Sturm evaluation,
+///   not arbitrary scale thresholds.
+///
 /// Returns true on success, false if the root could not be isolated.
 inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
                                    double& lo_out, double& hi_out) {
-    // Initial bracket: small symmetric window around rf
+    // Subtask 18: principled initial bracket — sqrt(ε_machine) relative to scale.
+    static const double SQRT_EPS = std::sqrt(std::numeric_limits<double>::epsilon());
     double scale = std::max(std::abs(rf), 1.0);
-    double delta = scale * 1e-7;
+    double delta = scale * SQRT_EPS;
 
     double lo = rf - delta, hi = rf + delta;
     int cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
 
-    // Phase 1: expand or shrink until exactly one root in bracket
+    // Phase 1: expand or shrink until exactly one root in bracket.
+    // Termination: success (cnt==1), iteration limit (120), or float
+    // overflow/underflow in bracket endpoints (Subtask 18: replaces the
+    // arbitrary `delta > 1e14 || delta < 1e-300` guards).
     for (int iter = 0; iter < 120 && cnt != 1; ++iter) {
         if (cnt == 0)  delta *= 2.0;   // root not yet bracketed → expand
         else           delta *= 0.5;   // multiple roots → shrink to isolate one
         lo  = rf - delta;
         hi  = rf + delta;
+        if (!std::isfinite(lo) || !std::isfinite(hi) || delta == 0.0) break;
         cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
-        if (delta > 1e14 || delta < 1e-300) break;
     }
     if (cnt != 1) return false;
 

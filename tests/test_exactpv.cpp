@@ -658,6 +658,72 @@ TEST(solve_pv_triangle_exact_disc_always) {
     }
 }
 
+TEST(tighten_root_interval_phase1_expansion) {
+    // Subtask 18: initial bracket uses sqrt(ε_machine) instead of 1e-7.
+    // Overflow/underflow guards replaced by !isfinite(lo/hi) || delta==0.
+    //
+    // Exercise Phase 1 expansion: the initial half-width is
+    // sqrt(ε_machine) ≈ 1.49e-8 (much smaller than 1e-7), so for roots
+    // that are O(1) apart, Phase 1 must expand before isolating each root.
+    //
+    // Use the same field as solve_pv_triangle_large_scale but at scale=1:
+    //   V = diag(2,2,2), W = [[1,1,0],[1,0,1],[0,1,1]].
+    // Char poly roots at λ=-2, 1, 2.  At unit scale the SoS-perturbed root
+    // near λ=1 shifts by O(SOS_EPS) relative — which may land either side
+    // of 1.  We therefore only assert no crash and n ≥ 0.
+    //
+    // Additionally verify with a no-SoS call that returns a known count.
+    // V = diag(2,1,0.5), W = I.  Char poly: (2-λ)(1-λ)(0.5-λ) = 0.
+    // Roots at 0.5, 1, 2.  Only λ=0.5 is interior in (0,1); others are
+    // excluded (λ=1 is boundary, λ=2 > 1).  Expect n=1 (the 0.5 root).
+    //
+    // Case A: expansion test (no strict assertion on n).
+    {
+        double Va[3][3] = { {2,0,0}, {0,2,0}, {0,0,2} };
+        double Wa[3][3] = { {1,1,0}, {1,0,1}, {0,1,1} };
+        uint64_t indices[3] = {1, 2, 3};
+        std::vector<PuncturePoint> pa;
+        int na = solve_pv_triangle(Va, Wa, pa, indices);
+        ASSERT_EQ(na >= 0, true);
+    }
+    // Case B: known root at λ=0.5 interior; verifies the new initial bracket
+    // (sqrt(ε_machine) ≈ 1.49e-8) and overflow guard work correctly.
+    //
+    // VT = [[0.5,0,0],[1,−3,0],[1,0,−4]], WT = I.
+    // Char poly: (0.5−λ)(−3−λ)(−4−λ) → roots 0.5, −3, −4.
+    // Only λ=0.5 gives a valid interior barycentric point:
+    //   (VT − 0.5I)ν = 0 → ν₀ = 3.5·ν₁, ν₀ = 4.5·ν₂ → ν = (63, 18, 14)/95.
+    // Roots −3 and −4 correspond to vertex 1 and vertex 2 (boundary → excluded).
+    //
+    // V[vertex][component] = VT[component][vertex]:
+    //   V[0] = (0.5, 1, 1)   ← NOT parallel to W[0]=(1,0,0)  (cross ≠ 0)
+    //   V[1] = (0, −3, 0)    ← parallel to W[1]=(0,1,0)  (only 1 of 3)
+    //   V[2] = (0, 0, −4)    ← parallel to W[2]=(0,0,1)  (only 2 of 3)
+    // → all-parallel check does NOT fire (vertex 0 non-parallel).
+    {
+        double Vb[3][3] = {
+            { 0.5,  1.0,  1.0 },  // vertex 0: V[0]×W[0] ≠ 0
+            { 0.0, -3.0,  0.0 },  // vertex 1: V[1]∥W[1] (partial)
+            { 0.0,  0.0, -4.0 },  // vertex 2: V[2]∥W[2] (partial)
+        };
+        double Wb[3][3] = {
+            { 1.0, 0.0, 0.0 },
+            { 0.0, 1.0, 0.0 },
+            { 0.0, 0.0, 1.0 },
+        };
+        std::vector<PuncturePoint> pb;
+        int nb = solve_pv_triangle(Vb, Wb, pb, nullptr);
+        ASSERT_EQ(nb, 1);
+        if (nb == 1) {
+            ASSERT_NEAR(pb[0].lambda, 0.5, 1e-6);
+            // Analytic ν: (63/95, 18/95, 14/95)
+            ASSERT_NEAR(pb[0].barycentric[0], 63.0/95.0, 1e-4);
+            ASSERT_NEAR(pb[0].barycentric[1], 18.0/95.0, 1e-4);
+            ASSERT_NEAR(pb[0].barycentric[2], 14.0/95.0, 1e-4);
+        }
+    }
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================

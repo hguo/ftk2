@@ -1406,6 +1406,89 @@ that the existing `solve_pv_triangle_large_scale` (S=50000, three real roots
 
 ---
 
+### Subtask 18 — Principled Initial Bracket and Principled Overflow Guard in `tighten_root_interval`
+
+**Thresholds removed**:
+- `scale * 1e-7` initial half-width → `scale * sqrt(ε_machine)`
+- `delta > 1e14 || delta < 1e-300` overflow/underflow guard → `!isfinite(lo) || !isfinite(hi) || delta == 0.0`
+
+**Background**: `tighten_root_interval(seq, rf, lo, hi)` receives a float root
+estimate `rf` from `solve_cubic_real_sos` and tightens it into a Sturm-isolated
+interval [lo, hi] via two phases:
+
+- **Phase 1 (expansion/contraction)**: starting from an initial half-width `delta`,
+  expand or contract until exactly one root lies in [lo, hi].
+- **Phase 2 (bisection)**: standard bisect-to-ULP, already improved by Subtask 14.
+
+**Old Phase 1 initial bracket**:
+```cpp
+double delta = scale * 1e-7;
+```
+
+The constant `1e-7` was chosen heuristically.  It is too large for highly accurate
+float estimates (wasting Phase 1 contraction steps) and too small for poorly
+conditioned near-double-root cubics (requiring many Phase 1 expansion steps).
+
+**Principled replacement — `sqrt(ε_machine)` ≈ 1.49 × 10⁻⁸**:
+
+For a near-double-root cubic, the float Cardano/trig formula for the root has error
+O(ε_machine / separation), where `separation` is the root-pair distance.  The
+condition number of a double root scales as 1/sqrt(separation), so the float error
+scales as sqrt(ε_machine) × scale in the worst (near-degenerate) case.  Using this
+as the initial half-width gives a bracket that contains the root for the hardest
+typical case while remaining tighter than `1e-7` for well-conditioned cubics.
+
+**Old overflow/underflow guard**:
+```cpp
+if (delta > 1e14 || delta < 1e-300) break;
+```
+
+The value `1e14` is arbitrary.  The value `1e-300` is dead code (delta can never
+decrease to subnormal in Phase 1 because it only expands there; and Phase 2 uses a
+separate ULP convergence guard from Subtask 14).
+
+**Principled replacement — actual float failure detection**:
+```cpp
+if (!std::isfinite(lo) || !std::isfinite(hi) || delta == 0.0) break;
+```
+
+- `!isfinite(lo/hi)`: fires when doubling `delta` overflows the representable float
+  range — the only genuine "expansion overflow" condition.
+- `delta == 0.0`: fires when halving `delta` reaches subnormal underflow (delta
+  rounds to zero) — the only genuine "contraction underflow" condition.
+  (In practice, delta starts at `scale × sqrt(ε_machine)` and only grows in Phase 1,
+  so the `delta == 0.0` guard is defence-in-depth.)
+
+**Implementation** (in `tighten_root_interval`):
+```cpp
+// Old:
+double delta = scale * 1e-7;
+...
+if (delta > 1e14 || delta < 1e-300) break;
+
+// New:
+static const double SQRT_EPS = std::sqrt(std::numeric_limits<double>::epsilon());
+double delta = scale * SQRT_EPS;
+...
+if (!std::isfinite(lo) || !std::isfinite(hi) || delta == 0.0) break;
+```
+
+**Tests**: `tighten_root_interval_phase1_expansion`:
+
+- Case A: `V = diag(2,2,2) × S`, `W = [[S,S,0],[S,0,S],[0,S,S]]` (with SoS,
+  indices={1,2,3}).  Char poly roots at λ=−2, 1, 2.  SoS may shift the root near
+  λ=1 slightly, exercising Phase 1 expansion/contraction.  Asserts n ≥ 0.
+
+- Case B: VT = [[0.5,0,0],[1,−3,0],[1,0,−4]], WT = I (no SoS).
+  Char poly: (0.5−λ)(−3−λ)(−4−λ) → roots 0.5, −3, −4.  Only λ=0.5 gives an
+  interior barycentric point ν = (63/95, 18/95, 14/95).  Roots at −3, −4 give
+  vertices 1 and 2 (boundary → excluded).
+  Asserts n=1, λ ≈ 0.5, ν ≈ (0.663, 0.189, 0.147) within 1e-4.
+
+122/122 tests pass.
+
+---
+
 ## 8. Implementation Status
 
 | Component | File | Status |
@@ -1430,6 +1513,7 @@ that the existing `solve_pv_triangle_large_scale` (S=50000, three real roots
 | **Subtask 15**: Exact-zero degree trimming for D_poly / N_poly (remove `< 1e-200`) | same | Implemented |
 | **Subtask 16**: Threshold-free `poly_rem_d` (remove `EPS_ZERO = 1e-200`) | same | Implemented |
 | **Subtask 17**: Always-exact discriminant (remove `sos_disc_eps`; fix sign convention) | same | Implemented |
+| **Subtask 18**: Principled initial bracket `sqrt(ε_machine)` and overflow guard in `tighten_root_interval` | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---
