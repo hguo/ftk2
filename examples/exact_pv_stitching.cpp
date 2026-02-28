@@ -93,6 +93,50 @@ int main() {
     }
     std::cout << non_degenerate_punctures.size() << " punctures on triangles (SoS-robust)" << std::endl;
 
+    // Diagnostic: per-triangle puncture count histogram
+    {
+        std::map<std::set<uint64_t>, int> tri_count;
+        for (int i : non_degenerate_punctures) {
+            const auto& v = complex.vertices[i];
+            std::set<uint64_t> verts(v.simplex.vertices, v.simplex.vertices + 3);
+            tri_count[verts]++;
+        }
+        std::map<int, int> count_hist;
+        for (const auto& [k, v] : tri_count) count_hist[v]++;
+        std::cout << "Per-triangle puncture count histogram:" << std::endl;
+        for (const auto& [n, cnt] : count_hist)
+            std::cout << "  " << cnt << " triangles with " << n << " puncture(s)" << std::endl;
+
+        // Print first few 3-puncture triangles with their lambda values
+        int shown = 0;
+        for (int i : non_degenerate_punctures) {
+            const auto& v = complex.vertices[i];
+            std::set<uint64_t> verts(v.simplex.vertices, v.simplex.vertices + 3);
+            if (tri_count[verts] == 3 && shown < 2) {
+                // Find all punctures on this triangle
+                bool first = true;
+                for (int j : non_degenerate_punctures) {
+                    const auto& w = complex.vertices[j];
+                    std::set<uint64_t> verts2(w.simplex.vertices, w.simplex.vertices + 3);
+                    if (verts2 == verts) {
+                        if (first) {
+                            std::cout << "  3-punc tri {";
+                            for (auto v2 : verts) std::cout << v2 << " ";
+                            std::cout << "}: ";
+                            first = false;
+                            ++shown;
+                        }
+                        std::cout << "lambda=" << w.scalar << " bary=("
+                                  << w.barycentric_coords[0][0] << ","
+                                  << w.barycentric_coords[0][1] << ","
+                                  << w.barycentric_coords[0][2] << ") ";
+                    }
+                }
+                if (!first) std::cout << std::endl;
+            }
+        }
+    }
+
     // Build map: triangle face -> puncture indices (only non-degenerate)
     std::set<int> non_degen_set(non_degenerate_punctures.begin(), non_degenerate_punctures.end());
     std::map<std::set<uint64_t>, std::vector<int>> face_to_punctures;
@@ -170,91 +214,119 @@ int main() {
             conn.tet_id = s.vertices[0];  // Use first vertex as tet ID
             connections.push_back(conn);
         } else if (tet_punctures.size() > 2) {
-            // Ambiguous case: use ExactPV tet solver to determine pairing
+            // Ambiguous case: use ExactPV characteristic polynomials + all valid
+            // λ-intervals to determine which punctures pair with which.
             tets_with_more++;
 
-            // Get field values at tet vertices
-            double values[4][6];
+            // Get field values at tet vertices, separate U and V
+            double V_arr[4][3], W_arr[4][3];
             for (int i = 0; i < 4; ++i) {
                 auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                for (int j = 0; j < 6; ++j) {
-                    values[i][j] = uv.f(j, coords[0], coords[1], coords[2]);
-                }
+                V_arr[i][0] = uv.f(0, coords[0], coords[1], coords[2]);
+                V_arr[i][1] = uv.f(1, coords[0], coords[1], coords[2]);
+                V_arr[i][2] = uv.f(2, coords[0], coords[1], coords[2]);
+                W_arr[i][0] = uv.f(3, coords[0], coords[1], coords[2]);
+                W_arr[i][1] = uv.f(4, coords[0], coords[1], coords[2]);
+                W_arr[i][2] = uv.f(5, coords[0], coords[1], coords[2]);
             }
 
-            // Run ExactPV tet solver
-            PVCurveSegment segment;
-            bool has_curve = pred.extract_tetrahedron(s, values, segment);
+            // Compute characteristic polynomials for this tet
+            double Q_poly[4], P_poly[4][4];
+            characteristic_polynomials_pv_tetrahedron(V_arr, W_arr, Q_poly, P_poly);
 
-            if (has_curve) {
-                // Store tet vertex positions for curve evaluation
+            bool q_zero = true;
+            for (int k = 0; k <= 3; ++k) if (Q_poly[k] != 0.0) { q_zero = false; break; }
+
+            if (!q_zero) {
+                // Get ALL valid λ-intervals where the PV curve is inside the tet
+                auto intervals = solve_barycentric_inequalities(P_poly, Q_poly, 1e-10);
+
+                // Diagnostic: print first few ambiguous tets
+                static int diag_count = 0;
+                if (diag_count < 5) {
+                    ++diag_count;
+                    std::cout << "[DIAG] Tet with " << tet_punctures.size()
+                              << " punctures, intervals=" << intervals.size() << ":";
+                    for (const auto& iv : intervals)
+                        std::cout << " [" << iv.min << "," << iv.max << "]";
+                    std::cout << std::endl;
+                }
+
+                // Build curve segment with polynomials and tet vertex positions
+                PVCurveSegment seg;
+                for (int k = 0; k < 4; ++k) seg.Q.coeffs[k] = Q_poly[k];
+                for (int i = 0; i < 4; ++i)
+                    for (int k = 0; k < 4; ++k) seg.P[i].coeffs[k] = P_poly[i][k];
                 for (int i = 0; i < 4; ++i) {
                     auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
-                    for (int j = 0; j < 3; ++j) {
-                        segment.tet_vertices[i][j] = coords[j];
-                    }
+                    for (int j = 0; j < 3; ++j) seg.tet_vertices[i][j] = coords[j];
                 }
 
-                // For each puncture, find closest point on curve
-                std::vector<std::pair<double, int>> puncture_params;  // (lambda, puncture_idx)
-
-                for (int p_idx : tet_punctures) {
-                    const auto& puncture = complex.vertices[p_idx];
-
-                    // Get physical position of puncture
-                    std::vector<double> p_pos(3, 0.0);
+                // Helper: physical position of a puncture from its barycentric coords
+                auto get_phys = [&](int p_idx) -> std::array<double, 3> {
+                    const auto& punc = complex.vertices[p_idx];
+                    std::array<double, 3> pos = {0.0, 0.0, 0.0};
                     for (int i = 0; i < 3; ++i) {
-                        auto vert_coords = mesh->get_vertex_coordinates(puncture.simplex.vertices[i]);
-                        for (int j = 0; j < 3; ++j) {
-                            p_pos[j] += puncture.barycentric_coords[0][i] * vert_coords[j];
-                        }
+                        auto vc = mesh->get_vertex_coordinates(punc.simplex.vertices[i]);
+                        for (int j = 0; j < 3; ++j)
+                            pos[j] += punc.barycentric_coords[0][i] * vc[j];
+                    }
+                    return pos;
+                };
+
+                std::vector<bool> paired(tet_punctures.size(), false);
+
+                // For each interval the PV curve is inside the tet, its two
+                // endpoints correspond to the entry/exit faces.  Pair the
+                // unpaired puncture closest (in physical space) to each endpoint.
+                for (const auto& interval : intervals) {
+                    double lam_lo = std::max(interval.min, -100.0);
+                    double lam_hi = std::min(interval.max,  100.0);
+
+                    auto pos_lo = seg.get_physical_coords(lam_lo);
+                    auto pos_hi = seg.get_physical_coords(lam_hi);
+
+                    // Closest unpaired puncture to entry endpoint
+                    int best_lo = -1; double d_lo = 1e10;
+                    for (size_t i = 0; i < tet_punctures.size(); ++i) {
+                        if (paired[i]) continue;
+                        auto pos = get_phys(tet_punctures[i]);
+                        double d = 0;
+                        for (int j = 0; j < 3; ++j) d += (pos[j]-pos_lo[j])*(pos[j]-pos_lo[j]);
+                        if (d < d_lo) { d_lo = d; best_lo = (int)i; }
+                    }
+                    if (best_lo < 0) continue;
+                    paired[best_lo] = true;  // claim entry puncture
+
+                    // Closest unpaired puncture to exit endpoint
+                    int best_hi = -1; double d_hi = 1e10;
+                    for (size_t i = 0; i < tet_punctures.size(); ++i) {
+                        if (paired[i]) continue;
+                        auto pos = get_phys(tet_punctures[i]);
+                        double d = 0;
+                        for (int j = 0; j < 3; ++j) d += (pos[j]-pos_hi[j])*(pos[j]-pos_hi[j]);
+                        if (d < d_hi) { d_hi = d; best_hi = (int)i; }
                     }
 
-                    // Sample curve and find closest point
-                    double best_lambda = segment.lambda_min;
-                    double min_dist = 1e10;
-                    int n_samples = 20;
-                    double lambda_range = segment.lambda_max - segment.lambda_min;
-
-                    for (int i = 0; i < n_samples; ++i) {
-                        double lambda = segment.lambda_min + (double)i / (n_samples - 1) * lambda_range;
-                        auto curve_pos = segment.get_physical_coords(lambda);
-
-                        double dist = std::sqrt(
-                            (curve_pos[0] - p_pos[0]) * (curve_pos[0] - p_pos[0]) +
-                            (curve_pos[1] - p_pos[1]) * (curve_pos[1] - p_pos[1]) +
-                            (curve_pos[2] - p_pos[2]) * (curve_pos[2] - p_pos[2])
-                        );
-
-                        if (dist < min_dist) {
-                            min_dist = dist;
-                            best_lambda = lambda;
-                        }
-                    }
-
-                    puncture_params.push_back({best_lambda, p_idx});
+                    if (best_hi < 0) { paired[best_lo] = false; continue; }  // release
+                    paired[best_hi] = true;
+                    connections.push_back({tet_punctures[best_lo], tet_punctures[best_hi], s.vertices[0]});
                 }
 
-                // Sort by lambda parameter
-                std::sort(puncture_params.begin(), puncture_params.end());
-
-                // Connect adjacent punctures in sorted order
-                for (size_t i = 0; i + 1 < puncture_params.size(); i += 2) {
-                    PunctureConnection conn;
-                    conn.puncture1_idx = puncture_params[i].second;
-                    conn.puncture2_idx = puncture_params[i + 1].second;
-                    conn.tet_id = s.vertices[0];
-                    connections.push_back(conn);
+                // Fallback: pair any remaining unpaired punctures
+                for (size_t i = 0; i < tet_punctures.size(); ++i) {
+                    if (paired[i]) continue;
+                    for (size_t j = i + 1; j < tet_punctures.size(); ++j) {
+                        if (paired[j]) continue;
+                        connections.push_back({tet_punctures[i], tet_punctures[j], s.vertices[0]});
+                        paired[i] = paired[j] = true;
+                        break;
+                    }
                 }
             } else {
-                // No curve through tet - connect pairs sequentially as fallback
-                for (size_t i = 0; i + 1 < tet_punctures.size(); i += 2) {
-                    PunctureConnection conn;
-                    conn.puncture1_idx = tet_punctures[i];
-                    conn.puncture2_idx = tet_punctures[i + 1];
-                    conn.tet_id = s.vertices[0];
-                    connections.push_back(conn);
-                }
+                // Degenerate (Q=0): pair sequentially as fallback
+                for (size_t i = 0; i + 1 < tet_punctures.size(); i += 2)
+                    connections.push_back({tet_punctures[i], tet_punctures[i + 1], s.vertices[0]});
             }
         }
 

@@ -469,7 +469,8 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
             return true;
         }
 
-        // Return first puncture if any exist
+        // Return first puncture if any exist.
+        // NOTE: Use extract_all() to obtain ALL punctures when n > 1.
         if (n > 0) {
             el = FeatureElement();
             el.simplex = s;
@@ -480,14 +481,53 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
             el.type = 0;
             el.scalar = (float)punctures[0].lambda;  // Store lambda value
             for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
-
-            // TODO: Handle multiple punctures (n > 1) - need to return multiple elements
-            // For now, only return the first one
-
             return true;
         }
 
         return false;
+    }
+
+    // Extract ALL parallel-vector punctures on this triangle (up to 3).
+    // Unlike extract_it(), this method appends EVERY puncture found to `els`
+    // rather than only the first. The SimplicialEngine uses this to ensure
+    // no punctures are dropped when a triangle contains multiple ones.
+    int extract_all(const Simplex& s, const T values[3][6],
+                    std::vector<FeatureElement>& els) const
+    {
+        T V[3][3], W[3][3];
+        for (int i = 0; i < 3; ++i) {
+            V[i][0] = values[i][0]; V[i][1] = values[i][1]; V[i][2] = values[i][2];
+            W[i][0] = values[i][3]; W[i][1] = values[i][4]; W[i][2] = values[i][5];
+        }
+        std::vector<PuncturePoint> punctures;
+        int n = solve_pv_triangle(V, W, punctures, s.vertices);
+
+        if (n == std::numeric_limits<int>::max()) {
+            // Degenerate: entire triangle is PV surface — store single barycenter point
+            FeatureElement el;
+            el.simplex = s;
+            el.geometry_type = FeatureGeometryType::Point;
+            el.barycentric_coords[0][0] = el.barycentric_coords[0][1] = el.barycentric_coords[0][2] = 1.0f / 3.0f;
+            el.type = -1;  // degenerate marker
+            el.scalar = 0.0f;
+            for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+            els.push_back(el);
+            return 1;
+        }
+
+        for (int k = 0; k < n; ++k) {
+            FeatureElement el;
+            el.simplex = s;
+            el.geometry_type = FeatureGeometryType::Point;
+            el.barycentric_coords[0][0] = (float)punctures[k].barycentric[0];
+            el.barycentric_coords[0][1] = (float)punctures[k].barycentric[1];
+            el.barycentric_coords[0][2] = (float)punctures[k].barycentric[2];
+            el.type = 0;
+            el.scalar = (float)punctures[k].lambda;
+            for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+            els.push_back(el);
+        }
+        return n;
     }
 
     // Extraction for tetrahedra (4 vertices, 2 vector fields)

@@ -365,6 +365,29 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
     }
 
     T b = P[2]/P[3], c = P[1]/P[3], d = P[0]/P[3];
+
+    // Special case: P[0]==P[1]==0 → polynomial is λ²·(P[2]+P[3]λ).
+    // Double root at λ=0 (exact) + simple root at -P[2]/P[3] = -b.
+    //
+    // Without this branch the Cardano formula computes roots[1] =
+    // -(r13 + term1) ≈ 5e-17 instead of 0.0 due to floating-point
+    // cancellation (r13 = cbrt(1/27) ≈ 1/3 and term1 = b/3 ≈ -1/3
+    // do not cancel exactly in double).  Subtask 11 then fails because
+    // the isolated interval [5e-17, 5e-17] does not contain 0.0.
+    //
+    // Here c = P[1]/P[3] = 0.0 and d = P[0]/P[3] = 0.0 hold EXACTLY
+    // when P[0]=P[1]=0 are integer-derived (no rounding), so the
+    // == 0.0 test is the principled threshold-free replacement.
+    if (c == T(0) && d == T(0)) {
+        roots[0] = -b;   // simple root: -P[2]/P[3]
+        roots[1] = T(0); // double root: 0 (forced exact, no cancellation)
+        uint64_t min_idx_sp = indices
+            ? std::min({indices[0], indices[1], indices[2]}) : uint64_t(0);
+        if (min_idx_sp % 2 == 0) return 1;  // SoS: tangent excluded
+        roots[2] = T(0);
+        return (-b == T(0)) ? 1 : 3;  // triple root at 0 gives 1
+    }
+
     T q = (3*c - b*b)/9;
     T r = (-27*d + b*(9*c - 2*b*b))/54;
     T disc = q*q*q + r*r;
@@ -823,6 +846,17 @@ inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
         cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
     }
     if (cnt != 1) return false;
+
+    // Special case: rf == 0.0 exactly (from the c==d==0 SoS branch in
+    // solve_cubic_real_sos, which sets roots[1]=roots[2]=0.0 for a double
+    // root at λ=0).  All Sturm polynomials evaluate to 0 at x=0 (the common
+    // factor of the Sturm sequence vanishes at the double root), so Phase 2
+    // bisection converges to the wrong interval (the upper boundary of the
+    // initial bracket, ≈ 1.49e-8) instead of to 0.
+    // Returning false preserves the default degenerate interval [0.0, 0.0]
+    // set by the caller; Sub 11 then correctly excludes this root because
+    //   zero_is_exact_root = (P_i128[0] == 0)  AND  0 ∈ [0.0, 0.0].
+    if (rf == 0.0) return false;
 
     // Phase 2: bisect to ULP convergence (Subtask 14: no absolute threshold).
     // The `mid <= lo || mid >= hi` guard fires when lo and hi are adjacent

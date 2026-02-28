@@ -90,6 +90,7 @@ public:
         node_id_to_simplex_.clear();
         manifold_simplices_.clear();
         uf_.clear();
+        all_extracted_elements_.clear();
     }
 
     void execute(const std::map<std::string, ftk::ndarray<T>>& data, const std::vector<std::string>& var_names = {}) {
@@ -118,23 +119,48 @@ public:
         std::vector<FeatureElement> elements;
         std::mutex mutex;
         std::atomic<uint64_t> visited(0), found(0);
+        // ExactPV: dedup set — iterate_simplices may visit some faces >1× and the old
+        // active_nodes_ dedup no longer applies for the multi-element path.
+        std::set<Simplex> exactpv_seen;
         slab_mesh->iterate_simplices(m, [&](const Simplex& s) {
             visited++;
-            FeatureElement el;
-            if (extract_simplex(s, data, el, slab_mesh.get())) {
-                found++;
-                std::lock_guard<std::mutex> lock(mutex);
-                elements.push_back(el);
+            if constexpr (std::is_same_v<PredicateType, ExactPVPredicate<T>>) {
+                // ExactPV: extract ALL punctures per triangle (up to 3 per simplex).
+                // Guard against iterate_simplices visiting the same face multiple times.
+                Simplex sorted_s = s; sorted_s.sort_vertices();
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    if (!exactpv_seen.insert(sorted_s).second) return;  // already processed
+                }
+                std::vector<FeatureElement> multi_els;
+                if (extract_simplex_multi(sorted_s, data, multi_els, slab_mesh.get())) {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    found += multi_els.size();
+                    for (auto& el : multi_els) elements.push_back(std::move(el));
+                }
+            } else {
+                FeatureElement el;
+                if (extract_simplex(s, data, el, slab_mesh.get())) {
+                    found++;
+                    std::lock_guard<std::mutex> lock(mutex);
+                    elements.push_back(el);
+                }
             }
         });
-        
-        std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
-        for (const auto& el : elements) {
-            if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
-                uint64_t node_id = uf_.add(); 
-                active_nodes_[el.simplex] = node_id;
-                node_elements_[node_id] = el; 
-                node_id_to_simplex_[node_id] = el.simplex;
+
+        if constexpr (std::is_same_v<PredicateType, ExactPVPredicate<T>>) {
+            // ExactPV: multiple punctures per simplex are valid — store without simplex-dedup
+            all_extracted_elements_.insert(all_extracted_elements_.end(),
+                                           elements.begin(), elements.end());
+        } else {
+            std::sort(elements.begin(), elements.end(), [](const FeatureElement& a, const FeatureElement& b) { return a.simplex < b.simplex; });
+            for (const auto& el : elements) {
+                if (active_nodes_.find(el.simplex) == active_nodes_.end()) {
+                    uint64_t node_id = uf_.add();
+                    active_nodes_[el.simplex] = node_id;
+                    node_elements_[node_id] = el;
+                    node_id_to_simplex_[node_id] = el.simplex;
+                }
             }
         }
         auto t_nodes = std::chrono::high_resolution_clock::now();
@@ -797,6 +823,14 @@ public:
 #endif
 
     FeatureComplex get_complex() {
+        if constexpr (std::is_same_v<PredicateType, ExactPVPredicate<T>>) {
+            // ExactPV stores all punctures (including multi-puncture triangles) in
+            // all_extracted_elements_ without deduplication.  Return them directly.
+            FeatureComplex complex;
+            complex.vertices = all_extracted_elements_;
+            return complex;
+        }
+
         FeatureComplex complex;
         for (int dim = 1; dim <= 3; ++dim) {
             for (auto& nodes : manifold_simplices_[dim]) std::sort(nodes.begin(), nodes.end());
@@ -975,6 +1009,31 @@ private:
         else if (local_coords.size() == 3) return arr.f(local_coords[0], local_coords[1], local_coords[2]);
         else if (local_coords.size() == 4) return arr.f(local_coords[0], local_coords[1], local_coords[2], local_coords[3]);
         return (T)0;
+    }
+
+    // Multi-element extraction for ExactPV: returns ALL punctures on the given
+    // triangle, not just the first one.  For all other predicates this always
+    // returns false (use extract_simplex() instead).
+    bool extract_simplex_multi(const Simplex& s,
+                               const std::map<std::string, ftk::ndarray<T>>& data,
+                               std::vector<FeatureElement>& els, Mesh* mesh) {
+        if constexpr (std::is_same_v<PredicateType, ExactPVPredicate<T>>) {
+            T values[3][6] = {};
+            if (predicate_.use_multicomponent && !predicate_.vector_var_name.empty()) {
+                const auto& vec_array = data.at(predicate_.vector_var_name);
+                for (int i = 0; i < 3; ++i) {
+                    auto coords = mesh->get_vertex_coordinates(s.vertices[i]);
+                    for (int j = 0; j < 6; ++j) {
+                        if (coords.size() == 3)
+                            values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2]);
+                        else if (coords.size() == 4)
+                            values[i][j] = vec_array.f(j, coords[0], coords[1], coords[2], coords[3]);
+                    }
+                }
+            }
+            return predicate_.extract_all(s, values, els) > 0;
+        }
+        return false;
     }
 
     bool extract_simplex(const Simplex& s, const std::map<std::string, ftk::ndarray<T>>& data, FeatureElement& el, Mesh* mesh) {
@@ -1616,6 +1675,9 @@ private:
     std::map<IDType, FeatureElement> node_elements_;
     std::map<IDType, Simplex> node_id_to_simplex_;
     std::map<int, std::vector<std::vector<IDType>>> manifold_simplices_;
+    // ExactPV: flat list of ALL punctures with no per-simplex deduplication.
+    // Populated by the multi-extraction path in feed(); returned by get_complex().
+    std::vector<FeatureElement> all_extracted_elements_;
 };
 
 } // namespace ftk2
