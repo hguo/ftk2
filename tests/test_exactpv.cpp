@@ -792,6 +792,78 @@ TEST(solve_cubic_real_sos_exact_zero_degree_trim) {
     }
 }
 
+TEST(solve_pv_triangle_no_sos_conservative) {
+    // Subtask 20: replaces `return (double)lambda[i] >= 0.0` with `return false`
+    // in the no-SoS boundary-zone path of sos_bary_inside.
+    //
+    // The old heuristic accepted or rejected a boundary-zone puncture based on
+    // the sign of the eigenvalue λ* — not the barycentric coordinate.  This was
+    // ad-hoc: λ* < 0 happened to match rejection in the tiny_lambda_bisection
+    // test, but would spuriously ACCEPT boundary punctures with λ* > 0.  The new
+    // code conservatively returns false: without vertex indices we cannot determine
+    // which triangle "owns" the shared edge, so we decline to claim the puncture.
+    //
+    // Part A: interior puncture (all N_k strictly positive at λ*).
+    //   Certification succeeds for all k via try_certify_nk_sign; the !indices
+    //   fallback is never reached.
+    //   → solve_pv_triangle with indices=nullptr still finds the puncture.
+    {
+        // Field: VT=[[0.5,0,0],[1,-3,0],[1,0,-4]], WT=I → λ=0.5, interior ν.
+        // Same field as tighten_root_interval Case B.
+        double Va[3][3] = {
+            { 0.5,  1.0,  1.0 },
+            { 0.0, -3.0,  0.0 },
+            { 0.0,  0.0, -4.0 },
+        };
+        double Wa[3][3] = { {1,0,0}, {0,1,0}, {0,0,1} };
+        std::vector<PuncturePoint> pa;
+        int na = solve_pv_triangle(Va, Wa, pa, nullptr);
+        // Interior puncture found without SoS: certification does not need
+        // vertex indices when the puncture is strictly inside the triangle.
+        ASSERT_EQ(na, 1);
+        if (na == 1) ASSERT_NEAR(pa[0].lambda, 0.5, 1e-6);
+    }
+    // Part B: on-edge puncture — conservative rejection without SoS.
+    //   Field: V[0]=(0,0,1)/W[0]=(1,0,0),
+    //          V[1]=(1,1,0)/W[1]=(0,1,0), V[2]=(-1,1,0)/W[2]=(0,1,0).
+    //   P(λ) = det(VT−λWT) = 2(1−λ) → root at λ=1, ν=(0, 0.5, 0.5) (edge {ν₀=0}).
+    //   N_0(λ*=1) = 0 (puncture on edge opposite vertex 0).
+    //
+    //   Old code: `return (double)lambda[i] >= 0.0` → true (λ*=1>0) → spurious accept.
+    //   New code: `return false` → puncture conservatively rejected without SoS.
+    //
+    //   (In practice the Horner sign for N_0 is certified non-zero at lo<λ*, so
+    //   try_certify_nk_sign returns −1 before reaching the SoS branch, giving
+    //   nb=0 by both old and new code.  The !indices path guards the residual
+    //   floating-point-uncertain cases not caught by the Sturm/Horner certifier.)
+    {
+        double Vb[3][3] = {
+            {  0.0, 0.0, 1.0 },   // vertex 0
+            {  1.0, 1.0, 0.0 },   // vertex 1
+            { -1.0, 1.0, 0.0 },   // vertex 2
+        };
+        double Wb[3][3] = {
+            { 1.0, 0.0, 0.0 },
+            { 0.0, 1.0, 0.0 },
+            { 0.0, 1.0, 0.0 },    // W[2] = W[1]: det(WT) = 0, P[3]=0
+        };
+        // Without SoS: boundary-zone punctures conservatively rejected.
+        std::vector<PuncturePoint> pb_no;
+        int nb_no = solve_pv_triangle(Vb, Wb, pb_no, nullptr);
+        ASSERT_EQ(nb_no >= 0, true);  // no crash
+
+        // With SoS indices: SoS ownership rule may accept or reject.
+        uint64_t idx[3] = {1, 2, 3};   // vertex 0 has smallest index
+        std::vector<PuncturePoint> pb_sos;
+        int nb_sos = solve_pv_triangle(Vb, Wb, pb_sos, idx);
+        ASSERT_EQ(nb_sos >= 0, true);  // no crash
+
+        // Key invariant: no-SoS never reports strictly more punctures than SoS
+        // (SoS may claim boundary punctures that no-SoS conservatively skips).
+        ASSERT_EQ(nb_no <= nb_sos, true);
+    }
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================

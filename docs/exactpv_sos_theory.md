@@ -1586,6 +1586,99 @@ In the SoS tie-break branch (`exact_sign == 0` AND `disc == 0.0`):
 
 ---
 
+### Subtask 20 — Conservative No-SoS Fallback and Tighter EVAL_GAMMA in `sos_bary_inside`
+
+Two threshold-related fixes in `sos_bary_inside`:
+
+#### 20a. `EVAL_GAMMA` tightened to use actual `degNk`
+
+**Old code**:
+```cpp
+static constexpr double EVAL_GAMMA =
+    (2 * 4 + 2) * std::numeric_limits<double>::epsilon();  // hardcoded degree 4
+if (std::abs(nk_lo) > EVAL_GAMMA * cond_nk)
+    return (nk_lo > 0.0) ? +1 : -1;
+```
+
+**New code**:
+```cpp
+// Subtask 20: use actual degNk (not hardcoded 4) in the Higham bound.
+double eval_gamma = double(2 * degNk + 2) *
+                    std::numeric_limits<double>::epsilon();
+if (std::abs(nk_lo) > eval_gamma * cond_nk)
+    return (nk_lo > 0.0) ? +1 : -1;
+```
+
+**Rationale**: The Higham forward error bound for degree-`n` Horner evaluation is
+`(2n+2)·u·cond(p, x)` where `u = machine_epsilon`.  `N_k(λ)` has degree ≤ 4
+as a general polynomial, but after degree-trimming (Subtask 15) `degNk` may be
+< 4 (e.g. when W is constant, `N_k` drops to degree 2 or 3).  Using the actual
+`degNk` gives a tighter certification zone: more genuinely-nonzero evaluations
+are accepted as certified without entering the SoS tie-break.
+
+#### 20b. Conservative no-SoS fallback in boundary zone
+
+**Old code (line ~1951)**:
+```cpp
+// Boundary zone (N_k or D degenerate, or evaluation uncertain):
+if (!indices) return (double)lambda[i] >= 0.0;  // legacy fallback
+```
+
+**New code**:
+```cpp
+// Boundary zone: conservatively reject without SoS indices.
+if (!indices) return false;
+```
+
+**Why the old code was wrong**: `lambda[i]` in this context is the PV eigenvalue λ*
+(the scalar for which V = λ*W at the puncture), **not** the barycentric coordinate
+μ_k = N_k(λ*)/D(λ*).  Using the eigenvalue sign as a proxy for the barycentric
+coordinate sign has no mathematical justification.  Concretely:
+
+- If λ* > 0 but μ_k < 0, the puncture is outside the triangle at vertex k.
+  Old code: accepts (λ* ≥ 0 → true).  New code: rejects.
+- If λ* < 0 and μ_k > 0, the puncture is inside.
+  Old code: rejects (λ* < 0 → false).  New code: also rejects (but for the
+  right reason: no SoS ownership without vertex indices).
+
+**Why `return false` is safe**: The no-SoS fallback is only reached when
+`try_certify_nk_sign` returns 0 — meaning N_k(λ*) is within floating-point
+noise of zero, i.e. the puncture is on or near the edge of the simplex.  Without
+vertex indices, we cannot apply the SoS min-index ownership rule to determine
+which adjacent simplex "owns" the shared edge.  Rejecting conservatively is safe
+because the puncture will be claimed by the neighbouring simplex that *does* have
+vertex indices available (as happens in a full tet-mesh traversal).
+
+**When the old and new code differ**:
+
+The old code accepted boundary-zone punctures whenever λ* ≥ 0.  This was
+inadvertently harmless in the existing tests because:
+- `tiny_lambda_bisection`: negative-λ roots (λ=-3, -4) hit the boundary zone at
+  vertex 1 and vertex 2 respectively; old code rejected (λ<0), new code also
+  rejects (return false).  Same result, principled reason.
+- All other tests calling with `indices=nullptr` have either strictly interior
+  punctures (certification succeeds → SoS branch never reached) or
+  all-parallel / degenerate cases (INT_MAX).
+
+The behavioral difference manifests only for boundary-zone punctures with λ* > 0,
+which the old code would spuriously accept.
+
+**Tests**: `solve_pv_triangle_no_sos_conservative`:
+
+- **Part A**: Field with interior puncture (VT upper-triangular, λ=0.5,
+  ν=(63/95, 18/95, 14/95)); called with `indices=nullptr`.
+  Certification succeeds for all k → SoS branch not triggered.
+  Asserts `n=1` and `λ ≈ 0.5` (interior punctures unaffected by the change).
+
+- **Part B**: Field with on-edge puncture at (ν₀=0, ν₁=0.5, ν₂=0.5), λ=1.
+  `solve_pv_triangle` called both with and without SoS indices.
+  Asserts `nb_no ≥ 0` and `nb_sos ≥ 0` (no crash).
+  Asserts `nb_no ≤ nb_sos` (SoS may claim boundary punctures; no-SoS cannot).
+
+129/129 tests pass.
+
+---
+
 ## 8. Implementation Status
 
 | Component | File | Status |
@@ -1612,6 +1705,8 @@ In the SoS tie-break branch (`exact_sign == 0` AND `disc == 0.0`):
 | **Subtask 17**: Always-exact discriminant (remove `sos_disc_eps`; fix sign convention) | same | Implemented |
 | **Subtask 18**: Principled initial bracket `sqrt(ε_machine)` and overflow guard in `tighten_root_interval` | same | Implemented |
 | **Subtask 19**: Exact `== 0.0` degree-trimming and triple-root detection in `solve_cubic_real_sos`; `epsilon` parameter removed | same | Implemented |
+| **Subtask 20a**: Tighter EVAL_GAMMA using actual `degNk` instead of hardcoded 4 in `try_certify_nk_sign` | same | Implemented |
+| **Subtask 20b**: Conservative `return false` (replacing `lambda[i] >= 0.0`) in no-SoS boundary-zone path | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

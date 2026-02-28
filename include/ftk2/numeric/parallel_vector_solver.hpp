@@ -1894,14 +1894,22 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
                 return 0;  // D has a root → degenerate system
 
             // Subtask 8: certified Horner sign at lo.
+            //
+            // Subtask 20: use actual degNk (not hardcoded 4) in the Higham
+            // error bound.  After degree-trimming, degNk may be < 4 (e.g.
+            // when W is constant → leading coefficient of N_k is exactly 0
+            // → degNk ≤ 3).  The Higham bound for degree-n Horner evaluation
+            // is (2n+2)·u·cond, so using degNk instead of 4 gives a tighter
+            // threshold: the certification zone shrinks, accepting more
+            // genuinely-nonzero evaluations as certified.
             double nk_lo = eval_poly_sturm(N_poly[k], degNk, lo);
             double ax = std::abs(lo);
             double cond_nk = std::abs(N_poly[k][degNk]);
             for (int d = degNk - 1; d >= 0; --d)
                 cond_nk = cond_nk * ax + std::abs(N_poly[k][d]);
-            static constexpr double EVAL_GAMMA =
-                (2 * 4 + 2) * std::numeric_limits<double>::epsilon();
-            if (std::abs(nk_lo) > EVAL_GAMMA * cond_nk)
+            double eval_gamma = double(2 * degNk + 2) *
+                                std::numeric_limits<double>::epsilon();
+            if (std::abs(nk_lo) > eval_gamma * cond_nk)
                 return (nk_lo > 0.0) ? +1 : -1;
 
             return 0;  // within rounding noise
@@ -1940,7 +1948,13 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
 
             // Boundary zone (N_k or D degenerate, or evaluation uncertain):
             // apply SoS min-index ownership rule.
-            if (!indices) return (double)lambda[i] >= 0.0;  // legacy fallback
+            // Subtask 20: without SoS indices, conservatively reject boundary
+            // punctures rather than using the ad-hoc eigenvalue-sign heuristic.
+            // A certification failure means N_k(λ*) ≈ 0 (boundary of simplex),
+            // and we cannot determine which simplex "owns" the puncture without
+            // vertex indices.  Rejecting is safe: the puncture will be claimed by
+            // the neighbouring simplex that does have indices available.
+            if (!indices) return false;
             int ii = (k + 1) % 3, jj = (k + 2) % 3;
             return indices[k] < std::min(indices[ii], indices[jj]);
         };
