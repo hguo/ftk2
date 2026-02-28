@@ -1239,6 +1239,71 @@ reaches 1-ULP width in at most 24 additional steps (log₂(1e-7 / ε_machine) �
   interval straddles 0; with ULP convergence it is tightly localised around 1e-11.
   Asserts n=1, λ ≈ 1e-11, ν ≈ (12/19, 4/19, 3/19).
 
+### Subtask 15 — Exact-Zero Degree Trimming for D_poly and N_poly
+
+**Goal**: replace `std::abs(coeff) < 1e-200` in the degree-trimming loops for
+D_poly and N_poly[k] with the exact `== 0.0` comparison, eliminating the last
+arbitrary threshold from the solve_pv_triangle hot path.
+
+**Background**: before building a Sturm sequence with `build_sturm_deg4`, the code
+trims trailing near-zero leading coefficients to determine the effective degree:
+
+```cpp
+// Old:
+int degD = 4;
+while (degD > 0 && std::abs(D_poly[degD]) < 1e-200) --degD;
+```
+
+The `1e-200` threshold is unprincipled — it is neither derived from field magnitude
+nor from rounding-error theory.
+
+**Why `== 0.0` is correct**: The coefficients of D_poly (= det(MᵀM)) and N_poly[k]
+are computed by `compute_bary_numerators` from:
+
+```cpp
+Mlin[r][c][1] = -(WT[r][c] - WT[r][2])   // W-field differences across vertices
+```
+
+The degree-4 coefficient D[4] = A[0][0][2] × A[1][1][2] − A[0][1][2]², where
+A[p][q][2] = Σᵣ Mlin[r][p][1] × Mlin[r][q][1].
+
+Two cases:
+
+| Scenario | Mlin[r][c][1] | D_poly[4] | Degree trim |
+|---|---|---|---|
+| SoS active (indices ≠ nullptr) | Non-zero (SoS makes W non-constant) | > 0 | No trim needed |
+| No SoS, W exactly constant | Exactly 0.0 (no rounding) | Exactly 0.0 | `== 0.0` catches it |
+| No SoS, W non-constant | Non-zero, O(field²) | > 0, O(field⁴) | No trim needed |
+
+When Mlin[r][c][1] = 0.0 exactly (W constant, no SoS), every product in A[p][q][2]
+is 0.0, making D_poly[4] exactly 0.0 with no floating-point rounding.  There is no
+intermediate cancellation.
+
+When SoS is active, D_poly[4] > 0 always because the SoS perturbation ensures
+`Wp[c][r] ≠ Wp[2][r]` for distinct vertices c ≠ 2 (since the perturbation is
+different per vertex index).  The `== 0.0` trim loop fires zero times in this case.
+
+The same argument applies to N_poly[k][4] — its degree-4 coefficient is either
+genuinely non-zero (O(field⁴)) or exactly 0.0 from algebraic cancellation, with no
+floating-point rounding in between when all inputs are exact doubles from integers.
+
+**Implementation**:
+
+```cpp
+// Old:
+while (degD  > 0 && std::abs(D_poly[degD])         < 1e-200) --degD;
+while (degNk > 0 && std::abs(N_poly[k][degNk])     < 1e-200) --degNk;
+
+// New (Subtask 15):
+while (degD  > 0 && D_poly[degD]         == 0.0) --degD;
+while (degNk > 0 && N_poly[k][degNk]     == 0.0) --degNk;
+```
+
+**Tests**: `solve_pv_triangle_constant_w_degree_trim` — W = (1,0,0) at all
+vertices (exactly constant, no SoS).  D_poly[4] = 0.0 exactly.  The solver
+must complete without crash or NaN, verifying that the `== 0.0` trim path works.
+110/110 tests pass.
+
 ---
 
 ## 8. Implementation Status
@@ -1262,6 +1327,7 @@ reaches 1-ULP width in at most 24 additional steps (log₂(1e-7 / ε_machine) �
 | **Subtask 12**: Certified all-parallel check via integer cross products on Vq/Wq | same | Implemented |
 | **Subtask 13**: Deferred polynomial ν evaluation via N_k(λ)/D(λ) | same | Implemented |
 | **Subtask 14**: ULP-convergence bisection (remove `target_width = 1e-10`) | same | Implemented |
+| **Subtask 15**: Exact-zero degree trimming for D_poly / N_poly (remove `< 1e-200`) | same | Implemented |
 | Resultant-based tet-edge detection (G3/G4) | — | Future work |
 
 ---

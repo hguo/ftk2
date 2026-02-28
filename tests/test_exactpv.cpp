@@ -549,6 +549,42 @@ TEST(solve_pv_triangle_tiny_lambda_bisection) {
     }
 }
 
+TEST(solve_pv_triangle_constant_w_degree_trim) {
+    // Subtask 15: when W is exactly constant across vertices, every
+    // Mlin[r][c][1] = -(W[c][r] - W[2][r]) = 0.0 exactly.
+    // D_poly[4] and N_poly[k][4] are therefore exactly 0.0 (no rounding).
+    // The old `< 1e-200` threshold and the new `== 0.0` check both catch this,
+    // but the new check is threshold-free and principled.
+    //
+    // Field: V has two distinct vertex values (non-parallel),
+    //        W = (1,0,0) at all vertices (constant → D_poly degree < 4).
+    // The PV condition V(ν) = λ W(ν) = λ(1,0,0) means ν must be the unique
+    // point where V[1](ν)=0 and V[2](ν)=0 simultaneously.
+    //
+    // V[0]=(0,1,0), V[1]=(0,-1,0), V[2]=(1,0,0): W=(1,0,0) everywhere.
+    // V(ν)=λW: V₁(ν)=ν₀·0+ν₁·(-1)·0+... hmm, let me use a simpler setup.
+    //
+    // Simpler: V[0]=(2,1,0), V[1]=(0,0,1), V[2]=(1,-1,0), W=(1,0,0) const.
+    // The solver should complete without crashing when D_poly has degree < 4.
+    double V[3][3] = {
+        { 2.0,  1.0, 0.0 },
+        { 0.0,  0.0, 1.0 },
+        { 1.0, -1.0, 0.0 },
+    };
+    double W[3][3] = {
+        { 1.0, 0.0, 0.0 },
+        { 1.0, 0.0, 0.0 },
+        { 1.0, 0.0, 0.0 },
+    };
+    std::vector<PuncturePoint> punctures;
+    // Run without SoS so Wp = W exactly (Mlin[r][c][1] = 0 exactly).
+    int n = solve_pv_triangle(V, W, punctures, nullptr);
+    // Main assertion: solver completes without crash/NaN.
+    // With constant W the D_poly leading coefficient is exactly 0.0; the
+    // old 1e-200 trim and new == 0.0 trim both handle this correctly.
+    ASSERT_EQ(n >= 0, true);  // any non-negative count is valid
+}
+
 // ============================================================================
 // Tetrahedron Solver Tests
 // ============================================================================

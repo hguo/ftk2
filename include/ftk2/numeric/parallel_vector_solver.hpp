@@ -1723,11 +1723,24 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     //                                           apply SoS ownership rule
     //
     // This replaces the previous `d_lo > 1e-200` float guard.
+    //
+    // Subtask 15: degree-trimming uses exact `== 0.0` instead of `< 1e-200`.
+    //
+    // D_poly[k] is computed by compute_bary_numerators from Mlin/blin, which
+    // come from Vp and Wp.  When SoS is active (indices ≠ nullptr) every
+    // Mlin[r][c][1] = -(Wp[c][r] − Wp[2][r]) is non-zero because the SoS
+    // perturbation ensures W is never exactly constant across distinct vertices.
+    // Hence D_poly[4] > 0 always with SoS, and the trim loop fires 0 times.
+    //
+    // Without SoS (Vp = V, Wp = W), D_poly[4] is exactly 0.0 (bit-for-bit)
+    // when W is truly constant across vertices — in that case all Mlin[r][c][1]
+    // are exactly 0.0 and every intermediate product is 0.0 with no rounding.
+    // The `== 0.0` test catches this exact-zero without any threshold.
     // ----------------------------------------------------------------
     SturmSeqDeg4 seq_D;
     {
         int degD = 4;
-        while (degD > 0 && std::abs(D_poly[degD]) < 1e-200) --degD;
+        while (degD > 0 && D_poly[degD] == 0.0) --degD;
         build_sturm_deg4(D_poly, degD, seq_D);
     }
 
@@ -1784,9 +1797,15 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
         // ----------------------------------------------------------------
 
         // Returns +1 / −1 if sign of N_k in (lo,hi] is certified, else 0.
+        //
+        // Subtask 15: same exact `== 0.0` degree-trim as for D_poly above.
+        // N_poly[k][4] is exactly 0.0 only when the leading polynomial term
+        // cancels exactly — an algebraic condition that survives to double
+        // arithmetic without rounding when all inputs are exactly representable
+        // (as they are for quantized integer Mlin values cast to double).
         auto try_certify_nk_sign = [&](int k, double lo, double hi) -> int {
             int degNk = 4;
-            while (degNk > 0 && std::abs(N_poly[k][degNk]) < 1e-200) --degNk;
+            while (degNk > 0 && N_poly[k][degNk] == 0.0) --degNk;
 
             SturmSeqDeg4 seq_nk;
             build_sturm_deg4(N_poly[k], degNk, seq_nk);
