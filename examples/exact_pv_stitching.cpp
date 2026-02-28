@@ -296,77 +296,88 @@ int main() {
     }
     std::cout << "Unpaired punctures (degree 0): " << unpaired_count << std::endl;
 
-    // Trace connected curves using DFS
+    // Trace connected curves as ordered paths.
+    // Each node in a well-formed PV curve has degree exactly 2, so we can
+    // walk the adjacency list step-by-step (never revisiting the previous
+    // node) until we return to the start (closed) or hit a dead end (open).
     std::set<int> visited;
-    std::vector<std::vector<int>> curves;
+    struct Curve { std::vector<int> pts; bool closed; };
+    std::vector<Curve> curves;
 
     for (size_t start_idx = 0; start_idx < complex.vertices.size(); ++start_idx) {
         if (visited.count(start_idx) || adjacency[start_idx].empty()) continue;
 
-        // Trace curve from this starting point
-        std::vector<int> curve;
-        std::vector<int> stack = {(int)start_idx};
+        Curve curve;
+        int curr = (int)start_idx;
+        int prev = -1;
 
-        while (!stack.empty()) {
-            int curr = stack.back();
-            stack.pop_back();
-
-            if (visited.count(curr)) continue;
-            visited.insert(curr);
-            curve.push_back(curr);
-
-            for (int neighbor : adjacency[curr]) {
-                if (!visited.count(neighbor)) {
-                    stack.push_back(neighbor);
-                }
+        // Walk until we revisit a node (closed) or run out of unvisited neighbours (open).
+        while (true) {
+            if (visited.count(curr)) {
+                // Closed back to a previously visited node.
+                curve.closed = (curr == (int)start_idx);
+                break;
             }
+            visited.insert(curr);
+            curve.pts.push_back(curr);
+
+            // Pick the neighbour that is not where we came from.
+            int next = -1;
+            for (int nb : adjacency[curr]) {
+                if (nb != prev) { next = nb; break; }
+            }
+            if (next == -1) { curve.closed = false; break; }  // open end
+            prev = curr;
+            curr = next;
         }
 
-        if (curve.size() > 1) {
-            curves.push_back(curve);
-        }
+        if (curve.pts.size() > 1)
+            curves.push_back(std::move(curve));
     }
 
     std::cout << "\nExtracted " << curves.size() << " connected curve(s)" << std::endl;
     for (size_t i = 0; i < std::min(curves.size(), (size_t)5); ++i) {
-        std::cout << "  Curve " << i << ": " << curves[i].size() << " punctures" << std::endl;
+        std::cout << "  Curve " << i << ": " << curves[i].pts.size() << " punctures"
+                  << (curves[i].closed ? " (closed)" : " (open)") << std::endl;
     }
 
-    // Write stitched curves to VTP
+    // Write each curve as a single vtkPolyLine cell.
+    // For a closed curve, repeat the first point ID at the end so VTK
+    // draws the closing segment back to the start.
     auto polydata = vtkSmartPointer<vtkPolyData>::New();
-    auto points = vtkSmartPointer<vtkPoints>::New();
-    auto lines = vtkSmartPointer<vtkCellArray>::New();
+    auto points   = vtkSmartPointer<vtkPoints>::New();
+    auto lines    = vtkSmartPointer<vtkCellArray>::New();
 
     std::map<int, vtkIdType> puncture_to_point;
     vtkIdType point_id = 0;
 
-    // Add all points
+    // Insert all unique points.
     for (const auto& curve : curves) {
-        for (int p_idx : curve) {
+        for (int p_idx : curve.pts) {
             if (puncture_to_point.count(p_idx)) continue;
-
             const auto& v = complex.vertices[p_idx];
-            // Compute physical position from barycentric coords
             std::vector<double> phys_pos(3, 0.0);
             for (int i = 0; i < 3; ++i) {
                 auto vert_coords = mesh->get_vertex_coordinates(v.simplex.vertices[i]);
-                for (int j = 0; j < 3; ++j) {
+                for (int j = 0; j < 3; ++j)
                     phys_pos[j] += v.barycentric_coords[0][i] * vert_coords[j];
-                }
             }
-
             points->InsertNextPoint(phys_pos[0], phys_pos[1], phys_pos[2]);
             puncture_to_point[p_idx] = point_id++;
         }
     }
 
-    // Add lines (connections)
-    for (const auto& conn : connections) {
-        vtkIdType pts[2] = {
-            puncture_to_point[conn.puncture1_idx],
-            puncture_to_point[conn.puncture2_idx]
-        };
-        lines->InsertNextCell(2, pts);
+    // Insert one polyline cell per curve.
+    int total_segments = 0;
+    for (const auto& curve : curves) {
+        std::vector<vtkIdType> cell_pts;
+        cell_pts.reserve(curve.pts.size() + 1);
+        for (int p_idx : curve.pts)
+            cell_pts.push_back(puncture_to_point[p_idx]);
+        if (curve.closed)
+            cell_pts.push_back(cell_pts[0]);  // close the loop
+        lines->InsertNextCell((vtkIdType)cell_pts.size(), cell_pts.data());
+        total_segments += (int)cell_pts.size() - 1;
     }
 
     polydata->SetPoints(points);
@@ -380,7 +391,8 @@ int main() {
 
     std::cout << "\nWrote stitched curves to: exactpv_stitched.vtp" << std::endl;
     std::cout << "  " << points->GetNumberOfPoints() << " points" << std::endl;
-    std::cout << "  " << lines->GetNumberOfCells() << " line segments" << std::endl;
+    std::cout << "  " << lines->GetNumberOfCells() << " polyline cell(s), "
+              << total_segments << " segments" << std::endl;
 
     return 0;
 }
