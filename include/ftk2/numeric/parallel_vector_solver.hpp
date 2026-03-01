@@ -545,6 +545,31 @@ void quantize_field_3x3(const T V[3][3], int64_t Vq[3][3]) {
 }
 
 // ============================================================================
+// Tet Quantization  (16-bit variant for tetrahedron Q computation)
+// ============================================================================
+//
+// For tets, the characteristic polynomial uses 4-vertex edge differences
+// (3×3 matrices from 4×3 fields).  With QUANT_BITS=20, the intermediate
+// __int128 products reach ~2^130, exceeding 2^127.  Using 16 bits keeps
+// |Aq|≤6.55e11 → det terms ≤2.8e35 ≈ 2^118 < 2^127.
+//
+// Future: switch to __int256 for full 20-bit precision.
+
+static constexpr int     QUANT_BITS_TET  = 16;
+static constexpr int64_t QUANT_SCALE_TET = int64_t(1) << QUANT_BITS_TET;  // 65,536
+
+inline int64_t quant_tet(double x) {
+    return static_cast<int64_t>(std::llround(x * static_cast<double>(QUANT_SCALE_TET)));
+}
+
+template <typename T>
+void quantize_field_4x3_tet(const T V[4][3], int64_t Vq[4][3]) {
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 3; ++j)
+            Vq[i][j] = quant_tet(static_cast<double>(V[i][j]));
+}
+
+// ============================================================================
 // Exact Integer Characteristic Polynomial  (Subtask 2)
 // ============================================================================
 //
@@ -617,6 +642,77 @@ inline void characteristic_polynomial_3x3_i128(const int64_t A[3][3],
           -a(1,0)*b(0,1)*b(2,2) - a(0,1)*b(1,0)*b(2,2) + a(0,0)*b(1,1)*b(2,2);
 
     P[3] = -det3_i128(B);
+}
+
+// ============================================================================
+// Tet Integer Q Polynomial  (for pass-through detection in stitching)
+// ============================================================================
+//
+// Computes Q(λ) = det(A − λB) for a tetrahedron using __int128 arithmetic,
+// where A and B are the edge-difference matrices of V and W (same layout as
+// characteristic_polynomials_pv_tetrahedron).  The integer polynomial shares
+// the same roots as the float Q polynomial (roots are scale-invariant).
+
+template <typename T>
+void compute_tet_Q_i128(const T V[4][3], const T W[4][3], __int128 Q_i128[4]) {
+    int64_t Vq[4][3], Wq[4][3];
+    quantize_field_4x3_tet(V, Vq);
+    quantize_field_4x3_tet(W, Wq);
+
+    // Build edge-difference matrices: same layout as L1700-1711
+    int64_t Aq[3][3] = {
+        {Vq[0][0] - Vq[3][0], Vq[1][0] - Vq[3][0], Vq[2][0] - Vq[3][0]},
+        {Vq[0][1] - Vq[3][1], Vq[1][1] - Vq[3][1], Vq[2][1] - Vq[3][1]},
+        {Vq[0][2] - Vq[3][2], Vq[1][2] - Vq[3][2], Vq[2][2] - Vq[3][2]}
+    };
+    int64_t Bq[3][3] = {
+        {Wq[0][0] - Wq[3][0], Wq[1][0] - Wq[3][0], Wq[2][0] - Wq[3][0]},
+        {Wq[0][1] - Wq[3][1], Wq[1][1] - Wq[3][1], Wq[2][1] - Wq[3][1]},
+        {Wq[0][2] - Wq[3][2], Wq[1][2] - Wq[3][2], Wq[2][2] - Wq[3][2]}
+    };
+
+    characteristic_polynomial_3x3_i128(Aq, Bq, Q_i128);
+}
+
+// ============================================================================
+// Pass-Through Q-Root Detection  (for stitching)
+// ============================================================================
+//
+// A Q-root λ* is a "pass-through" if P[k](λ*) ≈ 0 for ANY k ∈ {0..3}.
+// This means the PV curve passes through λ* continuously (the apparent pole
+// in μ_k = P_k/Q cancels), so λ* should NOT be an interval boundary.
+//
+// Uses Higham forward error bound for degree-3 Horner evaluation:
+//   |fl(p(x)) − p(x)| ≤ γ₃ · cond(p, x)
+// where γ₃ = (2·3+2)·u = 8u, cond(p,x) = Σ|c_i|·|x|^i.
+
+inline bool is_passthrough_q_root(const double P_poly[4][4], double lambda_star) {
+    const double u = std::numeric_limits<double>::epsilon();
+    const double gamma3 = 8.0 * u;  // Higham bound for degree-3 Horner
+    const double ax = std::abs(lambda_star);
+
+    for (int k = 0; k < 4; ++k) {
+        // Determine actual degree of P[k]
+        int deg = 3;
+        while (deg > 0 && P_poly[k][deg] == 0.0) --deg;
+
+        // Horner evaluation of P[k](lambda_star)
+        double val = P_poly[k][deg];
+        for (int d = deg - 1; d >= 0; --d)
+            val = val * lambda_star + P_poly[k][d];
+
+        // Condition number: Σ|c_i|·|x|^i
+        double cond = std::abs(P_poly[k][deg]);
+        for (int d = deg - 1; d >= 0; --d)
+            cond = cond * ax + std::abs(P_poly[k][d]);
+
+        // Actual gamma for this degree
+        double gamma_deg = double(2 * deg + 2) * u;
+
+        if (std::abs(val) <= gamma_deg * cond)
+            return true;  // P[k](λ*) ≈ 0 → pass-through
+    }
+    return false;  // all P[k](λ*) are certified nonzero → genuine pole
 }
 
 // ============================================================================

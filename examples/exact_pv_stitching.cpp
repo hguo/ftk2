@@ -79,12 +79,13 @@ static std::vector<double> q_real_roots(const double Q[4]) {
 // ─── Correct stitching for tet with any even number of punctures ─────────────
 // Algorithm (no proximity):
 //   1. Sort punctures by λ (stored in complex.vertices[i].scalar)
-//   2. Find real roots of Q → interval boundaries
+//   2. Find real roots of Q → filter pass-throughs → interval boundaries
 //   3. Within each Q-interval: pair adjacent punctures (0,1), (2,3), ...
 static void stitch_ambiguous_tet(
     const std::vector<int>&    tet_punctures,
     const FeatureComplex&      complex,
     const double               Q_poly[4],
+    const double               P_poly[4][4],
     bool                       q_zero,
     uint64_t                   tet_id,
     std::vector<PunctureConnection>& connections)
@@ -96,11 +97,15 @@ static void stitch_ambiguous_tet(
         lam_idx.push_back({(double)complex.vertices[p].scalar, p});
     std::sort(lam_idx.begin(), lam_idx.end());
 
-    // 2. Build interval boundary list: {-∞, r₁, r₂, ..., +∞}
+    // 2. Build interval boundary list: {-∞, genuine-pole-roots..., +∞}
+    //    Filter out pass-through Q-roots where P[k](λ*)≈0 for some k.
     std::vector<double> bounds = {-1e300};
     if (!q_zero) {
         auto roots = q_real_roots(Q_poly);
-        for (double r : roots) bounds.push_back(r);
+        for (double r : roots) {
+            if (!is_passthrough_q_root(P_poly, r))
+                bounds.push_back(r);  // genuine pole → interval boundary
+        }
     }
     bounds.push_back(1e300);
 
@@ -249,12 +254,15 @@ static void run_test_case(const TestCase& tc, int N)
 
         tet_hist[tp.size()]++;
 
+        // Use min(vertices) as tet_id for SoS consistency
+        uint64_t tet_id = *std::min_element(s.vertices, s.vertices + 4);
+
         if (tp.size() == 2) {
             n2++;
-            connections.push_back({tp[0], tp[1], s.vertices[0]});
+            connections.push_back({tp[0], tp[1], tet_id});
         } else if (tp.size() > 2) {
             n_more++;
-            // Get Q_poly for this tet
+            // Get Q_poly and P_poly for this tet
             double V_arr[4][3], W_arr[4][3];
             for (int i = 0; i < 4; ++i) {
                 auto c = mesh->get_vertex_coordinates(s.vertices[i]);
@@ -268,8 +276,8 @@ static void run_test_case(const TestCase& tc, int N)
             bool q_zero = true;
             for (int k = 0; k <= 3; ++k) if (Q_poly[k] != 0.0) { q_zero = false; break; }
 
-            // Q-interval + λ-sort pairing (no proximity)
-            stitch_ambiguous_tet(tp, complex, Q_poly, q_zero, s.vertices[0], connections);
+            // Q-interval + λ-sort pairing with pass-through filtering
+            stitch_ambiguous_tet(tp, complex, Q_poly, P_poly, q_zero, tet_id, connections);
         }
         return true;
     });
@@ -278,7 +286,21 @@ static void run_test_case(const TestCase& tc, int N)
     for (auto& [n,c] : tet_hist) std::cout << c << "×" << n << "  ";
     std::cout << "\n";
     std::cout << "  " << n2 << " tets with 2, " << n_more << " tets with >2 punctures\n";
-    std::cout << "  " << connections.size() << " connections\n";
+    std::cout << "  " << connections.size() << " connections (before dedup)\n";
+
+    // Deduplicate connections: shared-face tets may both produce the same pair
+    {
+        std::set<std::pair<int,int>> seen;
+        std::vector<PunctureConnection> unique;
+        for (auto& c : connections) {
+            auto key = std::make_pair(std::min(c.puncture1_idx, c.puncture2_idx),
+                                      std::max(c.puncture1_idx, c.puncture2_idx));
+            if (seen.insert(key).second)
+                unique.push_back(c);
+        }
+        connections = std::move(unique);
+    }
+    std::cout << "  " << connections.size() << " connections (after dedup)\n";
 
     // Build adjacency graph
     std::map<int,std::vector<int>> adj;
@@ -289,14 +311,27 @@ static void run_test_case(const TestCase& tc, int N)
 
     // Check degrees
     int bad = 0;
-    for (int i : plist) if (adj[i].size() != 2) bad++;
-    std::cout << "  Punctures with degree≠2: " << bad << "\n";
+    std::map<int,int> degree_hist;
+    for (int i : plist) {
+        degree_hist[adj[i].size()]++;
+        if (adj[i].size() != 2) bad++;
+    }
+    std::cout << "  Punctures with degree≠2: " << bad << "  (";
+    for (auto& [d,c] : degree_hist) std::cout << c << "×deg" << d << " ";
+    std::cout << ")\n";
 
-    // Trace curves
+    // Trace curves — start from degree-1 endpoints first to avoid
+    // fragmenting open paths, then trace remaining closed curves.
     std::set<int> visited;
     std::vector<std::vector<int>> curves;
     std::vector<bool> curve_closed;
-    for (int start : plist) {
+
+    // Collect start candidates: degree-1 (endpoints) first, then degree-2
+    std::vector<int> starts;
+    for (int p : plist) if (adj[p].size() == 1) starts.push_back(p);
+    for (int p : plist) if (adj[p].size() == 2) starts.push_back(p);
+
+    for (int start : starts) {
         if (visited.count(start) || adj[start].empty()) continue;
         std::vector<int> path;
         int curr = start, prev = -1;
@@ -391,24 +426,59 @@ int main()
         // U=(y-p,z-q,x-r), V=(z-q,x-r,y-p): both vary in all 3 directions.
         // Q(λ)=det(A-λB) is a genuine cubic per tet (both A and B full-rank).
         //
-        // PV: U×V=0 gives TWO lines:
-        //   Line 1: x-r = y-p = z-q  (direction (1,1,1))
-        //   Line 2: x-r = z-q, y-p = -(x-r)  (direction (1,-1,1))
-        // Both lines intersect at the center (r,p,q); tets near that point
-        // may carry punctures from BOTH lines → >2 punctures per tet.
+        // PV: U×V=0.  Let a=y-p, b=z-q, c=x-r.  U=(a,b,c), V=(b,c,a).
+        // U×V = (ab-c², bc-a², ac-b²) = 0 → a³=c³ → a=c; then b=a.
+        // So the PV set is ONE line: x-r = y-p = z-q, direction (1,1,1).
         //
-        // Offsets (r,p,q) chosen non-integer so the lines avoid all mesh
+        // Offsets (r,p,q) chosen non-integer so the line avoids all mesh
         // vertices, edges, and faces of the RegularSimplicialMesh, preventing
         // the "line on tet-edge" degeneracy that gave 52×1-puncture tets when
         // the center was at the integer-aligned diagonal.
         {
             "field5_cyclic_q_cubic",
-            "Q cubic | 2 open PV lines (intersecting) | U=(y-p,z-q,x-r), V=(z-q,x-r,y-p)",
+            "Q cubic | 1 open PV line (dir (1,1,1)) | U=(y-p,z-q,x-r), V=(z-q,x-r,y-p)",
             [=](double x, double y, double z) -> std::array<double,6> {
                 // Center deliberately off-grid and non-symmetric to avoid all
                 // mesh-edge alignments.
                 const double r = 8.37, p = 8.13, q = 8.51;
                 return {y-p, z-q, x-r,   z-q, x-r, y-p};
+            }
+        },
+        // ── F6: three PV lines through a common center → 6 punctures/tet ────
+        // U = S·x', V = x'  where x' = (x-cx6, y-cy6, z-z06)
+        // S = symmetric matrix with eigenvalues 1,2,3 and eigenvectors:
+        //   d1=(1,1,1)/√3  (λ=1), d2=(1,-1,0)/√2  (λ=2), d3=(1,1,-2)/√6 (λ=3)
+        //   S = [[11/6, -1/6, -2/3], [-1/6, 11/6, -2/3], [-2/3, -2/3, 7/3]]
+        //
+        // PV: S·x' = λ·x' → x' is eigenvector of S with eigenvalue λ.
+        //   Three PV lines through center in directions d1, d2, d3 with
+        //   λ=1, 2, 3 respectively.
+        //
+        // Q(λ) = det(A-λB).  Since A = S·B (B = V-differences),
+        //   Q(λ) = det((S-λI)·B) = (1-λ)(2-λ)(3-λ)·det(B).
+        // So Q-roots are exactly λ=1,2,3 — one per PV line.
+        //
+        // For the tet containing the center: all 3 lines pass through →
+        //   6 punctures (2 per line) with λ∈{1,1,2,2,3,3}.
+        //   stitch_ambiguous_tet groups {1,1} → (1,2], {2,2} → (2,3] correctly.
+        // Adjacent tets intersected by 2 lines get 4 punctures.
+        //
+        // Center chosen non-integer so no line lies on any mesh edge or vertex.
+        {
+            "field6_three_pv_lines",
+            "Q cubic | 3 open PV lines (distinct λ=1,2,3) | U=S·x', V=x'",
+            [](double x, double y, double z) -> std::array<double,6> {
+                const double cx6 = 8.37, cy6 = 8.13, z06 = 8.51;
+                double xp = x - cx6, yp = y - cy6, zp = z - z06;
+                // U = S * (xp, yp, zp)
+                // S = 1*d1⊗d1 + 2*d2⊗d2 + 3*d3⊗d3
+                // S[0][0]=11/6, S[0][1]=-1/6, S[0][2]=-2/3
+                // S[1][1]=11/6, S[1][2]=-2/3,  S[2][2]=7/3
+                double ux = (11.0/6)*xp + (-1.0/6)*yp + (-2.0/3)*zp;
+                double uy = (-1.0/6)*xp + (11.0/6)*yp + (-2.0/3)*zp;
+                double uz = (-2.0/3)*xp + (-2.0/3)*yp + (7.0/3)*zp;
+                // V = x'
+                return {ux, uy, uz, xp, yp, zp};
             }
         },
     };
