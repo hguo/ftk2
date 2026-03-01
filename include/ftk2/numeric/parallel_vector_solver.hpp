@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 namespace ftk2 {
 
@@ -674,45 +675,39 @@ void compute_tet_Q_i128(const T V[4][3], const T W[4][3], __int128 Q_i128[4]) {
     characteristic_polynomial_3x3_i128(Aq, Bq, Q_i128);
 }
 
+// Forward declaration for compute_tet_QP_i128 (defined later in this header).
+template <typename T>
+void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3], T Q[4], T P[4][4]);
+
 // ============================================================================
-// Pass-Through Q-Root Detection  (for stitching)
+// Tet Integer Q + P Polynomials  (for fully combinatorial stitching)
 // ============================================================================
 //
-// A Q-root λ* is a "pass-through" if P[k](λ*) ≈ 0 for ANY k ∈ {0..3}.
-// This means the PV curve passes through λ* continuously (the apparent pole
-// in μ_k = P_k/Q cancels), so λ* should NOT be an interval boundary.
+// Computes both Q(λ) = det(A − λB) and P[k](λ) for k=0..3 using __int128
+// arithmetic.  Reuses the existing template
+//   characteristic_polynomials_pv_tetrahedron<__int128>
+// which calls characteristic_polynomial_3x3, characteristic_polynomial_2x2,
+// polynomial_multiply, polynomial_add_inplace, polynomial_scalar_multiply —
+// all templated and correct with __int128.
 //
-// Uses Higham forward error bound for degree-3 Horner evaluation:
-//   |fl(p(x)) − p(x)| ≤ γ₃ · cond(p, x)
-// where γ₃ = (2·3+2)·u = 8u, cond(p,x) = Σ|c_i|·|x|^i.
+// Overflow with QUANT_BITS_TET=16: entries ≤ 2^22, edge diffs ≤ 2^23,
+// Q coeffs ≤ 2^73, P coeffs ≤ 2^75 — all fit __int128.
 
-inline bool is_passthrough_q_root(const double P_poly[4][4], double lambda_star) {
-    const double u = std::numeric_limits<double>::epsilon();
-    const double gamma3 = 8.0 * u;  // Higham bound for degree-3 Horner
-    const double ax = std::abs(lambda_star);
+template <typename T>
+void compute_tet_QP_i128(const T V[4][3], const T W[4][3],
+                         __int128 Q_i128[4], __int128 P_i128[4][4]) {
+    int64_t Vq[4][3], Wq[4][3];
+    quantize_field_4x3_tet(V, Vq);
+    quantize_field_4x3_tet(W, Wq);
 
-    for (int k = 0; k < 4; ++k) {
-        // Determine actual degree of P[k]
-        int deg = 3;
-        while (deg > 0 && P_poly[k][deg] == 0.0) --deg;
+    __int128 V128[4][3], W128[4][3];
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 3; ++j) {
+            V128[i][j] = (__int128)Vq[i][j];
+            W128[i][j] = (__int128)Wq[i][j];
+        }
 
-        // Horner evaluation of P[k](lambda_star)
-        double val = P_poly[k][deg];
-        for (int d = deg - 1; d >= 0; --d)
-            val = val * lambda_star + P_poly[k][d];
-
-        // Condition number: Σ|c_i|·|x|^i
-        double cond = std::abs(P_poly[k][deg]);
-        for (int d = deg - 1; d >= 0; --d)
-            cond = cond * ax + std::abs(P_poly[k][d]);
-
-        // Actual gamma for this degree
-        double gamma_deg = double(2 * deg + 2) * u;
-
-        if (std::abs(val) <= gamma_deg * cond)
-            return true;  // P[k](λ*) ≈ 0 → pass-through
-    }
-    return false;  // all P[k](λ*) are certified nonzero → genuine pole
+    characteristic_polynomials_pv_tetrahedron(V128, W128, Q_i128, P_i128);
 }
 
 // ============================================================================
@@ -885,6 +880,47 @@ inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
         }
     }
     return changes;
+}
+
+/// Count sign changes at x with Higham-certified evaluation of each Sturm
+/// polynomial.  Returns (count, certified).  If any Sturm polynomial
+/// evaluation is not certifiably nonzero (i.e. |S_i(x)| <= gamma_deg * cond),
+/// certified=false — the caller should use SoS perturbation.
+inline std::pair<int,bool> sturm_count_at_certified(const SturmSeqDouble& seq, double x) {
+    const double u = std::numeric_limits<double>::epsilon();
+    const double ax = std::abs(x);
+
+    int    changes  = 0;
+    bool   certified = true;
+    double prev     = 0.0;
+
+    for (int i = 0; i < seq.n; ++i) {
+        int deg = seq.deg[i];
+        const double* c = seq.c[i];
+
+        // Horner evaluation
+        double val = c[deg];
+        for (int d = deg - 1; d >= 0; --d)
+            val = val * x + c[d];
+
+        // Higham condition number: Σ|c_k|·|x|^k
+        double cond = std::abs(c[deg]);
+        for (int d = deg - 1; d >= 0; --d)
+            cond = cond * ax + std::abs(c[d]);
+
+        double gamma_deg = double(2 * deg + 2) * u;
+
+        if (val != 0.0) {
+            if (std::abs(val) <= gamma_deg * cond)
+                certified = false;  // sign uncertain
+            if (prev != 0.0 && ((prev > 0.0) != (val > 0.0))) ++changes;
+            prev = val;
+        } else {
+            // val == 0.0 exactly — ambiguous sign
+            certified = false;
+        }
+    }
+    return {changes, certified};
 }
 
 /// Given float root estimate rf and the Sturm sequence of its polynomial,

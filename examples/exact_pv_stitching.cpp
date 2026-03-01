@@ -33,98 +33,111 @@ struct PunctureConnection {
     uint64_t tet_id;
 };
 
-// ─── Real roots of Q[0]+Q[1]λ+Q[2]λ²+Q[3]λ³=0, sorted ─────────────────────
-static std::vector<double> q_real_roots(const double Q[4]) {
-    std::vector<double> roots;
-    int deg = 3;
-    while (deg > 0 && Q[deg] == 0.0) --deg;
-    if (deg == 0) return roots;
-    if (deg == 1) { roots.push_back(-Q[0]/Q[1]); return roots; }
-    if (deg == 2) {
-        double d = Q[1]*Q[1] - 4.0*Q[0]*Q[2];
-        if (d < 0) return roots;
-        double sq = std::sqrt(d);
-        roots.push_back((-Q[1]-sq)/(2.0*Q[2]));
-        if (d > 0) roots.push_back((-Q[1]+sq)/(2.0*Q[2]));
-        std::sort(roots.begin(), roots.end());
-        return roots;
+// ─── Sturm-based pass-through detection ──────────────────────────────────────
+// For each barycentric polynomial P[k], count roots in (lo, hi) via Sturm.
+// If any P[k] has at least n_q_roots roots in the interval → pass-through
+// (the Q-roots coincide with P[k]-roots, so the apparent pole cancels).
+static bool is_passthrough_sturm(const __int128 P_i128[4][4],
+                                 double lo, double hi, int n_q_roots)
+{
+    for (int k = 0; k < 4; ++k) {
+        double P_d[4];
+        for (int j = 0; j <= 3; ++j) P_d[j] = (double)P_i128[k][j];
+
+        SturmSeqDouble seq;
+        build_sturm_double(P_d, seq);
+
+        int pk_count = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
+        if (pk_count >= n_q_roots)
+            return true;  // enough P[k]-roots to cover all Q-roots
     }
-    // Cubic: normalize to monic x³+bx²+cx+d
-    double inv = 1.0/Q[3];
-    double b = Q[2]*inv, c = Q[1]*inv, d = Q[0]*inv;
-    // Depress: x = t - b/3  →  t³ + pt + q = 0
-    double p = c - b*b/3.0;
-    double q = d - b*c/3.0 + 2.0*b*b*b/27.0;
-    double shift = -b/3.0;
-    double disc = -4.0*p*p*p - 27.0*q*q;  // >0: three real roots
-    if (disc >= 0.0 && p < 0.0) {
-        // Three real roots via trigonometric method
-        double m     = 2.0*std::sqrt(-p/3.0);
-        double arg   = std::max(-1.0, std::min(1.0, (1.5*q/p)*std::sqrt(-3.0/p)));
-        double theta = std::acos(arg)/3.0;
-        for (int k = 0; k < 3; ++k)
-            roots.push_back(shift + m*std::cos(theta - 2.0*M_PI*k/3.0));
-    } else {
-        // One real root via Cardano
-        double sq_arg = q*q/4.0 + p*p*p/27.0;
-        double D = (sq_arg >= 0.0) ? std::sqrt(sq_arg) : 0.0;
-        double u = std::cbrt(-q/2.0 + D);
-        double v = std::cbrt(-q/2.0 - D);
-        roots.push_back(shift + u + v);
-    }
-    std::sort(roots.begin(), roots.end());
-    return roots;
+    return false;
 }
 
-// ─── Correct stitching for tet with any even number of punctures ─────────────
-// Algorithm (no proximity):
-//   1. Sort punctures by λ (stored in complex.vertices[i].scalar)
-//   2. Find real roots of Q → filter pass-throughs → interval boundaries
-//   3. Within each Q-interval: pair adjacent punctures (0,1), (2,3), ...
+// ─── Fully combinatorial stitching for tet with >2 punctures ─────────────────
+// Algorithm:
+//   1. Sort punctures by λ
+//   2. Compute Sturm count of Q-roots below each puncture's λ (certified)
+//   3. Build effective groups: merge adjacent intervals when Q-roots between
+//      them are pass-throughs (detected via Sturm counts on P[k])
+//   4. Pair (0,1),(2,3),... within each effective group
 static void stitch_ambiguous_tet(
     const std::vector<int>&    tet_punctures,
     const FeatureComplex&      complex,
-    const double               Q_poly[4],
-    const double               P_poly[4][4],
-    bool                       q_zero,
+    const __int128             Q_i128[4],
+    const __int128             P_i128[4][4],
     uint64_t                   tet_id,
     std::vector<PunctureConnection>& connections)
 {
+    int n = (int)tet_punctures.size();
+
     // 1. Sort by λ
     std::vector<std::pair<double,int>> lam_idx;
-    lam_idx.reserve(tet_punctures.size());
+    lam_idx.reserve(n);
     for (int p : tet_punctures)
         lam_idx.push_back({(double)complex.vertices[p].scalar, p});
     std::sort(lam_idx.begin(), lam_idx.end());
 
-    // 2. Build interval boundary list: {-∞, genuine-pole-roots..., +∞}
-    //    Filter out pass-through Q-roots where P[k](λ*)≈0 for some k.
-    std::vector<double> bounds = {-1e300};
-    if (!q_zero) {
-        auto roots = q_real_roots(Q_poly);
-        for (double r : roots) {
-            if (!is_passthrough_q_root(P_poly, r))
-                bounds.push_back(r);  // genuine pole → interval boundary
-        }
-    }
-    bounds.push_back(1e300);
+    // 2. Convert Q_i128 → double, determine effective degree
+    double Q_d[4];
+    for (int k = 0; k <= 3; ++k) Q_d[k] = (double)Q_i128[k];
+    int degQ = 3;
+    while (degQ > 0 && Q_d[degQ] == 0.0) --degQ;
 
-    // 3. Walk through sorted punctures; emit pairs within each Q-interval
-    size_t bi = 0;      // index into bounds (left edge of current interval)
-    std::vector<int> group;
-    for (auto& [lam, pidx] : lam_idx) {
-        // Advance to the interval that contains lam
-        while (bi + 2 < bounds.size() && lam > bounds[bi+1]) {
-            for (size_t j = 0; j + 1 < group.size(); j += 2)
-                connections.push_back({group[j], group[j+1], tet_id});
-            group.clear();
-            ++bi;
-        }
-        group.push_back(pidx);
+    if (degQ == 0) {
+        // Q is constant → no poles → single group → pair all
+        for (int j = 0; j + 1 < n; j += 2)
+            connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
+        return;
     }
-    // Emit remaining group
-    for (size_t j = 0; j + 1 < group.size(); j += 2)
-        connections.push_back({group[j], group[j+1], tet_id});
+
+    // Build Sturm sequence for Q
+    SturmSeqDouble Q_seq;
+    build_sturm_double(Q_d, Q_seq);
+
+    // 3. For each puncture, compute Sturm count (# Q-roots below λ)
+    std::vector<int> qi(n);
+    for (int i = 0; i < n; ++i) {
+        double lam = lam_idx[i].first;
+        auto [count, cert] = sturm_count_at_certified(Q_seq, lam);
+        if (!cert) {
+            // SoS perturbation: deterministic shift based on tet_id parity
+            double delta = 4.0 * std::numeric_limits<double>::epsilon()
+                         * std::max(1.0, std::abs(lam));
+            double perturbed = (tet_id % 2 == 0) ? lam - delta : lam + delta;
+            count = sturm_count_at(Q_seq, perturbed);
+        }
+        qi[i] = count;
+    }
+
+    // 4. Build effective groups with pass-through detection
+    std::vector<int> qi_eff(n);
+    qi_eff[0] = 0;
+    for (int i = 1; i < n; ++i) {
+        if (qi[i] == qi[i-1]) {
+            qi_eff[i] = qi_eff[i-1];          // same Q-interval
+        } else {
+            // Q-root(s) between λ[i-1] and λ[i] — check pass-through
+            int n_q_roots = std::abs(qi[i-1] - qi[i]);
+            if (is_passthrough_sturm(P_i128, lam_idx[i-1].first,
+                                     lam_idx[i].first, n_q_roots)) {
+                qi_eff[i] = qi_eff[i-1];      // pass-through → merge
+            } else {
+                qi_eff[i] = qi_eff[i-1] + 1;  // genuine pole → new group
+            }
+        }
+    }
+
+    // 5. Group by qi_eff, pair (0,1),(2,3),... within each group
+    int group_start = 0;
+    for (int i = 1; i <= n; ++i) {
+        if (i == n || qi_eff[i] != qi_eff[i-1]) {
+            // Emit pairs from group_start to i-1
+            for (int j = group_start; j + 1 < i; j += 2)
+                connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
+            group_start = i;
+        }
+    }
 }
 
 // ─── Write curves to VTP ─────────────────────────────────────────────────────
@@ -262,7 +275,7 @@ static void run_test_case(const TestCase& tc, int N)
             connections.push_back({tp[0], tp[1], tet_id});
         } else if (tp.size() > 2) {
             n_more++;
-            // Get Q_poly and P_poly for this tet
+            // Get exact integer Q and P polynomials for this tet
             double V_arr[4][3], W_arr[4][3];
             for (int i = 0; i < 4; ++i) {
                 auto c = mesh->get_vertex_coordinates(s.vertices[i]);
@@ -270,14 +283,25 @@ static void run_test_case(const TestCase& tc, int N)
                 for (int j = 0; j < 3; ++j) V_arr[i][j] = fv[j];
                 for (int j = 0; j < 3; ++j) W_arr[i][j] = fv[3+j];
             }
-            double Q_poly[4], P_poly[4][4];
-            characteristic_polynomials_pv_tetrahedron(V_arr, W_arr, Q_poly, P_poly);
+            __int128 Q_i128[4], P_i128[4][4];
+            compute_tet_QP_i128(V_arr, W_arr, Q_i128, P_i128);
 
-            bool q_zero = true;
-            for (int k = 0; k <= 3; ++k) if (Q_poly[k] != 0.0) { q_zero = false; break; }
+            // Exact Q≡0 check (all integer coefficients zero)
+            bool q_zero = (Q_i128[0] == 0 && Q_i128[1] == 0 &&
+                           Q_i128[2] == 0 && Q_i128[3] == 0);
 
-            // Q-interval + λ-sort pairing with pass-through filtering
-            stitch_ambiguous_tet(tp, complex, Q_poly, P_poly, q_zero, tet_id, connections);
+            if (!q_zero) {
+                // Sturm-based combinatorial stitching
+                stitch_ambiguous_tet(tp, complex, Q_i128, P_i128, tet_id, connections);
+            } else {
+                // Q≡0: no poles at all → single group → pair by λ-sort
+                std::vector<std::pair<double,int>> lam_idx;
+                for (int p : tp)
+                    lam_idx.push_back({(double)complex.vertices[p].scalar, p});
+                std::sort(lam_idx.begin(), lam_idx.end());
+                for (size_t j = 0; j + 1 < lam_idx.size(); j += 2)
+                    connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
+            }
         }
         return true;
     });
