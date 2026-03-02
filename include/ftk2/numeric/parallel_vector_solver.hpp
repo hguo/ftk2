@@ -2172,49 +2172,77 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
 
         bool have_interval = (lambda_lo[i] < lambda_hi[i]);
 
-        auto sos_bary_inside = [&](int k) -> bool {
-            double lo, hi;
-            if (have_interval) {
-                lo = lambda_lo[i];
-                hi = lambda_hi[i];
-            } else {
-                // Subtask 9: degenerate interval — Sturm isolation failed for
-                // this root (two cubic roots nearly coincident).  Use a
-                // machine-epsilon window [λ − δ, λ + δ] to probe N_k's sign.
-                //
-                // The float root λ̂ has accuracy ~ 4u|λ̂| relative to the
-                // true root λ*.  If N_k has no root within this window, the
-                // sign of N_k(λ̂) is the same as sign(N_k(λ*)), and Subtask 8
-                // certifies it.  If N_k does have a root here, μ_k(λ*) ≈ 0
-                // and the SoS rule applies — exactly the boundary case.
-                //
-                // This replaces the previous bary_threshold = 1e-10 fallback,
-                // making the degenerate-interval path threshold-free.
-                double lam = (double)lambda[i];
-                double delta = std::max(std::abs(lam) * (4.0 * std::numeric_limits<double>::epsilon()),
-                                        std::numeric_limits<double>::min());
-                lo = lam - delta;
-                hi = lam + delta;
+        // Compute the certification window [win_lo, win_hi] once for this root.
+        double win_lo, win_hi;
+        if (have_interval) {
+            win_lo = lambda_lo[i];
+            win_hi = lambda_hi[i];
+        } else {
+            // Subtask 9: degenerate interval — Sturm isolation failed for
+            // this root (two cubic roots nearly coincident).  Use a
+            // machine-epsilon window [λ − δ, λ + δ] to probe N_k's sign.
+            //
+            // The float root λ̂ has accuracy ~ 4u|λ̂| relative to the
+            // true root λ*.  If N_k has no root within this window, the
+            // sign of N_k(λ̂) is the same as sign(N_k(λ*)), and Subtask 8
+            // certifies it.  If N_k does have a root here, μ_k(λ*) ≈ 0
+            // and the SoS rule applies — exactly the boundary case.
+            //
+            // This replaces the previous bary_threshold = 1e-10 fallback,
+            // making the degenerate-interval path threshold-free.
+            double lam = (double)lambda[i];
+            double delta = std::max(std::abs(lam) * (4.0 * std::numeric_limits<double>::epsilon()),
+                                    std::numeric_limits<double>::min());
+            win_lo = lam - delta;
+            win_hi = lam + delta;
+        }
+
+        // Pre-evaluate boundary signs for all three barycentric coordinates.
+        // This is needed to distinguish G1 (one zero) from G2 (two zeros).
+        int bsign[3];
+        int n_bnd = 0;
+        for (int k = 0; k < 3; k++) {
+            bsign[k] = try_certify_nk_sign(k, win_lo, win_hi);
+            if (bsign[k] == 0) n_bnd++;
+        }
+
+        // Any coordinate certified negative → puncture is outside the simplex.
+        {
+            bool outside = false;
+            for (int k = 0; k < 3; k++) if (bsign[k] < 0) { outside = true; break; }
+            if (outside) continue;
+        }
+
+        if (n_bnd == 2) {
+            // G2: vertex puncture.  Two barycentric coordinates certify zero,
+            // meaning the puncture lies exactly at vertex v_m (the one with
+            // non-zero sign, μ_m = 1).  The standard per-k SoS conditions
+            // (idx(v_j) < idx(v_k) AND idx(v_k) < idx(v_j)) are contradictory
+            // and would always reject — wrong behaviour.
+            //
+            // Correct SoS rule for G2: this triangle claims the vertex puncture
+            // iff v_m is the minimum-index vertex of the triangle.
+            if (!indices) continue;
+            int m = -1;
+            for (int k = 0; k < 3; k++) if (bsign[k] != 0) { m = k; break; }
+            if (m < 0) continue;  // all three zero: degenerate, skip
+            int a = (m + 1) % 3, b = (m + 2) % 3;
+            if (!(indices[m] < std::min(indices[a], indices[b]))) continue;
+        } else {
+            // G0 (interior) or G1 (exactly one boundary coord): apply the
+            // standard SoS min-index ownership rule for each boundary coord k.
+            bool reject = false;
+            for (int k = 0; k < 3; k++) {
+                if (bsign[k] > 0) continue;   // interior coordinate, accept
+                // bsign[k] == 0: boundary for this k → apply SoS
+                if (!indices) { reject = true; break; }
+                int ii = (k + 1) % 3, jj = (k + 2) % 3;
+                if (!(indices[k] < std::min(indices[ii], indices[jj]))) {
+                    reject = true; break;
+                }
             }
-
-            int sign = try_certify_nk_sign(k, lo, hi);
-            if (sign > 0) return true;
-            if (sign < 0) return false;
-
-            // Boundary zone (N_k or D degenerate, or evaluation uncertain):
-            // apply SoS min-index ownership rule.
-            // Subtask 20: without SoS indices, conservatively reject boundary
-            // punctures rather than using the ad-hoc eigenvalue-sign heuristic.
-            // A certification failure means N_k(λ*) ≈ 0 (boundary of simplex),
-            // and we cannot determine which simplex "owns" the puncture without
-            // vertex indices.  Rejecting is safe: the puncture will be claimed by
-            // the neighbouring simplex that does have indices available.
-            if (!indices) return false;
-            int ii = (k + 1) % 3, jj = (k + 2) % 3;
-            return indices[k] < std::min(indices[ii], indices[jj]);
-        };
-        if (!sos_bary_inside(0) || !sos_bary_inside(1) || !sos_bary_inside(2))
-            continue;
+            if (reject) continue;
+        }
 
         // Subtask 13: compute ν via N_k(λ)/D(λ), DEFERRED to after certification.
         //

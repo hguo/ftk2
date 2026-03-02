@@ -240,6 +240,51 @@ static void run_test_case(const TestCase& tc, int N)
             std::cout << "    " << cnt << " triangles with " << n << " puncture(s)\n";
     }
 
+    // G2 global deduplication: a vertex puncture (two barycentric coords ≈ 0)
+    // can be claimed by multiple faces incident to the same mesh vertex.  The
+    // solver G2 rule (claim iff v_m is triangle minimum) emits one record per
+    // qualifying face, but we need exactly one globally.  Keep the puncture from
+    // the lexicographically smallest face (vertex-index tuple), which is unique.
+    {
+        // Map from mesh-vertex-id → list of G2 puncture indices at that vertex.
+        std::map<uint64_t, std::vector<int>> vtx_g2;
+        const float bary_tol = 1e-5f;
+        for (int p : plist) {
+            const auto& v = complex.vertices[p];
+            const float* bc = v.barycentric_coords[0];
+            int n_zero = 0, m = -1;
+            for (int k = 0; k < 3; k++) {
+                if (std::abs(bc[k]) < bary_tol) n_zero++;
+                else m = k;
+            }
+            if (n_zero == 2 && m >= 0)
+                vtx_g2[v.simplex.vertices[m]].push_back(p);
+        }
+        std::set<int> to_remove;
+        for (auto& [vid, puncs] : vtx_g2) {
+            if (puncs.size() <= 1) continue;
+            // Canonical = puncture whose face has the lexicographically smallest
+            // sorted vertex tuple.
+            int canonical = puncs[0];
+            std::vector<uint64_t> can_f(complex.vertices[canonical].simplex.vertices,
+                                        complex.vertices[canonical].simplex.vertices + 3);
+            std::sort(can_f.begin(), can_f.end());
+            for (int p : puncs) {
+                std::vector<uint64_t> f(complex.vertices[p].simplex.vertices,
+                                        complex.vertices[p].simplex.vertices + 3);
+                std::sort(f.begin(), f.end());
+                if (f < can_f) { canonical = p; can_f = f; }
+            }
+            for (int p : puncs) if (p != canonical) to_remove.insert(p);
+        }
+        if (!to_remove.empty()) {
+            plist.erase(std::remove_if(plist.begin(), plist.end(),
+                        [&](int p){ return to_remove.count(p) > 0; }), plist.end());
+            std::cout << "  G2 global dedup: removed " << to_remove.size()
+                      << " duplicate vertex punctures\n";
+        }
+    }
+
     // Build face → puncture list map
     std::map<std::set<uint64_t>, std::vector<int>> face_to_punc;
     for (int i : plist) {
