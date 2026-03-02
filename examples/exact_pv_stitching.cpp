@@ -101,11 +101,11 @@ static void stitch_ambiguous_tet(
         double lam = lam_idx[i].first;
         auto [count, cert] = sturm_count_at_certified(Q_seq, lam);
         if (!cert) {
-            // SoS perturbation: deterministic shift based on tet_id parity
+            // SoS perturbation: fixed +delta (any fixed direction works;
+            // must not depend on the uncertifiable float value itself)
             double delta = 4.0 * std::numeric_limits<double>::epsilon()
                          * std::max(1.0, std::abs(lam));
-            double perturbed = (tet_id % 2 == 0) ? lam - delta : lam + delta;
-            count = sturm_count_at(Q_seq, perturbed);
+            count = sturm_count_at(Q_seq, lam + delta);
         }
         qi[i] = count;
     }
