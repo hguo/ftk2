@@ -32,6 +32,12 @@ struct RegularSimplicialMeshDevice {
         for (int i = 0; i < ndims; ++i) { coords[i] = index % local_dims[i]; index /= local_dims[i]; }
     }
 
+    FTK_HOST_DEVICE uint64_t get_num_hypercubes() const {
+        uint64_t n = 1;
+        for (int i = 0; i < ndims; ++i) n *= (local_dims[i] - 1);
+        return n;
+    }
+
     FTK_HOST_DEVICE bool is_hypercube_base(const uint64_t coords[4]) const {
         for (int i = 0; i < ndims; ++i) if (coords[i] >= local_dims[i] - 1) return false;
         return true;

@@ -7,8 +7,133 @@
 #include <algorithm>
 #include <cstdint>
 #include <utility>
+#include <cfloat>
+#include <climits>
+
+// FTK_HOST_DEVICE macro (may already be defined by mesh.hpp)
+#ifndef FTK_HOST_DEVICE
+#ifdef __CUDACC__
+#define FTK_HOST_DEVICE __host__ __device__
+#else
+#define FTK_HOST_DEVICE
+#endif
+#endif
 
 namespace ftk2 {
+
+// ============================================================================
+// Device-safe math helpers
+// ============================================================================
+// These replace std:: calls that are not available in CUDA device code.
+
+FTK_HOST_DEVICE inline int64_t pvs_llround(double x) {
+#ifdef __CUDA_ARCH__
+    return llrint(x);
+#else
+    return std::llround(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_sqrt(double x) {
+#ifdef __CUDA_ARCH__
+    return ::sqrt(x);
+#else
+    return std::sqrt(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_abs(double x) {
+#ifdef __CUDA_ARCH__
+    return ::fabs(x);
+#else
+    return std::abs(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_acos(double x) {
+#ifdef __CUDA_ARCH__
+    return ::acos(x);
+#else
+    return std::acos(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_cos(double x) {
+#ifdef __CUDA_ARCH__
+    return ::cos(x);
+#else
+    return std::cos(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_cbrt(double x) {
+#ifdef __CUDA_ARCH__
+    return ::cbrt(x);
+#else
+    // std::cbrt handles negative values correctly
+    return std::cbrt(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_pow_onethird(double x) {
+    // Replacement for std::pow(x, 1.0/3.0) that handles negative x
+    if (x < 0) return -pvs_cbrt(-x);
+    return pvs_cbrt(x);
+}
+
+FTK_HOST_DEVICE inline bool pvs_isfinite(double x) {
+#ifdef __CUDA_ARCH__
+    return ::isfinite(x);
+#else
+    return std::isfinite(x);
+#endif
+}
+
+FTK_HOST_DEVICE inline double pvs_epsilon() {
+    return DBL_EPSILON;
+}
+
+FTK_HOST_DEVICE inline __int128 pvs_abs128(__int128 x) {
+    return x < 0 ? -x : x;
+}
+
+// Device-safe min/max for uint64_t (replaces std::min)
+FTK_HOST_DEVICE inline uint64_t pvs_min_u64(uint64_t a, uint64_t b) {
+    return a < b ? a : b;
+}
+
+FTK_HOST_DEVICE inline uint64_t pvs_min3_u64(uint64_t a, uint64_t b, uint64_t c) {
+    return pvs_min_u64(pvs_min_u64(a, b), c);
+}
+
+FTK_HOST_DEVICE inline double pvs_max_d(double a, double b) {
+    return a > b ? a : b;
+}
+
+FTK_HOST_DEVICE inline double pvs_min_d(double a, double b) {
+    return a < b ? a : b;
+}
+
+// ============================================================================
+// Device-compatible puncture result structs
+// ============================================================================
+
+struct PuncturePointDevice {
+    double lambda;
+    double barycentric[3];
+    double coords_3d[3];
+};
+
+struct PunctureResult {
+    int count;                    // 0..3, or INT_MAX for degenerate
+    PuncturePointDevice pts[3];
+};
+
+// Sturm certified result (replaces std::pair<int,bool>)
+struct SturmCertifiedResult {
+    int count;
+    bool certified;
+};
 
 // ============================================================================
 // Polynomial Representation (degree D)
@@ -308,7 +433,7 @@ struct PVSurfacePatch {
 
 // Forward declaration — defined after the quantization and integer polynomial
 // sections (Subtasks 1–3) which appear later in this file.
-inline int discriminant_sign_i128(const __int128 P[4]);
+FTK_HOST_DEVICE inline int discriminant_sign_i128(const __int128 P[4]);
 
 /**
  * @brief Solve cubic with SoS tie-breaking using the always-exact integer discriminant.
@@ -324,7 +449,7 @@ inline int discriminant_sign_i128(const __int128 P[4]);
  *                When nullptr, exact_sign is treated as 0 → float fallback.
  */
 template <typename T>
-int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
+FTK_HOST_DEVICE int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
                          const __int128* P_i128 = nullptr) {
     // Subtask 19: degree-trimming uses exact == 0.0 (not < epsilon).
     //
@@ -359,7 +484,7 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
         // An algebraically repeated root gives P[1]² = 4·P[2]·P[0] with exact
         // cancellation in double when the inputs are integer-derived.
         if (disc == T(0)) { roots[0] = -P[1]/(2*P[2]); return 1; }
-        T sq = std::sqrt(disc);
+        T sq = (T)pvs_sqrt((double)disc);
         roots[0] = (-P[1]+sq)/(2*P[2]);
         roots[1] = (-P[1]-sq)/(2*P[2]);
         return 2;
@@ -383,7 +508,7 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
         roots[0] = -b;   // simple root: -P[2]/P[3]
         roots[1] = T(0); // double root: 0 (forced exact, no cancellation)
         uint64_t min_idx_sp = indices
-            ? std::min({indices[0], indices[1], indices[2]}) : uint64_t(0);
+            ? pvs_min3_u64(indices[0], indices[1], indices[2]) : uint64_t(0);
         if (min_idx_sp % 2 == 0) return 1;  // SoS: tangent excluded
         roots[2] = T(0);
         return (-b == T(0)) ? 1 : 3;  // triple root at 0 gives 1
@@ -422,9 +547,9 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
         // float rounding (or the exact-sign/disc-sign disagreement) made it
         // slightly negative.
         T safe = (disc > T(0)) ? disc : T(0);
-        T sq   = std::sqrt(safe);
-        T s = r + sq; s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
-        T t = r - sq; t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
+        T sq   = (T)pvs_sqrt((double)safe);
+        T s = r + sq; s = (T)pvs_pow_onethird((double)s);
+        T t = r - sq; t = (T)pvs_pow_onethird((double)t);
         roots[0] = -term1 + s + t;
         return 1;
     } else if (exact_sign > 0) {
@@ -437,40 +562,33 @@ int solve_cubic_real_sos(const T P[4], T roots[3], const uint64_t* indices,
             // The trig formula requires sqrt(mq³) > 0; fall back to a single
             // Cardano-style root from clamped disc (dominant real root).
             T safe = (disc > T(0)) ? disc : T(0);
-            T sq   = std::sqrt(safe);
-            T s = r + sq; s = (s < 0) ? -std::pow(-s, 1.0/3.0) : std::pow(s, 1.0/3.0);
-            T t = r - sq; t = (t < 0) ? -std::pow(-t, 1.0/3.0) : std::pow(t, 1.0/3.0);
+            T sq   = (T)pvs_sqrt((double)safe);
+            T s = r + sq; s = (T)pvs_pow_onethird((double)s);
+            T t = r - sq; t = (T)pvs_pow_onethird((double)t);
             roots[0] = -term1 + s + t;
             return 1;
         }
-        T arg  = r / std::sqrt(mq*mq*mq);
+        T arg  = r / (T)pvs_sqrt((double)(mq*mq*mq));
         // clamp to [-1,1] in case float rounding pushes it slightly out
         arg = arg < T(-1) ? T(-1) : (arg > T(1) ? T(1) : arg);
-        T dum1 = std::acos(arg);
-        T r13  = 2*std::sqrt(mq);
-        roots[0] = -term1 + r13*std::cos(dum1/3);
-        roots[1] = -term1 + r13*std::cos((dum1 + 2*M_PI)/3);
-        roots[2] = -term1 + r13*std::cos((dum1 + 4*M_PI)/3);
+        T dum1 = (T)pvs_acos((double)arg);
+        T r13  = 2*(T)pvs_sqrt((double)mq);
+        roots[0] = -term1 + r13*(T)pvs_cos((double)(dum1/3));
+        roots[1] = -term1 + r13*(T)pvs_cos((double)((dum1 + 2*M_PI)/3));
+        roots[2] = -term1 + r13*(T)pvs_cos((double)((dum1 + 4*M_PI)/3));
         return 3;
     } else {
         // Exact discriminant is zero (or disc == 0.0 after overflow fallback):
         // true repeated root → SoS min-idx tie-break.
-        uint64_t min_idx = indices ? std::min({indices[0], indices[1], indices[2]})
+        uint64_t min_idx = indices ? pvs_min3_u64(indices[0], indices[1], indices[2])
                                    : uint64_t(0);
-        T r13 = (r < 0) ? -std::pow(-r, 1.0/3.0) : std::pow(r, 1.0/3.0);
+        T r13 = (T)pvs_pow_onethird((double)r);
         roots[0] = -term1 + 2*r13;
         roots[1] = -(r13 + term1);
         if (min_idx % 2 == 0) {
             return 1;   // tangent excluded
         } else {
             roots[2] = roots[1];
-            // Subtask 19: triple-root detected by r == 0.0 exactly.
-            // In exact arithmetic, a triple root α satisfies q = 0 AND r = 0
-            // (from the depressed cubic reduction p = q³+r² = 0 with q = r = 0).
-            // In double arithmetic, r = (-27d + b(9c−2b²))/54 collapses to 0.0
-            // exactly when all inputs are integer-derived (no rounding residue).
-            // A double+simple root has r ≠ 0, giving roots[0] ≠ roots[1] with
-            // magnitude O(r^(1/3)) ≫ machine_epsilon.
             return (r == T(0)) ? 1 : 3;
         }
     }
@@ -525,8 +643,8 @@ static constexpr int64_t QUANT_SCALE = int64_t(1) << QUANT_BITS;  // 1,048,576
  * This corresponds to ~20 bits of precision after the binary point, matching
  * six significant decimal digits — sufficient for most physical field data.
  */
-inline int64_t quant(double x) {
-    return static_cast<int64_t>(std::llround(x * static_cast<double>(QUANT_SCALE)));
+FTK_HOST_DEVICE inline int64_t quant(double x) {
+    return static_cast<int64_t>(pvs_llround(x * static_cast<double>(QUANT_SCALE)));
 }
 
 /**
@@ -539,7 +657,7 @@ inline int64_t quant(double x) {
  * Precondition: |V[i][j]| < 5×10^6  (see overflow analysis above).
  */
 template <typename T>
-void quantize_field_3x3(const T V[3][3], int64_t Vq[3][3]) {
+FTK_HOST_DEVICE void quantize_field_3x3(const T V[3][3], int64_t Vq[3][3]) {
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
             Vq[i][j] = quant(static_cast<double>(V[i][j]));
@@ -559,12 +677,12 @@ void quantize_field_3x3(const T V[3][3], int64_t Vq[3][3]) {
 static constexpr int     QUANT_BITS_TET  = 16;
 static constexpr int64_t QUANT_SCALE_TET = int64_t(1) << QUANT_BITS_TET;  // 65,536
 
-inline int64_t quant_tet(double x) {
-    return static_cast<int64_t>(std::llround(x * static_cast<double>(QUANT_SCALE_TET)));
+FTK_HOST_DEVICE inline int64_t quant_tet(double x) {
+    return static_cast<int64_t>(pvs_llround(x * static_cast<double>(QUANT_SCALE_TET)));
 }
 
 template <typename T>
-void quantize_field_4x3_tet(const T V[4][3], int64_t Vq[4][3]) {
+FTK_HOST_DEVICE void quantize_field_4x3_tet(const T V[4][3], int64_t Vq[4][3]) {
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 3; ++j)
             Vq[i][j] = quant_tet(static_cast<double>(V[i][j]));
@@ -596,11 +714,10 @@ void quantize_field_4x3_tet(const T V[4][3], int64_t Vq[4][3]) {
  *
  * Safe range: |a[i][j]| < 2^41  (≈ 2×10^12), giving triple products < 2^123.
  */
-inline __int128 det3_i128(const int64_t a[3][3]) {
-    auto e = [&](int i, int j) -> __int128 { return (__int128)a[i][j]; };
-    return e(0,0) * (e(1,1)*e(2,2) - e(2,1)*e(1,2))
-         - e(0,1) * (e(1,0)*e(2,2) - e(2,0)*e(1,2))
-         + e(0,2) * (e(1,0)*e(2,1) - e(2,0)*e(1,1));
+FTK_HOST_DEVICE inline __int128 det3_i128(const int64_t a[3][3]) {
+    return (__int128)a[0][0] * ((__int128)a[1][1]*a[2][2] - (__int128)a[2][1]*a[1][2])
+         - (__int128)a[0][1] * ((__int128)a[1][0]*a[2][2] - (__int128)a[2][0]*a[1][2])
+         + (__int128)a[0][2] * ((__int128)a[1][0]*a[2][1] - (__int128)a[2][0]*a[1][1]);
 }
 
 /**
@@ -620,29 +737,33 @@ inline __int128 det3_i128(const int64_t a[3][3]) {
  *   |P[1]|, |P[2]| ≤ 18·M³
  * With M = 10^6 · 2^20 ≈ 2^40: 18·(2^40)^3 = 18·2^120 ≈ 2^124 < 2^127. ✓
  */
-inline void characteristic_polynomial_3x3_i128(const int64_t A[3][3],
+FTK_HOST_DEVICE inline void characteristic_polynomial_3x3_i128(const int64_t A[3][3],
                                                 const int64_t B[3][3],
                                                 __int128 P[4]) {
-    auto a = [&](int i, int j) -> __int128 { return (__int128)A[i][j]; };
-    auto b = [&](int i, int j) -> __int128 { return (__int128)B[i][j]; };
+    // Inline cast macro to avoid lambda captures (device compatibility)
+    #define A128(i,j) ((__int128)A[i][j])
+    #define B128(i,j) ((__int128)B[i][j])
 
     P[0] = det3_i128(A);
 
-    P[1] = a(1,2)*a(2,1)*b(0,0) - a(1,1)*a(2,2)*b(0,0) - a(1,2)*a(2,0)*b(0,1)
-          +a(1,0)*a(2,2)*b(0,1) + a(1,1)*a(2,0)*b(0,2) - a(1,0)*a(2,1)*b(0,2)
-          -a(0,2)*a(2,1)*b(1,0) + a(0,1)*a(2,2)*b(1,0) + a(0,2)*a(2,0)*b(1,1)
-          -a(0,0)*a(2,2)*b(1,1) - a(0,1)*a(2,0)*b(1,2) + a(0,0)*a(2,1)*b(1,2)
-          +a(0,2)*a(1,1)*b(2,0) - a(0,1)*a(1,2)*b(2,0) - a(0,2)*a(1,0)*b(2,1)
-          +a(0,0)*a(1,2)*b(2,1) + a(0,1)*a(1,0)*b(2,2) - a(0,0)*a(1,1)*b(2,2);
+    P[1] = A128(1,2)*A128(2,1)*B128(0,0) - A128(1,1)*A128(2,2)*B128(0,0) - A128(1,2)*A128(2,0)*B128(0,1)
+          +A128(1,0)*A128(2,2)*B128(0,1) + A128(1,1)*A128(2,0)*B128(0,2) - A128(1,0)*A128(2,1)*B128(0,2)
+          -A128(0,2)*A128(2,1)*B128(1,0) + A128(0,1)*A128(2,2)*B128(1,0) + A128(0,2)*A128(2,0)*B128(1,1)
+          -A128(0,0)*A128(2,2)*B128(1,1) - A128(0,1)*A128(2,0)*B128(1,2) + A128(0,0)*A128(2,1)*B128(1,2)
+          +A128(0,2)*A128(1,1)*B128(2,0) - A128(0,1)*A128(1,2)*B128(2,0) - A128(0,2)*A128(1,0)*B128(2,1)
+          +A128(0,0)*A128(1,2)*B128(2,1) + A128(0,1)*A128(1,0)*B128(2,2) - A128(0,0)*A128(1,1)*B128(2,2);
 
-    P[2] =-a(2,2)*b(0,1)*b(1,0) + a(2,1)*b(0,2)*b(1,0) + a(2,2)*b(0,0)*b(1,1)
-          -a(2,0)*b(0,2)*b(1,1) - a(2,1)*b(0,0)*b(1,2) + a(2,0)*b(0,1)*b(1,2)
-          +a(1,2)*b(0,1)*b(2,0) - a(1,1)*b(0,2)*b(2,0) - a(0,2)*b(1,1)*b(2,0)
-          +a(0,1)*b(1,2)*b(2,0) - a(1,2)*b(0,0)*b(2,1) + a(1,0)*b(0,2)*b(2,1)
-          +a(0,2)*b(1,0)*b(2,1) - a(0,0)*b(1,2)*b(2,1) + a(1,1)*b(0,0)*b(2,2)
-          -a(1,0)*b(0,1)*b(2,2) - a(0,1)*b(1,0)*b(2,2) + a(0,0)*b(1,1)*b(2,2);
+    P[2] =-A128(2,2)*B128(0,1)*B128(1,0) + A128(2,1)*B128(0,2)*B128(1,0) + A128(2,2)*B128(0,0)*B128(1,1)
+          -A128(2,0)*B128(0,2)*B128(1,1) - A128(2,1)*B128(0,0)*B128(1,2) + A128(2,0)*B128(0,1)*B128(1,2)
+          +A128(1,2)*B128(0,1)*B128(2,0) - A128(1,1)*B128(0,2)*B128(2,0) - A128(0,2)*B128(1,1)*B128(2,0)
+          +A128(0,1)*B128(1,2)*B128(2,0) - A128(1,2)*B128(0,0)*B128(2,1) + A128(1,0)*B128(0,2)*B128(2,1)
+          +A128(0,2)*B128(1,0)*B128(2,1) - A128(0,0)*B128(1,2)*B128(2,1) + A128(1,1)*B128(0,0)*B128(2,2)
+          -A128(1,0)*B128(0,1)*B128(2,2) - A128(0,1)*B128(1,0)*B128(2,2) + A128(0,0)*B128(1,1)*B128(2,2);
 
     P[3] = -det3_i128(B);
+
+    #undef A128
+    #undef B128
 }
 
 // ============================================================================
@@ -677,7 +798,7 @@ void compute_tet_Q_i128(const T V[4][3], const T W[4][3], __int128 Q_i128[4]) {
 
 // Forward declaration for compute_tet_QP_i128 (defined later in this header).
 template <typename T>
-void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3], T Q[4], T P[4][4]);
+FTK_HOST_DEVICE void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3], T Q[4], T P[4][4]);
 
 // ============================================================================
 // Tet Integer Q + P Polynomials  (for fully combinatorial stitching)
@@ -744,7 +865,7 @@ void compute_tet_QP_i128(const T V[4][3], const T W[4][3],
 /**
  * @brief GCD of two __int128 values (Euclidean algorithm, handles negatives).
  */
-inline __int128 gcd_i128(__int128 a, __int128 b) {
+FTK_HOST_DEVICE inline __int128 gcd_i128(__int128 a, __int128 b) {
     if (a < 0) a = -a;
     if (b < 0) b = -b;
     while (b) { __int128 t = a % b; a = b; b = t; }
@@ -762,7 +883,7 @@ inline __int128 gcd_i128(__int128 a, __int128 b) {
  * Note: sign convention matches the standard cubic discriminant:
  *   Δ > 0 ↔ three distinct real roots, Δ < 0 ↔ one real root.
  */
-inline int discriminant_sign_i128(const __int128 P[4]) {
+FTK_HOST_DEVICE inline int discriminant_sign_i128(const __int128 P[4]) {
     if (P[3] == 0) return 0;  // not a cubic
 
     // Step 1: GCD-normalize to minimize coefficient magnitude.
@@ -779,9 +900,8 @@ inline int discriminant_sign_i128(const __int128 P[4]) {
 
     // Step 2: overflow guard — if any coefficient ≥ 2^30, return 0.
     static constexpr __int128 THRESH = __int128(1) << 30;
-    auto abs128 = [](__int128 x) { return x < 0 ? -x : x; };
-    if (abs128(a) >= THRESH || abs128(b) >= THRESH ||
-        abs128(c) >= THRESH || abs128(d) >= THRESH)
+    if (pvs_abs128(a) >= THRESH || pvs_abs128(b) >= THRESH ||
+        pvs_abs128(c) >= THRESH || pvs_abs128(d) >= THRESH)
         return 0;  // large coefficients → float sign is reliable
 
     // Step 3: exact discriminant in __int128.
@@ -833,14 +953,14 @@ struct SturmSeqDouble {
 };
 
 /// Evaluate polynomial with ascending-degree coefficients c[0..deg] at x.
-static inline double eval_poly_sturm(const double* c, int deg, double x) {
+FTK_HOST_DEVICE static inline double eval_poly_sturm(const double* c, int deg, double x) {
     double r = c[deg];
     for (int i = deg - 1; i >= 0; --i) r = r * x + c[i];
     return r;
 }
 
 /// Build the Sturm sequence for cubic P (ascending-degree coefficients P[0..3]).
-inline void build_sturm_double(const double P[4], SturmSeqDouble& seq) {
+FTK_HOST_DEVICE inline void build_sturm_double(const double P[4], SturmSeqDouble& seq) {
     double p0 = P[0], p1 = P[1], p2 = P[2], p3 = P[3];
 
     // S₀ = P
@@ -869,7 +989,7 @@ inline void build_sturm_double(const double P[4], SturmSeqDouble& seq) {
 }
 
 /// Count sign changes at x in the Sturm sequence (= # roots in (−∞, x]).
-inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
+FTK_HOST_DEVICE inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
     int    changes = 0;
     double prev    = 0.0;
     for (int i = 0; i < seq.n; ++i) {
@@ -883,12 +1003,12 @@ inline int sturm_count_at(const SturmSeqDouble& seq, double x) {
 }
 
 /// Count sign changes at x with Higham-certified evaluation of each Sturm
-/// polynomial.  Returns (count, certified).  If any Sturm polynomial
-/// evaluation is not certifiably nonzero (i.e. |S_i(x)| <= gamma_deg * cond),
+/// polynomial.  Returns SturmCertifiedResult{count, certified}.  If any Sturm
+/// polynomial evaluation is not certifiably nonzero (i.e. |S_i(x)| <= gamma_deg * cond),
 /// certified=false — the caller should use SoS perturbation.
-inline std::pair<int,bool> sturm_count_at_certified(const SturmSeqDouble& seq, double x) {
-    const double u = std::numeric_limits<double>::epsilon();
-    const double ax = std::abs(x);
+FTK_HOST_DEVICE inline SturmCertifiedResult sturm_count_at_certified(const SturmSeqDouble& seq, double x) {
+    const double u = pvs_epsilon();
+    const double ax = pvs_abs(x);
 
     int    changes  = 0;
     bool   certified = true;
@@ -904,14 +1024,14 @@ inline std::pair<int,bool> sturm_count_at_certified(const SturmSeqDouble& seq, d
             val = val * x + c[d];
 
         // Higham condition number: Σ|c_k|·|x|^k
-        double cond = std::abs(c[deg]);
+        double cond = pvs_abs(c[deg]);
         for (int d = deg - 1; d >= 0; --d)
-            cond = cond * ax + std::abs(c[d]);
+            cond = cond * ax + pvs_abs(c[d]);
 
         double gamma_deg = double(2 * deg + 2) * u;
 
         if (val != 0.0) {
-            if (std::abs(val) <= gamma_deg * cond)
+            if (pvs_abs(val) <= gamma_deg * cond)
                 certified = false;  // sign uncertain
             if (prev != 0.0 && ((prev > 0.0) != (val > 0.0))) ++changes;
             prev = val;
@@ -920,7 +1040,10 @@ inline std::pair<int,bool> sturm_count_at_certified(const SturmSeqDouble& seq, d
             certified = false;
         }
     }
-    return {changes, certified};
+    SturmCertifiedResult result;
+    result.count = changes;
+    result.certified = certified;
+    return result;
 }
 
 /// Given float root estimate rf and the Sturm sequence of its polynomial,
@@ -955,26 +1078,23 @@ inline std::pair<int,bool> sturm_count_at_certified(const SturmSeqDouble& seq, d
 ///   not arbitrary scale thresholds.
 ///
 /// Returns true on success, false if the root could not be isolated.
-inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
+FTK_HOST_DEVICE inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
                                    double& lo_out, double& hi_out) {
     // Subtask 18: principled initial bracket — sqrt(ε_machine) relative to scale.
-    static const double SQRT_EPS = std::sqrt(std::numeric_limits<double>::epsilon());
-    double scale = std::max(std::abs(rf), 1.0);
+    const double SQRT_EPS = pvs_sqrt(pvs_epsilon());
+    double scale = pvs_max_d(pvs_abs(rf), 1.0);
     double delta = scale * SQRT_EPS;
 
     double lo = rf - delta, hi = rf + delta;
     int cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
 
     // Phase 1: expand or shrink until exactly one root in bracket.
-    // Termination: success (cnt==1), iteration limit (120), or float
-    // overflow/underflow in bracket endpoints (Subtask 18: replaces the
-    // arbitrary `delta > 1e14 || delta < 1e-300` guards).
     for (int iter = 0; iter < 120 && cnt != 1; ++iter) {
         if (cnt == 0)  delta *= 2.0;   // root not yet bracketed → expand
         else           delta *= 0.5;   // multiple roots → shrink to isolate one
         lo  = rf - delta;
         hi  = rf + delta;
-        if (!std::isfinite(lo) || !std::isfinite(hi) || delta == 0.0) break;
+        if (!pvs_isfinite(lo) || !pvs_isfinite(hi) || delta == 0.0) break;
         cnt = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
     }
     if (cnt != 1) return false;
@@ -1015,7 +1135,7 @@ inline bool tighten_root_interval(const SturmSeqDouble& seq, double rf,
 /// @param float_roots  Float root estimates (from solve_cubic_real_sos).
 /// @param n_float_roots Number of estimates.
 /// @return             Number of roots successfully isolated.
-inline int isolate_cubic_roots(const double P[4],
+FTK_HOST_DEVICE inline int isolate_cubic_roots(const double P[4],
                                 double lo_out[3], double hi_out[3],
                                 const double float_roots[3], int n_float_roots) {
     if (n_float_roots == 0) return 0;
@@ -1097,7 +1217,7 @@ struct SturmSeqDeg4 {
 /// and exactly 0.0 when algebraically zero.
 ///
 /// The same `== 0.0` approach is already used in build_sturm_double for cubics.
-static inline int poly_rem_d(const double* A, int dA, const double* B, int dB, double* R) {
+FTK_HOST_DEVICE static inline int poly_rem_d(const double* A, int dA, const double* B, int dB, double* R) {
     // Copy A into R
     for (int k = 0; k <= dA; ++k) R[k] = A[k];
     for (int k = dA + 1; k <= 4; ++k) R[k] = 0.0;
@@ -1116,10 +1236,10 @@ static inline int poly_rem_d(const double* A, int dA, const double* B, int dB, d
 }
 
 /// Build Sturm sequence for polynomial P of degree degP ≤ 4 (ascending-degree).
-inline void build_sturm_deg4(const double* P, int degP, SturmSeqDeg4& seq) {
+FTK_HOST_DEVICE inline void build_sturm_deg4(const double* P, int degP, SturmSeqDeg4& seq) {
     // Zero-initialise
-    for (auto& row : seq.c) for (auto& v : row) v = 0.0;
-    for (auto& d : seq.deg) d = 0;
+    for (int ii = 0; ii < 5; ++ii) for (int jj = 0; jj < 5; ++jj) seq.c[ii][jj] = 0.0;
+    for (int ii = 0; ii < 5; ++ii) seq.deg[ii] = 0;
     seq.n = 0;
 
     // S₀ = P
@@ -1152,7 +1272,7 @@ inline void build_sturm_deg4(const double* P, int degP, SturmSeqDeg4& seq) {
 }
 
 /// Sturm sign-change count at x for the degree-4 Sturm sequence.
-inline int sturm_count_d4(const SturmSeqDeg4& seq, double x) {
+FTK_HOST_DEVICE inline int sturm_count_d4(const SturmSeqDeg4& seq, double x) {
     int    changes = 0;
     double prev    = 0.0;
     for (int i = 0; i < seq.n; ++i) {
@@ -1165,13 +1285,29 @@ inline int sturm_count_d4(const SturmSeqDeg4& seq, double x) {
     return changes;
 }
 
+/// Named helper: multiply two degree-2 polynomials → degree-4 (__int128 version)
+FTK_HOST_DEVICE inline void mul2_poly_i128(__int128* P, __int128* Q, __int128* R) {
+    for (int k = 0; k < 5; ++k) R[k] = 0;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            R[i + j] += P[i] * Q[j];
+}
+
+/// Named helper: multiply two degree-2 polynomials → degree-4 (double version)
+FTK_HOST_DEVICE inline void mul2_poly_d(const double* P, const double* Q, double* R) {
+    for (int k = 0; k < 5; ++k) R[k] = 0.0;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            R[i + j] += P[i] * Q[j];
+}
+
 /// Compute degree-4 barycentric numerator polynomials N[3][5] and D[5].
 ///
 /// @param Mlin  Linear polynomial coefficients of M(λ)[r][c] = Mlin[r][c][0] + λ·Mlin[r][c][1]
 /// @param blin  Linear polynomial coefficients of b(λ)[r]    = blin[r][0]    + λ·blin[r][1]
 /// @param N     Output: N[k][0..4] are the degree-4 numerator poly coefficients for μ_k
 /// @param D     Output: D[0..4] are the degree-4 denominator poly (Gram determinant)
-inline void compute_bary_numerators(
+FTK_HOST_DEVICE inline void compute_bary_numerators(
         const double Mlin[3][2][2], const double blin[3][2],
         double N[3][5], double D[5]) {
     // (MᵀM)[p][q](λ) — quadratic in λ
@@ -1197,30 +1333,22 @@ inline void compute_bary_numerators(
             g[p][2] += m1 * b1;
         }
 
-    // Multiply two degree-2 polynomials → degree-4
-    auto mul2 = [](const double* P, const double* Q, double* R) {
-        for (int k = 0; k < 5; ++k) R[k] = 0.0;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                R[i + j] += P[i] * Q[j];
-    };
-
     // D = A₀₀·A₁₁ − A₀₁²
     double t0[5], t1[5];
-    mul2(A[0][0], A[1][1], t0);
-    mul2(A[0][1], A[0][1], t1);
+    mul2_poly_d(A[0][0], A[1][1], t0);
+    mul2_poly_d(A[0][1], A[0][1], t1);
     for (int k = 0; k < 5; ++k) D[k] = t0[k] - t1[k];
 
     // N[0] = A₁₁·g[0] − A₀₁·g[1]
     double a11g0[5], a01g1[5];
-    mul2(A[1][1], g[0], a11g0);
-    mul2(A[0][1], g[1], a01g1);
+    mul2_poly_d(A[1][1], g[0], a11g0);
+    mul2_poly_d(A[0][1], g[1], a01g1);
     for (int k = 0; k < 5; ++k) N[0][k] = a11g0[k] - a01g1[k];
 
     // N[1] = A₀₀·g[1] − A₀₁·g[0]
     double a00g1[5], a01g0[5];
-    mul2(A[0][0], g[1], a00g1);
-    mul2(A[0][1], g[0], a01g0);
+    mul2_poly_d(A[0][0], g[1], a00g1);
+    mul2_poly_d(A[0][1], g[0], a01g0);
     for (int k = 0; k < 5; ++k) N[1][k] = a00g1[k] - a01g0[k];
 
     // N[2] = D − N[0] − N[1]
@@ -1251,11 +1379,12 @@ inline void compute_bary_numerators(
 ///     A and g converted to double (1 ULP per coefficient, no cancellation),
 ///     then degree-4 products computed in double.  Still better than the
 ///     previous float-Mlin approach which had catastrophic cancellation.
-inline void compute_bary_numerators_from_integers(
+FTK_HOST_DEVICE inline void compute_bary_numerators_from_integers(
         const int64_t Mlin_q[3][2][2], const int64_t blin_q[3][2],
         double N[3][5], double D[5]) {
     // Stage A: A[p][q][k] and g[p][k] exactly in __int128.
-    __int128 A_i[2][2][3] = {};
+    __int128 A_i[2][2][3];
+    for (int p2 = 0; p2 < 2; ++p2) for (int q2 = 0; q2 < 2; ++q2) for (int k2 = 0; k2 < 3; ++k2) A_i[p2][q2][k2] = 0;
     for (int r = 0; r < 3; ++r)
         for (int p = 0; p < 2; ++p)
             for (int q = 0; q < 2; ++q) {
@@ -1266,7 +1395,8 @@ inline void compute_bary_numerators_from_integers(
                 A_i[p][q][2] += (__int128)m1p * m1q;
             }
 
-    __int128 g_i[2][3] = {};
+    __int128 g_i[2][3];
+    for (int p2 = 0; p2 < 2; ++p2) for (int k2 = 0; k2 < 3; ++k2) g_i[p2][k2] = 0;
     for (int r = 0; r < 3; ++r)
         for (int p = 0; p < 2; ++p) {
             int64_t m0 = Mlin_q[r][p][0], m1 = Mlin_q[r][p][1];
@@ -1277,48 +1407,35 @@ inline void compute_bary_numerators_from_integers(
         }
 
     // Stage B: degree-4 products.
-    //
-    // SAFE_A = 10^18: 6×(10^18)² = 6×10^36 < 2^127 ≈ 1.70×10^38
-    //   Satisfied when 24·M²·QS² ≤ 10^18, i.e. M ≤ 195 at QS = 2^20.
-    // SAFE_G = 10^19: |N[2]| ≤ 6×10^36 + 12×10^18×10^19 = 1.26×10^38 < 2^127
-    //   Satisfied when 12·M²·QS² ≤ 10^19, i.e. M ≤ 613 — A-bound is binding.
-    static constexpr int64_t  SAFE_A = 1'000'000'000'000'000'000LL;   // 10^18
-    static constexpr __int128 SAFE_G =
-        (__int128)1'000'000'000LL * 10'000'000'000LL;                  // 10^19
-
-    auto abs128 = [](__int128 x) -> __int128 { return x >= 0 ? x : -x; };
+    const int64_t  SAFE_A = 1000000000000000000LL;   // 10^18
+    const __int128 SAFE_G =
+        (__int128)1000000000LL * 10000000000LL;                  // 10^19
 
     bool exact = true;
     for (int p = 0; p < 2 && exact; ++p)
         for (int q = 0; q < 2 && exact; ++q)
             for (int k = 0; k < 3 && exact; ++k)
-                if (abs128(A_i[p][q][k]) > SAFE_A) exact = false;
+                if (pvs_abs128(A_i[p][q][k]) > SAFE_A) exact = false;
     for (int p = 0; p < 2 && exact; ++p)
         for (int k = 0; k < 3 && exact; ++k)
-            if (abs128(g_i[p][k]) > SAFE_G) exact = false;
+            if (pvs_abs128(g_i[p][k]) > SAFE_G) exact = false;
 
     if (exact) {
         // EXACT path: degree-4 products in __int128 — no rounding, no cancellation.
-        auto mul2_i = [](__int128* P, __int128* Q, __int128* R) {
-            for (int k = 0; k < 5; ++k) R[k] = 0;
-            for (int i = 0; i < 3; ++i)
-                for (int j = 0; j < 3; ++j)
-                    R[i + j] += P[i] * Q[j];
-        };
 
         __int128 t0[5], t1[5], D_i[5];
-        mul2_i(A_i[0][0], A_i[1][1], t0);
-        mul2_i(A_i[0][1], A_i[0][1], t1);
+        mul2_poly_i128(A_i[0][0], A_i[1][1], t0);
+        mul2_poly_i128(A_i[0][1], A_i[0][1], t1);
         for (int k = 0; k < 5; ++k) D_i[k] = t0[k] - t1[k];
 
         __int128 a11g0[5], a01g1[5], N_i[3][5];
-        mul2_i(A_i[1][1], g_i[0], a11g0);
-        mul2_i(A_i[0][1], g_i[1], a01g1);
+        mul2_poly_i128(A_i[1][1], g_i[0], a11g0);
+        mul2_poly_i128(A_i[0][1], g_i[1], a01g1);
         for (int k = 0; k < 5; ++k) N_i[0][k] = a11g0[k] - a01g1[k];
 
         __int128 a00g1[5], a01g0[5];
-        mul2_i(A_i[0][0], g_i[1], a00g1);
-        mul2_i(A_i[0][1], g_i[0], a01g0);
+        mul2_poly_i128(A_i[0][0], g_i[1], a00g1);
+        mul2_poly_i128(A_i[0][1], g_i[0], a01g0);
         for (int k = 0; k < 5; ++k) N_i[1][k] = a00g1[k] - a01g0[k];
 
         for (int k = 0; k < 5; ++k) N_i[2][k] = D_i[k] - N_i[0][k] - N_i[1][k];
@@ -1331,35 +1448,28 @@ inline void compute_bary_numerators_from_integers(
     } else {
         // FALLBACK path: convert A and g to double (1 ULP each), then
         // degree-4 products in double.
-        double A[2][2][3], g[2][3];
+        double A_d[2][2][3], g_d[2][3];
         for (int p = 0; p < 2; ++p)
             for (int q = 0; q < 2; ++q)
                 for (int k = 0; k < 3; ++k)
-                    A[p][q][k] = (double)A_i[p][q][k];
+                    A_d[p][q][k] = (double)A_i[p][q][k];
         for (int p = 0; p < 2; ++p)
             for (int k = 0; k < 3; ++k)
-                g[p][k] = (double)g_i[p][k];
-
-        auto mul2 = [](const double* P, const double* Q, double* R) {
-            for (int k = 0; k < 5; ++k) R[k] = 0.0;
-            for (int i = 0; i < 3; ++i)
-                for (int j = 0; j < 3; ++j)
-                    R[i + j] += P[i] * Q[j];
-        };
+                g_d[p][k] = (double)g_i[p][k];
 
         double t0[5], t1[5];
-        mul2(A[0][0], A[1][1], t0);
-        mul2(A[0][1], A[0][1], t1);
+        mul2_poly_d(A_d[0][0], A_d[1][1], t0);
+        mul2_poly_d(A_d[0][1], A_d[0][1], t1);
         for (int k = 0; k < 5; ++k) D[k] = t0[k] - t1[k];
 
         double a11g0[5], a01g1[5];
-        mul2(A[1][1], g[0], a11g0);
-        mul2(A[0][1], g[1], a01g1);
+        mul2_poly_d(A_d[1][1], g_d[0], a11g0);
+        mul2_poly_d(A_d[0][1], g_d[1], a01g1);
         for (int k = 0; k < 5; ++k) N[0][k] = a11g0[k] - a01g1[k];
 
         double a00g1[5], a01g0[5];
-        mul2(A[0][0], g[1], a00g1);
-        mul2(A[0][1], g[0], a01g0);
+        mul2_poly_d(A_d[0][0], g_d[1], a00g1);
+        mul2_poly_d(A_d[0][1], g_d[0], a01g0);
         for (int k = 0; k < 5; ++k) N[1][k] = a00g1[k] - a01g0[k];
 
         for (int k = 0; k < 5; ++k) N[2][k] = D[k] - N[0][k] - N[1][k];
@@ -1433,7 +1543,7 @@ bool solve_pv_pentatope(const T V[5][3], const T W[5][3],
  * @brief Compute 2x2 determinant
  */
 template <typename T>
-inline T det2(const T a[2][2]) {
+FTK_HOST_DEVICE inline T det2(const T a[2][2]) {
     return a[0][0] * a[1][1] - a[1][0] * a[0][1];
 }
 
@@ -1441,7 +1551,7 @@ inline T det2(const T a[2][2]) {
  * @brief Compute 3x3 determinant
  */
 template <typename T>
-inline T det3(const T a[3][3]) {
+FTK_HOST_DEVICE inline T det3(const T a[3][3]) {
     return a[0][0] * (a[1][1] * a[2][2] - a[2][1] * a[1][2])
          - a[0][1] * (a[1][0] * a[2][2] - a[2][0] * a[1][2])
          + a[0][2] * (a[1][0] * a[2][1] - a[2][0] * a[1][1]);
@@ -1460,7 +1570,7 @@ inline T trace3(const T a[3][3]) {
  * det(A - λB) = P[0] + P[1]λ + P[2]λ²
  */
 template <typename T>
-void characteristic_polynomial_2x2(T a00, T a01, T a10, T a11, T b00, T b01, T b10, T b11, T P[3]) {
+FTK_HOST_DEVICE void characteristic_polynomial_2x2(T a00, T a01, T a10, T a11, T b00, T b01, T b10, T b11, T P[3]) {
     P[2] = b00 * b11 - b10 * b01;
     P[1] = -(a00 * b11 - a10 * b01 + b00 * a11 - b10 * a01);
     P[0] = a00 * a11 - a10 * a01;
@@ -1471,7 +1581,7 @@ void characteristic_polynomial_2x2(T a00, T a01, T a10, T a11, T b00, T b01, T b
  * det(A - λB) = P[0] + P[1]λ + P[2]λ² + P[3]λ³
  */
 template <typename T>
-void characteristic_polynomial_3x3(const T A[3][3], const T B[3][3], T P[4]) {
+FTK_HOST_DEVICE void characteristic_polynomial_3x3(const T A[3][3], const T B[3][3], T P[4]) {
     P[0] = det3(A);
     P[1] = A[1][2] * A[2][1] * B[0][0] - A[1][1] * A[2][2] * B[0][0] - A[1][2] * A[2][0] * B[0][1]
           +A[1][0] * A[2][2] * B[0][1] + A[1][1] * A[2][0] * B[0][2] - A[1][0] * A[2][1] * B[0][2]
@@ -1493,7 +1603,7 @@ void characteristic_polynomial_3x3(const T A[3][3], const T B[3][3], T P[4]) {
  * P has degree m, Q has degree n, R has degree m+n
  */
 template <typename T>
-void polynomial_multiply(const T P[], int m, const T Q[], int n, T R[]) {
+FTK_HOST_DEVICE void polynomial_multiply(const T P[], int m, const T Q[], int n, T R[]) {
     for (int i = 0; i <= m + n; ++i) R[i] = T(0);
     for (int i = 0; i <= m; ++i)
         for (int j = 0; j <= n; ++j)
@@ -1504,7 +1614,7 @@ void polynomial_multiply(const T P[], int m, const T Q[], int n, T R[]) {
  * @brief Add polynomial Q to P in place
  */
 template <typename T>
-void polynomial_add_inplace(T P[], int m, const T Q[], int n) {
+FTK_HOST_DEVICE void polynomial_add_inplace(T P[], int m, const T Q[], int n) {
     for (int i = 0; i <= n && i <= m; ++i)
         P[i] += Q[i];
 }
@@ -1526,7 +1636,7 @@ void polynomial_subtract(const T P[], int m, const T Q[], int n, T R[]) {
  * @brief Multiply polynomial by scalar
  */
 template <typename T>
-void polynomial_scalar_multiply(T P[], int m, T scalar) {
+FTK_HOST_DEVICE void polynomial_scalar_multiply(T P[], int m, T scalar) {
     for (int i = 0; i <= m; ++i)
         P[i] *= scalar;
 }
@@ -1829,7 +1939,7 @@ bool verify_parallel(const T V[3][3], const T W[3][3],
  * Barycentric coordinates are: μᵢ(λ) = Pᵢ(λ) / Q(λ)
  */
 template <typename T>
-void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3], T Q[4], T P[4][4]) {
+FTK_HOST_DEVICE void characteristic_polynomials_pv_tetrahedron(const T V[4][3], const T W[4][3], T Q[4], T P[4][4]) {
     // Linear transformation: map first 3 vertices to axes, 4th vertex to origin
     T A[3][3] = {
         {V[0][0] - V[3][0], V[1][0] - V[3][0], V[2][0] - V[3][0]},
@@ -2292,6 +2402,200 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
     }
 
     return (int)punctures.size();
+}
+
+// ============================================================================
+// Named device helper: try_certify_nk_sign (replaces lambda in solve_pv_triangle)
+// ============================================================================
+FTK_HOST_DEVICE inline int try_certify_nk_sign_device(
+        int k, double lo, double hi,
+        const double N_poly[3][5], const SturmSeqDeg4& seq_D) {
+    int degNk = 4;
+    while (degNk > 0 && N_poly[k][degNk] == 0.0) --degNk;
+
+    SturmSeqDeg4 seq_nk;
+    build_sturm_deg4(N_poly[k], degNk, seq_nk);
+    if (sturm_count_d4(seq_nk, lo) - sturm_count_d4(seq_nk, hi) != 0)
+        return 0;  // N_k has a root in (lo, hi]
+
+    if (sturm_count_d4(seq_D, lo) - sturm_count_d4(seq_D, hi) != 0)
+        return 0;  // D has a root → degenerate system
+
+    double nk_lo = eval_poly_sturm(N_poly[k], degNk, lo);
+    double ax = pvs_abs(lo);
+    double cond_nk = pvs_abs(N_poly[k][degNk]);
+    for (int d = degNk - 1; d >= 0; --d)
+        cond_nk = cond_nk * ax + pvs_abs(N_poly[k][d]);
+    double eval_gamma = double(2 * degNk + 2) * pvs_epsilon();
+    if (pvs_abs(nk_lo) > eval_gamma * cond_nk)
+        return (nk_lo > 0.0) ? +1 : -1;
+
+    return 0;
+}
+
+// ============================================================================
+// Device-compatible solve_pv_triangle: returns PunctureResult (no std::vector)
+// ============================================================================
+template <typename T>
+FTK_HOST_DEVICE PunctureResult solve_pv_triangle_device(
+        const T V[3][3], const T W[3][3],
+        const uint64_t* indices = nullptr) {
+    PunctureResult result;
+    result.count = 0;
+
+    // Subtask 1: quantize
+    int64_t Vq[3][3], Wq[3][3];
+    quantize_field_3x3(V, Vq);
+    quantize_field_3x3(W, Wq);
+
+    // Subtask 2: exact integer characteristic polynomial
+    int64_t VqT[3][3], WqT[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            VqT[i][j] = Vq[j][i];
+            WqT[i][j] = Wq[j][i];
+        }
+    __int128 P_i128[4];
+    characteristic_polynomial_3x3_i128(VqT, WqT, P_i128);
+
+    // Subtask 12: certified all-parallel check
+    {
+        bool all_parallel = true;
+        for (int i = 0; i < 3; ++i) {
+            __int128 cx = (__int128)Vq[i][1]*Wq[i][2] - (__int128)Vq[i][2]*Wq[i][1];
+            __int128 cy = (__int128)Vq[i][2]*Wq[i][0] - (__int128)Vq[i][0]*Wq[i][2];
+            __int128 cz = (__int128)Vq[i][0]*Wq[i][1] - (__int128)Vq[i][1]*Wq[i][0];
+            if (cx != 0 || cy != 0 || cz != 0) { all_parallel = false; break; }
+        }
+        if (all_parallel) {
+            result.count = INT_MAX;
+            return result;
+        }
+    }
+
+    // Float characteristic polynomial
+    T VT[3][3], WT[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            VT[i][j] = V[j][i];
+            WT[i][j] = W[j][i];
+        }
+    T P[4];
+    characteristic_polynomial_3x3(VT, WT, P);
+
+    T lambda[3];
+    int n_roots = solve_cubic_real_sos(P, lambda, indices, P_i128);
+
+    // Sturm-sequence root isolation
+    double lambda_lo[3], lambda_hi[3];
+    for (int k = 0; k < n_roots; ++k)
+        lambda_lo[k] = lambda_hi[k] = (double)lambda[k];
+    {
+        double Pd[4] = { (double)P[0], (double)P[1], (double)P[2], (double)P[3] };
+        double lambda_d[3] = { (double)lambda[0], (double)lambda[1], (double)lambda[2] };
+        int n_iso = isolate_cubic_roots(Pd, lambda_lo, lambda_hi, lambda_d, n_roots);
+        for (int k = 0; k < n_iso; ++k)
+            lambda[k] = static_cast<T>((lambda_lo[k] + lambda_hi[k]) * 0.5);
+    }
+
+    // Compute bary numerator polynomials
+    int64_t Mlin_q[3][2][2];
+    int64_t blin_q[3][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            Mlin_q[r][c][0] = VqT[r][c] - VqT[r][2];
+            Mlin_q[r][c][1] = -(WqT[r][c] - WqT[r][2]);
+        }
+        blin_q[r][0] = -VqT[r][2];
+        blin_q[r][1] =  WqT[r][2];
+    }
+    double N_poly[3][5], D_poly[5];
+    compute_bary_numerators_from_integers(Mlin_q, blin_q, N_poly, D_poly);
+
+    // Pre-compute Sturm sequence for D(λ)
+    SturmSeqDeg4 seq_D;
+    {
+        int degD = 4;
+        while (degD > 0 && D_poly[degD] == 0.0) --degD;
+        build_sturm_deg4(D_poly, degD, seq_D);
+    }
+
+    const bool zero_is_exact_root = (P_i128[0] == __int128(0));
+
+    for (int i = 0; i < n_roots; ++i) {
+        if (zero_is_exact_root && lambda_lo[i] <= 0.0 && 0.0 <= lambda_hi[i])
+            continue;
+
+        bool have_interval = (lambda_lo[i] < lambda_hi[i]);
+        double win_lo, win_hi;
+        if (have_interval) {
+            win_lo = lambda_lo[i];
+            win_hi = lambda_hi[i];
+        } else {
+            double lam = (double)lambda[i];
+            double delta = pvs_max_d(pvs_abs(lam) * (4.0 * pvs_epsilon()), DBL_MIN);
+            win_lo = lam - delta;
+            win_hi = lam + delta;
+        }
+
+        int bsign[3];
+        int n_bnd = 0;
+        for (int k = 0; k < 3; k++) {
+            bsign[k] = try_certify_nk_sign_device(k, win_lo, win_hi, N_poly, seq_D);
+            if (bsign[k] == 0) n_bnd++;
+        }
+
+        // Any coordinate certified negative → outside
+        {
+            bool outside = false;
+            for (int k = 0; k < 3; k++) if (bsign[k] < 0) { outside = true; break; }
+            if (outside) continue;
+        }
+
+        if (n_bnd == 2) {
+            // G2: vertex puncture
+            if (!indices) continue;
+            int m = -1;
+            for (int k = 0; k < 3; k++) if (bsign[k] != 0) { m = k; break; }
+            if (m < 0) continue;
+            int a = (m + 1) % 3, b = (m + 2) % 3;
+            if (!(indices[m] < pvs_min_u64(indices[a], indices[b]))) continue;
+        } else {
+            bool reject = false;
+            for (int k = 0; k < 3; k++) {
+                if (bsign[k] > 0) continue;
+                if (!indices) { reject = true; break; }
+                int ii = (k + 1) % 3, jj = (k + 2) % 3;
+                if (!(indices[k] < pvs_min_u64(indices[ii], indices[jj]))) {
+                    reject = true; break;
+                }
+            }
+            if (reject) continue;
+        }
+
+        // Compute ν via N_k(λ)/D(λ)
+        T nu[3];
+        {
+            double lam_d = (double)lambda[i];
+            double d_val = eval_poly_sturm(D_poly, 4, lam_d);
+            for (int k = 0; k < 3; ++k) {
+                double nk_val = eval_poly_sturm(N_poly[k], 4, lam_d);
+                nu[k] = (d_val > 0.0) ? T(nk_val / d_val) : T(0);
+            }
+        }
+
+        if (result.count < 3) {
+            PuncturePointDevice& p = result.pts[result.count];
+            p.lambda       = lambda[i];
+            p.barycentric[0] = nu[0];
+            p.barycentric[1] = nu[1];
+            p.barycentric[2] = nu[2];
+            p.coords_3d[0] = p.coords_3d[1] = p.coords_3d[2] = 0;
+            result.count++;
+        }
+    }
+
+    return result;
 }
 
 template <typename T>

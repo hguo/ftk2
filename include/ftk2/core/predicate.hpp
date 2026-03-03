@@ -619,7 +619,46 @@ struct ExactPVPredicate : public Predicate<6, T> {  // 6 components: 3 for u, 3 
         __device__
         bool extract_device(const Simplex& s, const CudaDataView<T>* data, int n_vars,
                           const DeviceMesh& mesh, FeatureElement& el) const {
-            // TODO: Implement CUDA extraction
+            // Load V[3][3] and W[3][3] from the 6-component data view
+            T V[3][3], W[3][3];
+            for (int i = 0; i < 3; ++i) {
+                uint64_t coords[4] = {0, 0, 0, 0};
+                mesh.id_to_coords(s.vertices[i], coords);
+                for (int c = 0; c < 3; ++c) {
+                    V[i][c] = data[0].f(c, coords[0], coords[1], coords[2]);
+                    W[i][c] = data[0].f(c + 3, coords[0], coords[1], coords[2]);
+                }
+            }
+
+            PunctureResult pr = solve_pv_triangle_device(V, W, s.vertices);
+
+            if (pr.count == INT_MAX) {
+                // Degenerate: entire triangle is PV surface
+                el = FeatureElement();
+                el.simplex = s;
+                el.geometry_type = FeatureGeometryType::Point;
+                el.barycentric_coords[0][0] = 1.0f / 3.0f;
+                el.barycentric_coords[0][1] = 1.0f / 3.0f;
+                el.barycentric_coords[0][2] = 1.0f / 3.0f;
+                el.type = -1;
+                el.scalar = 0.0f;
+                for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+                return true;
+            }
+
+            if (pr.count > 0) {
+                el = FeatureElement();
+                el.simplex = s;
+                el.geometry_type = FeatureGeometryType::Point;
+                el.barycentric_coords[0][0] = (float)pr.pts[0].barycentric[0];
+                el.barycentric_coords[0][1] = (float)pr.pts[0].barycentric[1];
+                el.barycentric_coords[0][2] = (float)pr.pts[0].barycentric[2];
+                el.type = 0;
+                el.scalar = (float)pr.pts[0].lambda;
+                for (int i = 0; i < 16; ++i) el.attributes[i] = 0.0f;
+                return true;
+            }
+
             return false;
         }
     };

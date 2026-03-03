@@ -83,6 +83,10 @@ if (CMAKE_CUDA_COMPILER)
         target_link_libraries(ftk2_critical_point_2d_streaming_cuda PRIVATE ftk2 yaml-cpp::yaml-cpp)
         message(STATUS "Building streaming CUDA example (requires yaml-cpp)")
     endif()
+
+    # Exact PV CUDA example - standalone GPU extraction + CPU stitching
+    add_executable(ftk2_exact_pv_cuda exact_pv_cuda.cu)
+    target_link_libraries(ftk2_exact_pv_cuda PRIVATE ftk2)
 endif()
 
 # High-level API demo (Layer 2)
