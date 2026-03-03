@@ -51,6 +51,28 @@ public:
             simplices_[d].assign(face_set.begin(), face_set.end());
             std::cout << "UnstructuredMesh: found " << simplices_[d].size() << " unique simplices of dim " << d << std::endl;
         }
+
+        // Build simplex-to-index maps for all dimensions
+        for (int k = 0; k <= cell_dim; ++k) {
+            for (uint64_t i = 0; i < simplices_[k].size(); ++i) {
+                simplex_id_[k][simplices_[k][i]] = i;
+            }
+        }
+
+        // Build coface adjacency tables for dimensions 0..cell_dim-1
+        for (int k = 0; k < cell_dim; ++k) {
+            cofaces_table_[k].resize(simplices_[k].size());
+        }
+        for (int k = cell_dim - 1; k >= 0; --k) {
+            for (uint64_t j = 0; j < simplices_[k + 1].size(); ++j) {
+                faces(simplices_[k + 1][j], [&](const Simplex& f) {
+                    auto it = simplex_id_[k].find(f);
+                    if (it != simplex_id_[k].end()) {
+                        cofaces_table_[k][it->second].push_back(j);
+                    }
+                });
+            }
+        }
     }
 
     int get_spatial_dimension() const override { return spatial_dim_; }
@@ -65,7 +87,15 @@ public:
         });
     }
 
-    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {}
+    void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {
+        int k = s.dimension;
+        if (k < 0 || k >= cell_dim_) return;
+        auto it = simplex_id_[k].find(s);
+        if (it == simplex_id_[k].end()) return;
+        for (uint64_t coface_idx : cofaces_table_[k][it->second]) {
+            callback(simplices_[k + 1][coface_idx]);
+        }
+    }
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
         if (vertex_id >= simplices_[0].size()) return {};
@@ -80,7 +110,9 @@ private:
     int spatial_dim_;
     int cell_dim_; 
     std::vector<double> coords_;
-    std::vector<Simplex> simplices_[4]; 
+    std::vector<Simplex> simplices_[4];
+    std::map<Simplex, uint64_t> simplex_id_[4];           // simplex → index in simplices_[k]
+    std::vector<std::vector<uint64_t>> cofaces_table_[4]; // cofaces_table_[k][i] = (k+1)-simplex indices containing simplices_[k][i]
 };
 
 } // namespace ftk2
