@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ftk2/core/parallel.hpp>
+#include <ftk2/core/coface_lut.hpp>
 #include <vector>
 #include <functional>
 #include <memory>
@@ -301,33 +302,73 @@ public:
     }
 
     void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {
-        // Find all (d+1)-simplices that contain simplex s (where d = s.dimension)
-        if (s.dimension >= get_total_dimension()) return;  // No cofaces for top-dimensional simplices
+        int k = s.dimension;
+        int d = get_total_dimension();
+        if (k >= d) return;
 
-        int target_dim = s.dimension + 1;
-
-        // Iterate over all simplices of dimension target_dim
-        iterate_simplices(target_dim, [&](const Simplex& candidate) {
-            // Check if candidate contains all vertices of s
-            bool contains_all = true;
-            for (int i = 0; i <= s.dimension; ++i) {
-                bool found = false;
-                for (int j = 0; j <= target_dim; ++j) {
-                    if (candidate.vertices[j] == s.vertices[i]) {
-                        found = true;
-                        break;
+        // Check if coface LUT is available for this (d, k)
+        int n_cofaces_check = cpu_coface_count_dispatch(d, k, 0);
+        if (n_cofaces_check == 0) {
+            // Fallback: brute-force for unsupported (d,k)
+            int target_dim = k + 1;
+            iterate_simplices(target_dim, [&](const Simplex& candidate) {
+                bool contains_all = true;
+                for (int i = 0; i <= k; ++i) {
+                    bool found = false;
+                    for (int j = 0; j <= target_dim; ++j) {
+                        if (candidate.vertices[j] == s.vertices[i]) { found = true; break; }
                     }
+                    if (!found) { contains_all = false; break; }
                 }
-                if (!found) {
-                    contains_all = false;
+                if (contains_all) callback(candidate);
+            });
+            return;
+        }
+
+        // Recover corner and type from the simplex
+        int corner[4] = {0, 0, 0, 0};
+        int simplex_type = 0;
+
+        if (k == 0) {
+            // Vertex: corner = vertex grid coordinates, no type needed
+            std::vector<uint64_t> gc = id_to_grid_index(s.vertices[0]);
+            for (int j = 0; j < d; ++j) corner[j] = (int)gc[j];
+        } else {
+            simplex_type = recover_simplex_type(s, d, k, corner);
+            if (simplex_type < 0) return; // should not happen
+        }
+
+        int n_cofaces = cpu_coface_count_dispatch(d, k, simplex_type);
+        for (int ci = 0; ci < n_cofaces; ++ci) {
+            int coface_type = cpu_coface_lut_dispatch(d, k, simplex_type, ci, 0);
+            int coface_corner[4] = {0, 0, 0, 0};
+            for (int j = 0; j < d; ++j)
+                coface_corner[j] = corner[j] + cpu_coface_lut_dispatch(d, k, simplex_type, ci, 1 + j);
+
+            // Boundary check: coface corner must be a valid hypercube base
+            // Local base = coface_corner[j] - offset_[j], must be in [0, dims_[j]-2]
+            bool valid = true;
+            for (int j = 0; j < d; ++j) {
+                int local_base = coface_corner[j] - (int)offset_[j];
+                if (local_base < 0 || local_base > (int)dims_[j] - 2) {
+                    valid = false;
                     break;
                 }
             }
+            if (!valid) continue;
 
-            if (contains_all) {
-                callback(candidate);
+            // Build coface simplex from LUT
+            Simplex cf;
+            cf.dimension = k + 1;
+            for (int vi = 0; vi <= k + 1; ++vi) {
+                uint64_t g[4] = {0};
+                for (int j = 0; j < d; ++j)
+                    g[j] = (uint64_t)(coface_corner[j] + cpu_lut_dispatch(d, k + 1, coface_type, vi, j));
+                cf.vertices[vi] = grid_index_to_id(g);
             }
-        });
+            cf.sort_vertices();
+            callback(cf);
+        }
     }
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
@@ -412,6 +453,59 @@ public:
 protected:
 
 private:
+    // Recover (corner, simplex_type) from a Simplex's vertex IDs.
+    // Returns the matching LUT type index, sets corner[] to the global corner coords.
+    // Returns -1 if no match found (should not happen for valid simplices).
+    int recover_simplex_type(const Simplex& s, int d, int k, int corner[4]) const {
+        // Get grid coordinates for each vertex
+        int coords[5][4];
+        for (int vi = 0; vi <= k; ++vi) {
+            std::vector<uint64_t> gc = id_to_grid_index(s.vertices[vi]);
+            for (int j = 0; j < d; ++j) coords[vi][j] = (int)gc[j];
+            for (int j = d; j < 4; ++j) coords[vi][j] = 0;
+        }
+
+        // Corner = min coordinate in each dimension
+        for (int j = 0; j < d; ++j) {
+            corner[j] = coords[0][j];
+            for (int vi = 1; vi <= k; ++vi)
+                if (coords[vi][j] < corner[j]) corner[j] = coords[vi][j];
+        }
+
+        // Compute relative offsets and sort them lexicographically
+        int offsets[5][4];
+        for (int vi = 0; vi <= k; ++vi)
+            for (int j = 0; j < d; ++j)
+                offsets[vi][j] = coords[vi][j] - corner[j];
+
+        // Sort offsets lexicographically (bubble sort, k+1 <= 5 elements)
+        for (int i = 0; i <= k; ++i) {
+            for (int j = i + 1; j <= k; ++j) {
+                bool swap = false;
+                for (int c = 0; c < d; ++c) {
+                    if (offsets[i][c] < offsets[j][c]) break;
+                    if (offsets[i][c] > offsets[j][c]) { swap = true; break; }
+                }
+                if (swap) {
+                    for (int c = 0; c < d; ++c)
+                        std::swap(offsets[i][c], offsets[j][c]);
+                }
+            }
+        }
+
+        // Linear scan through LUT types to find a match
+        int n_types = cpu_get_num_simplex_types(d, k);
+        for (int t = 0; t < n_types; ++t) {
+            bool match = true;
+            for (int vi = 0; vi <= k && match; ++vi)
+                for (int j = 0; j < d && match; ++j)
+                    if (offsets[vi][j] != cpu_lut_dispatch(d, k, t, vi, j))
+                        match = false;
+            if (match) return t;
+        }
+        return -1;
+    }
+
     void iterate_hypercubes(int dim, std::vector<uint64_t>& coords, std::function<void(const std::vector<uint64_t>&)> callback) const {
         if (dim == dims_.size()) {
             callback(coords); return;
