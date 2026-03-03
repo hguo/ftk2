@@ -119,19 +119,12 @@ public:
         std::vector<FeatureElement> elements;
         std::mutex mutex;
         std::atomic<uint64_t> visited(0), found(0);
-        // ExactPV: dedup set — iterate_simplices may visit some faces >1× and the old
-        // active_nodes_ dedup no longer applies for the multi-element path.
-        std::set<Simplex> exactpv_seen;
         slab_mesh->iterate_simplices(m, [&](const Simplex& s) {
             visited++;
             if constexpr (std::is_same_v<PredicateType, ExactPVPredicate<T>>) {
                 // ExactPV: extract ALL punctures per triangle (up to 3 per simplex).
-                // Guard against iterate_simplices visiting the same face multiple times.
+                // LUT iteration visits each simplex exactly once — no dedup needed.
                 Simplex sorted_s = s; sorted_s.sort_vertices();
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    if (!exactpv_seen.insert(sorted_s).second) return;  // already processed
-                }
                 std::vector<FeatureElement> multi_els;
                 if (extract_simplex_multi(sorted_s, data, multi_els, slab_mesh.get())) {
                     std::lock_guard<std::mutex> lock(mutex);
