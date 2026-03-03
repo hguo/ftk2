@@ -1,4 +1,5 @@
 #include <iostream>
+#include <chrono>
 #include <ftk2/core/mesh.hpp>
 #include <vector>
 #include <set>
@@ -147,10 +148,82 @@ void test_cofaces() {
     test_cofaces_cross_check({2, 2, 2, 2}, 3);
 }
 
+void bench_cofaces(const std::vector<uint64_t>& dims, int k) {
+    RegularSimplicialMesh mesh(dims);
+    int d = mesh.get_total_dimension();
+
+    // Collect all k-simplices
+    std::vector<Simplex> simplices;
+    mesh.iterate_simplices(k, [&](const Simplex& s) { simplices.push_back(s); });
+
+    int n_queries = simplices.size();
+
+    // Benchmark LUT
+    int lut_count = 0;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (auto& s : simplices)
+        mesh.cofaces(s, [&](const Simplex&) { lut_count++; });
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double lut_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+
+    // Benchmark brute-force
+    int bf_count = 0;
+    auto t2 = std::chrono::high_resolution_clock::now();
+    for (auto& s : simplices)
+        brute_force_cofaces(mesh, s, [&](const Simplex&) { bf_count++; });
+    auto t3 = std::chrono::high_resolution_clock::now();
+    double bf_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+
+    std::cout << "  d=" << d << " mesh ";
+    for (size_t i = 0; i < dims.size(); i++) {
+        if (i) std::cout << "x";
+        std::cout << dims[i];
+    }
+    std::cout << ", k=" << k << ": " << n_queries << " queries"
+              << "  LUT=" << lut_us / 1000.0 << "ms"
+              << "  BF=" << bf_us / 1000.0 << "ms"
+              << "  speedup=" << bf_us / lut_us << "x" << std::endl;
+}
+
+void test_cofaces_benchmark() {
+    std::cout << "\nCoface benchmark (LUT vs brute-force):" << std::endl;
+
+    // 2D — increasing mesh size shows O(N^d) vs O(1) scaling
+    bench_cofaces({10, 10}, 1);
+    bench_cofaces({20, 20}, 1);
+    bench_cofaces({50, 50}, 1);
+
+    // 3D — triangle→tet cofaces
+    bench_cofaces({5, 5, 5}, 2);
+    bench_cofaces({10, 10, 10}, 2);
+
+    // 3D — vertex→edge cofaces
+    bench_cofaces({5, 5, 5}, 0);
+    bench_cofaces({10, 10, 10}, 0);
+
+    // LUT-only on larger meshes (brute-force too slow)
+    std::cout << "\n  LUT-only (larger meshes):" << std::endl;
+    for (auto& dims : std::vector<std::vector<uint64_t>>{{50,50,50}, {100,100,100}}) {
+        RegularSimplicialMesh mesh(dims);
+        std::vector<Simplex> tris;
+        mesh.iterate_simplices(2, [&](const Simplex& s) { tris.push_back(s); });
+        int count = 0;
+        auto t0 = std::chrono::high_resolution_clock::now();
+        for (auto& s : tris)
+            mesh.cofaces(s, [&](const Simplex&) { count++; });
+        auto t1 = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        std::cout << "  " << dims[0] << "^3: " << tris.size() << " triangles, "
+                  << count << " cofaces in " << ms << "ms ("
+                  << (ms * 1e6 / tris.size()) << " ns/query)" << std::endl;
+    }
+}
+
 int main() {
     std::cout << "Running Mesh tests..." << std::endl;
     test_mesh();
     test_cofaces();
-    std::cout << "Summary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
+    test_cofaces_benchmark();
+    std::cout << "\nSummary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
     return (passed_tests == total_tests) ? 0 : 1;
 }
