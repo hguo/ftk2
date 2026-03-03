@@ -2117,4 +2117,62 @@ Sturm-count based.**
 
 ---
 
+## Parity of Punctures per Q-Interval, and Closed Loops
+
+### Parity invariant
+
+Within any single Q-interval, the number of punctures a tet contributes is
+always **even** (0, 2, 4, …).  The argument is topological: the PV curve
+inside a tet is the image of the rational map λ → μ(λ) = (P₀/Q, …, P₃/Q),
+which is a smooth arc.  Each connected feasibility segment (λ-range where
+all μₖ ≥ 0) must both enter and exit through tet faces (punctures), giving
+2 punctures per segment.  Multiple feasibility segments in one Q-interval
+give 4, 6, … punctures.  The count is never odd in the generic case.
+
+This parity invariant is the theoretical guarantee that the "pair
+consecutively within each group" step in Algorithm 1 always leaves zero
+unpaired punctures.
+
+**Degenerate routes to an apparent odd count:**
+
+- **G2 (edge puncture):** μₖ = μⱼ = 0 simultaneously.  Physically the
+  curve hits an edge shared by two faces.  With SoS ownership, the edge
+  puncture is either (a) counted twice within the tet (once per face) →
+  still even, or (b) one copy is transferred to the adjacent tet → both
+  tets have even counts.
+- **G1 (vertex puncture):** three μₖ = 0.  Handled analogously.
+
+### Closed loops: global vs. per-tet
+
+**Global closed loops** (the PV curve forms a topological circle by
+passing through a chain of tets and returning to the start) are already
+detected by the curve-tracing step: starting from degree-1 endpoints
+first, then following any unvisited puncture for a closed component.
+Test fields F1–F3 produce global closed loops and the tracer handles them
+correctly.
+
+**A truly isolated closed loop inside a single tet** (0 punctures,
+invisible to stitching) requires the rational map λ → μ(λ) to be
+non-injective: two distinct parameter values λ₁ ≠ λ₂ mapping to the same
+barycentric point, with the feasibility condition satisfied throughout
+[λ₁, λ₂].  For rational functions of degree 3, self-intersection is
+algebraically possible but non-generic (requires special field values
+satisfying Pₖ(λ₁)Q(λ₂) = Pₖ(λ₂)Q(λ₁) for all k).
+
+Even in the self-intersection case, the curve still has **2 punctures** on
+the same face (at λ₁ and λ₂) — so the stitching algorithm sees them and
+pairs them correctly.  A truly 0-puncture closed loop would require the
+rational parameterization to be periodic, which real rational maps cannot
+be.  Therefore:
+
+- **0 punctures in a Q-interval** means no PV curve segment passes through
+  the tet in that interval (empty feasibility set), not a hidden closed
+  loop.
+- **A self-intersecting loop** produces 2 punctures on the same face and
+  is handled by the consecutive-pairing rule.
+- **Global closed loops** are detected by cycle detection in the tracer.
+
+**Conclusion:** closed loops require no special detection beyond what the
+current tracer already does.
+
 *Document updated March 2026.*
