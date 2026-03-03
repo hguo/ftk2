@@ -185,6 +185,158 @@ void bench_cofaces(const std::vector<uint64_t>& dims, int k) {
               << "  speedup=" << bf_us / lut_us << "x" << std::endl;
 }
 
+// Brute-force cofaces for extruded mesh: iterate ALL (k+1)-simplices
+void brute_force_extruded_cofaces(const ExtrudedSimplicialMesh& mesh, const Simplex& s,
+                                   std::function<void(const Simplex&)> callback) {
+    int target_dim = s.dimension + 1;
+    if (target_dim > mesh.get_total_dimension()) return;
+    mesh.iterate_simplices(target_dim, [&](const Simplex& candidate) {
+        bool contains_all = true;
+        for (int i = 0; i <= s.dimension; ++i) {
+            bool found = false;
+            for (int j = 0; j <= target_dim; ++j) {
+                if (candidate.vertices[j] == s.vertices[i]) { found = true; break; }
+            }
+            if (!found) { contains_all = false; break; }
+        }
+        if (contains_all) callback(candidate);
+    });
+}
+
+void test_extruded_cofaces_cross_check(const std::vector<uint64_t>& base_dims,
+                                        uint64_t n_layers, int max_k) {
+    auto base = std::make_shared<RegularSimplicialMesh>(base_dims);
+    ExtrudedSimplicialMesh mesh(base, n_layers);
+    int d = mesh.get_total_dimension();
+    std::cout << "  Cross-checking extruded cofaces for " << base_dims[0];
+    for (size_t i = 1; i < base_dims.size(); i++) std::cout << "x" << base_dims[i];
+    std::cout << "+" << n_layers << "t (d=" << d << ")..." << std::endl;
+
+    for (int k = 0; k < d && k <= max_k; ++k) {
+        int simplex_count = 0;
+        int total_cofaces_new = 0;
+        int total_cofaces_bf = 0;
+        bool all_match = true;
+
+        mesh.iterate_simplices(k, [&](const Simplex& s) {
+            simplex_count++;
+
+            std::set<Simplex> new_cofaces;
+            mesh.cofaces(s, [&](const Simplex& cf) { new_cofaces.insert(cf); });
+            total_cofaces_new += new_cofaces.size();
+
+            std::set<Simplex> bf_cofaces;
+            brute_force_extruded_cofaces(mesh, s, [&](const Simplex& cf) { bf_cofaces.insert(cf); });
+            total_cofaces_bf += bf_cofaces.size();
+
+            if (new_cofaces != bf_cofaces) {
+                all_match = false;
+                std::cerr << "MISMATCH for k=" << k << " simplex [";
+                for (int i = 0; i <= s.dimension; i++) {
+                    if (i) std::cerr << ",";
+                    std::cerr << s.vertices[i];
+                }
+                std::cerr << "]: new=" << new_cofaces.size()
+                          << " BF=" << bf_cofaces.size() << std::endl;
+                // Print missing/extra cofaces
+                for (auto& cf : bf_cofaces) {
+                    if (new_cofaces.find(cf) == new_cofaces.end()) {
+                        std::cerr << "  MISSING: [";
+                        for (int i = 0; i <= cf.dimension; i++) {
+                            if (i) std::cerr << ",";
+                            std::cerr << cf.vertices[i];
+                        }
+                        std::cerr << "]" << std::endl;
+                    }
+                }
+                for (auto& cf : new_cofaces) {
+                    if (bf_cofaces.find(cf) == bf_cofaces.end()) {
+                        std::cerr << "  EXTRA: [";
+                        for (int i = 0; i <= cf.dimension; i++) {
+                            if (i) std::cerr << ",";
+                            std::cerr << cf.vertices[i];
+                        }
+                        std::cerr << "]" << std::endl;
+                    }
+                }
+            }
+        });
+
+        ASSERT_TRUE(all_match);
+        ASSERT_EQ(total_cofaces_new, total_cofaces_bf);
+        std::cout << "    k=" << k << ": " << simplex_count << " simplices, "
+                  << total_cofaces_new << " total cofaces — "
+                  << (all_match ? "OK" : "FAIL") << std::endl;
+    }
+}
+
+void test_extruded_cofaces() {
+    std::cout << "Testing extruded mesh cofaces..." << std::endl;
+
+    // 1D base + time (2D total)
+    test_extruded_cofaces_cross_check({5}, 3, 1);
+
+    // 2D base + time (3D total)
+    test_extruded_cofaces_cross_check({3, 3}, 2, 2);
+    test_extruded_cofaces_cross_check({4, 3}, 3, 2);
+
+    // 3D base + time (4D total)
+    test_extruded_cofaces_cross_check({2, 2, 2}, 2, 3);
+    test_extruded_cofaces_cross_check({3, 3, 3}, 1, 2);
+}
+
+void bench_extruded_cofaces(const std::vector<uint64_t>& base_dims,
+                             uint64_t n_layers, int k) {
+    auto base = std::make_shared<RegularSimplicialMesh>(base_dims);
+    ExtrudedSimplicialMesh mesh(base, n_layers);
+
+    std::vector<Simplex> simplices;
+    mesh.iterate_simplices(k, [&](const Simplex& s) { simplices.push_back(s); });
+
+    // Benchmark combinatorial cofaces
+    int new_count = 0;
+    auto t0 = std::chrono::high_resolution_clock::now();
+    for (auto& s : simplices)
+        mesh.cofaces(s, [&](const Simplex&) { new_count++; });
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double new_us = std::chrono::duration<double, std::micro>(t1 - t0).count();
+
+    // Benchmark brute-force
+    int bf_count = 0;
+    auto t2 = std::chrono::high_resolution_clock::now();
+    for (auto& s : simplices)
+        brute_force_extruded_cofaces(mesh, s, [&](const Simplex&) { bf_count++; });
+    auto t3 = std::chrono::high_resolution_clock::now();
+    double bf_us = std::chrono::duration<double, std::micro>(t3 - t2).count();
+
+    std::cout << "  base=";
+    for (size_t i = 0; i < base_dims.size(); i++) {
+        if (i) std::cout << "x";
+        std::cout << base_dims[i];
+    }
+    std::cout << " layers=" << n_layers << ", k=" << k
+              << ": " << simplices.size() << " queries"
+              << "  new=" << new_us / 1000.0 << "ms"
+              << "  BF=" << bf_us / 1000.0 << "ms"
+              << "  speedup=" << bf_us / new_us << "x" << std::endl;
+}
+
+void test_extruded_cofaces_benchmark() {
+    std::cout << "\nExtruded coface benchmark (combinatorial vs brute-force):" << std::endl;
+
+    // 1D+t
+    bench_extruded_cofaces({10}, 5, 0);
+    bench_extruded_cofaces({10}, 5, 1);
+
+    // 2D+t
+    bench_extruded_cofaces({5, 5}, 3, 1);
+    bench_extruded_cofaces({10, 10}, 3, 1);
+
+    // 3D+t
+    bench_extruded_cofaces({3, 3, 3}, 2, 2);
+    bench_extruded_cofaces({5, 5, 5}, 2, 2);
+}
+
 void test_cofaces_benchmark() {
     std::cout << "\nCoface benchmark (LUT vs brute-force):" << std::endl;
 
@@ -223,7 +375,9 @@ int main() {
     std::cout << "Running Mesh tests..." << std::endl;
     test_mesh();
     test_cofaces();
+    test_extruded_cofaces();
     test_cofaces_benchmark();
+    test_extruded_cofaces_benchmark();
     std::cout << "\nSummary: " << passed_tests << "/" << total_tests << " tests passed." << std::endl;
     return (passed_tests == total_tests) ? 0 : 1;
 }

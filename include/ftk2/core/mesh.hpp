@@ -599,33 +599,116 @@ public:
     }
 
     void cofaces(const Simplex& s, std::function<void(const Simplex&)> callback) const override {
-        // Find all (d+1)-simplices that contain simplex s
-        if (s.dimension >= get_total_dimension()) return;  // No cofaces for top-dimensional simplices
+        int k = s.dimension;
+        if (k >= get_total_dimension()) return;
 
-        int target_dim = s.dimension + 1;
+        // Extract time layers and spatial IDs from vertex IDs
+        uint64_t spatial_ids[5];
+        uint64_t time_layers[5];
+        for (int i = 0; i <= k; ++i) {
+            time_layers[i] = s.vertices[i] / n_spatial_verts_;
+            spatial_ids[i] = s.vertices[i] % n_spatial_verts_;
+        }
 
-        // Iterate over all simplices of dimension target_dim
-        iterate_simplices(target_dim, [&](const Simplex& candidate) {
-            // Check if candidate contains all vertices of s
-            bool contains_all = true;
-            for (int i = 0; i <= s.dimension; ++i) {
-                bool found = false;
-                for (int j = 0; j <= target_dim; ++j) {
-                    if (candidate.vertices[j] == s.vertices[i]) {
-                        found = true;
-                        break;
+        // Vertices are sorted by ID; all time-t IDs < time-(t+1) IDs
+        uint64_t t_min = time_layers[0];
+        uint64_t t_max = time_layers[k];
+
+        if (t_min == t_max) {
+            // SPATIAL simplex: all vertices at time t
+            uint64_t t = t_min;
+
+            // (a) Spatial cofaces: lift base mesh cofaces to time t
+            Simplex base_s;
+            base_s.dimension = k;
+            for (int i = 0; i <= k; ++i) base_s.vertices[i] = spatial_ids[i];
+
+            base_mesh_->cofaces(base_s, [&](const Simplex& base_cf) {
+                Simplex cf;
+                cf.dimension = k + 1;
+                for (int i = 0; i <= k + 1; ++i)
+                    cf.vertices[i] = base_cf.vertices[i] + t * n_spatial_verts_;
+                cf.sort_vertices();
+                callback(cf);
+            });
+
+            // (b) Forward spacetime coface at t→(t+1):
+            //     prism subdivision j=k of {v₀,...,vₖ}
+            //     vertices: v₀@t,...,vₖ@t, vₖ@(t+1)
+            if (t < n_layers_) {
+                Simplex cf;
+                cf.dimension = k + 1;
+                for (int i = 0; i <= k; ++i)
+                    cf.vertices[i] = spatial_ids[i] + t * n_spatial_verts_;
+                cf.vertices[k + 1] = spatial_ids[k] + (t + 1) * n_spatial_verts_;
+                cf.sort_vertices();
+                callback(cf);
+            }
+
+            // (c) Backward spacetime coface at (t-1)→t:
+            //     prism subdivision j=0 of {v₀,...,vₖ}
+            //     vertices: v₀@(t-1), v₀@t,...,vₖ@t
+            if (t > 0) {
+                Simplex cf;
+                cf.dimension = k + 1;
+                cf.vertices[0] = spatial_ids[0] + (t - 1) * n_spatial_verts_;
+                for (int i = 0; i <= k; ++i)
+                    cf.vertices[i + 1] = spatial_ids[i] + t * n_spatial_verts_;
+                cf.sort_vertices();
+                callback(cf);
+            }
+        } else {
+            // SPACETIME simplex at t→(t+1)
+            uint64_t t = t_min;
+
+            // Count vertices at time t to determine subdivision index j₀
+            int n_at_t = 0;
+            for (int i = 0; i <= k; ++i) {
+                if (time_layers[i] == t) n_at_t++;
+            }
+            int j0 = n_at_t - 1;
+
+            // Build base (k-1)-simplex from unique spatial IDs.
+            // The j₀-th prism subdivision of {w₀,...,w_{k-1}} has:
+            //   time t:   w₀,...,wⱼ₀  (= spatial_ids[0..j₀])
+            //   time t+1: wⱼ₀,...,w_{k-1}  (= spatial_ids[j₀+1..k])
+            // spatial_ids[j₀] == spatial_ids[j₀+1] (shared vertex wⱼ₀)
+            Simplex base_s;
+            base_s.dimension = k - 1;
+            int bi = 0;
+            for (int i = 0; i <= j0; ++i) base_s.vertices[bi++] = spatial_ids[i];
+            for (int i = j0 + 2; i <= k; ++i) base_s.vertices[bi++] = spatial_ids[i];
+
+            // For each base coface, compute the compatible subdivision index
+            base_mesh_->cofaces(base_s, [&](const Simplex& base_cf) {
+                // Find extra vertex position e via merge scan
+                int e = -1;
+                int wi = 0;
+                for (int ui = 0; ui <= base_cf.dimension; ++ui) {
+                    if (wi < k && base_cf.vertices[ui] == base_s.vertices[wi]) {
+                        wi++;
+                    } else {
+                        e = ui;
                     }
                 }
-                if (!found) {
-                    contains_all = false;
-                    break;
-                }
-            }
+                if (e < 0) return;
 
-            if (contains_all) {
-                callback(candidate);
-            }
-        });
+                // j' = j₀ + (e ≤ j₀ ? 1 : 0)
+                int jp = j0 + (e <= j0 ? 1 : 0);
+
+                // Build j'-th prism subdivision of base_cf at t→(t+1)
+                // vertices: u₀@t,...,uⱼ'@t, uⱼ'@(t+1),...,uₖ@(t+1)
+                Simplex cf;
+                cf.dimension = k + 1;
+                int vi = 0;
+                for (int l = 0; l <= jp; ++l)
+                    cf.vertices[vi++] = base_cf.vertices[l] + t * n_spatial_verts_;
+                for (int l = jp; l <= base_cf.dimension; ++l)
+                    cf.vertices[vi++] = base_cf.vertices[l] + (t + 1) * n_spatial_verts_;
+                cf.sort_vertices();
+                callback(cf);
+            });
+        }
     }
 
     std::vector<double> get_vertex_coordinates(uint64_t vertex_id) const override {
