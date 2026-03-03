@@ -8,6 +8,51 @@
 
 namespace ftk2 {
 
+// ─── Lookup tables: unique m-simplex types per d-hypercube (Freudenthal) ─────
+// Each entry lists vertex offsets from the hypercube base vertex.
+// The base vertex {0,...,0} is always included, guaranteeing unique ownership.
+
+// d=2, m=1: 3 edges (2 vertices × 2 coords)
+__constant__ int lut_2_1[3][2][2] = {
+    {{0,0},{0,1}},  {{0,0},{1,0}},  {{0,0},{1,1}}
+};
+
+// d=2, m=2: 2 triangles (3 vertices × 2 coords)
+__constant__ int lut_2_2[2][3][2] = {
+    {{0,0},{1,0},{1,1}},  {{0,0},{0,1},{1,1}}
+};
+
+// d=3, m=1: 7 edges (2 vertices × 3 coords)
+__constant__ int lut_3_1[7][2][3] = {
+    {{0,0,0},{0,0,1}},  {{0,0,0},{0,1,0}},  {{0,0,0},{0,1,1}},  {{0,0,0},{1,0,0}},
+    {{0,0,0},{1,0,1}},  {{0,0,0},{1,1,0}},  {{0,0,0},{1,1,1}}
+};
+
+// d=3, m=2: 12 triangles (3 vertices × 3 coords)
+__constant__ int lut_3_2[12][3][3] = {
+    {{0,0,0},{0,0,1},{0,1,1}},  {{0,0,0},{0,0,1},{1,0,1}},
+    {{0,0,0},{0,0,1},{1,1,1}},  {{0,0,0},{0,1,0},{0,1,1}},
+    {{0,0,0},{0,1,0},{1,1,0}},  {{0,0,0},{0,1,0},{1,1,1}},
+    {{0,0,0},{0,1,1},{1,1,1}},  {{0,0,0},{1,0,0},{1,0,1}},
+    {{0,0,0},{1,0,0},{1,1,0}},  {{0,0,0},{1,0,0},{1,1,1}},
+    {{0,0,0},{1,0,1},{1,1,1}},  {{0,0,0},{1,1,0},{1,1,1}}
+};
+
+// d=3, m=3: 6 tetrahedra (4 vertices × 3 coords)
+__constant__ int lut_3_3[6][4][3] = {
+    {{0,0,0},{1,0,0},{1,1,0},{1,1,1}},  {{0,0,0},{1,0,0},{1,0,1},{1,1,1}},
+    {{0,0,0},{0,1,0},{1,1,0},{1,1,1}},  {{0,0,0},{0,1,0},{0,1,1},{1,1,1}},
+    {{0,0,0},{0,0,1},{1,0,1},{1,1,1}},  {{0,0,0},{0,0,1},{0,1,1},{1,1,1}}
+};
+
+// Returns the number of unique m-simplex types per d-hypercube, or 0 if unsupported.
+FTK_HOST_DEVICE
+inline int get_num_simplex_types(int d, int m) {
+    if (d == 2) { if (m == 1) return 3; if (m == 2) return 2; }
+    if (d == 3) { if (m == 1) return 7; if (m == 2) return 12; if (m == 3) return 6; }
+    return 0;
+}
+
 /**
  * @brief Represents a raw data view for CUDA kernels.
  */
@@ -176,135 +221,105 @@ void marching_pentatope_device(
 }
 
 /**
+ * @brief Build an m-simplex from lookup table entry.
+ * Reads vertex offsets from the appropriate __constant__ LUT and adds them
+ * to the hypercube base coordinates to produce global vertex IDs.
+ */
+template <typename DeviceMesh>
+__device__
+inline bool build_simplex_from_lut(
+    const DeviceMesh& mesh, int d, int m, int type,
+    const uint64_t base[4], Simplex& s)
+{
+    s.dimension = m;
+    uint64_t coords[4];
+    for (int vi = 0; vi <= m; ++vi) {
+        for (int k = 0; k < d; ++k) {
+            int off;
+            if (d == 2 && m == 1) off = lut_2_1[type][vi][k];
+            else if (d == 2 && m == 2) off = lut_2_2[type][vi][k];
+            else if (d == 3 && m == 1) off = lut_3_1[type][vi][k];
+            else if (d == 3 && m == 2) off = lut_3_2[type][vi][k];
+            else if (d == 3 && m == 3) off = lut_3_3[type][vi][k];
+            else return false;
+            coords[k] = base[k] + off;
+        }
+        for (int k = d; k < 4; ++k) coords[k] = 0;
+        s.vertices[vi] = mesh.coords_to_id(coords);
+    }
+    s.sort_vertices();
+    return true;
+}
+
+/**
  * @brief CUDA kernel for parallel feature extraction and manifold patching.
+ *
+ * One thread per (hypercube, simplex_type) pair.  Lookup tables guarantee
+ * each m-simplex is processed exactly once (no ownership check needed).
+ * Phase 2 (manifold patching) runs once per hypercube, guarded by type==0.
  */
 template <typename DeviceMesh, typename PredicateDevice, typename T, typename IDType>
 __global__ void extraction_kernel(
-    DeviceMesh mesh, 
-    PredicateDevice pred, 
+    DeviceMesh mesh,
+    PredicateDevice pred,
     CudaDataView<T>* data_views,
     int n_vars,
-    CudaExtractionResult<IDType> results) 
+    CudaExtractionResult<IDType> results)
 {
-    uint64_t v_idx = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
-    if (v_idx >= mesh.get_num_vertices()) return;
-
     int d = mesh.ndims;
-    int m = PredicateDevice::codimension;
+    constexpr int m = PredicateDevice::codimension;
+    int n_types = get_num_simplex_types(d, m);
 
-    uint64_t local_coords[4] = {0}, global_coords[4] = {0};
-    mesh.get_vertex_coords_local(v_idx, local_coords);
-    for (int k = 0; k < d; ++k) global_coords[k] = local_coords[k] + mesh.offset[k];
-    uint64_t v0 = mesh.coords_to_id(global_coords);
+    // Fallback: unsupported (d,m) — should not happen for d=2,3
+    if (n_types == 0) return;
 
-    // 1. Extract nodes on m-simplices
-    if (m == 1) {
-        for (int m1 = 1; m1 < (1 << d); ++m1) {
-            uint64_t g1[4]; bool in = true;
-            for (int j = 0; j < d; ++j) { 
-                g1[j] = global_coords[j] + ((m1 >> j) & 1); 
-                if (g1[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false; 
-                if (g1[j] < mesh.offset[j]) in = false;
-            }
-            if (in) {
-                Simplex s; s.dimension = 1; s.vertices[0] = v0; s.vertices[1] = mesh.coords_to_id(g1);
-                s.sort_vertices();
-                if (s.vertices[0] == v0) {
-                    FeatureElement el;
-                    if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
-                        int idx = atomicAdd(results.node_count, 1);
-                        if (idx < results.max_nodes) results.nodes[idx] = el;
-                    }
-                }
-            }
-        }
-    } else if (m == 2) {
-        for (int m1 = 1; m1 < (1 << d); ++m1) {
-            for (int m2 = m1 + 1; m2 < (1 << d); ++m2) {
-                if ((m1 & m2) == m1) {
-                    uint64_t g1[4], g2[4]; bool in = true;
-                    for (int j = 0; j < d; ++j) {
-                        g1[j] = global_coords[j] + ((m1 >> j) & 1);
-                        g2[j] = global_coords[j] + ((m2 >> j) & 1);
-                        if (g1[j] >= mesh.offset[j] + mesh.local_dims[j] || g2[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false;
-                        if (g1[j] < mesh.offset[j] || g2[j] < mesh.offset[j]) in = false;
-                    }
-                    if (in) {
-                        Simplex s; s.dimension = 2; s.vertices[0] = v0;
-                        s.vertices[1] = mesh.coords_to_id(g1);
-                        s.vertices[2] = mesh.coords_to_id(g2);
-                        s.sort_vertices();
-                        if (s.vertices[0] == v0) {
-                            FeatureElement el;
-                            if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
-                                int idx = atomicAdd(results.node_count, 1);
-                                if (idx < results.max_nodes) results.nodes[idx] = el;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else if (m == 3) {
-        for (int m1 = 1; m1 < (1 << d); ++m1) {
-            for (int m2 = m1 + 1; m2 < (1 << d); ++m2) {
-                if ((m1 & m2) == m1) {
-                    for (int m3 = m2 + 1; m3 < (1 << d); ++m3) {
-                        if ((m2 & m3) == m2) {
-                            uint64_t g1[4], g2[4], g3[4]; bool in = true;
-                            for (int j = 0; j < d; ++j) {
-                                g1[j] = global_coords[j] + ((m1 >> j) & 1);
-                                g2[j] = global_coords[j] + ((m2 >> j) & 1);
-                                g3[j] = global_coords[j] + ((m3 >> j) & 1);
-                                if (g1[j] >= mesh.offset[j] + mesh.local_dims[j] || 
-                                    g2[j] >= mesh.offset[j] + mesh.local_dims[j] || 
-                                    g3[j] >= mesh.offset[j] + mesh.local_dims[j]) in = false;
-                                if (g1[j] < mesh.offset[j] || g2[j] < mesh.offset[j] || g3[j] < mesh.offset[j]) in = false;
-                            }
-                            if (in) {
-                                Simplex s; s.dimension = 3; s.vertices[0] = v0;
-                                s.vertices[1] = mesh.coords_to_id(g1);
-                                s.vertices[2] = mesh.coords_to_id(g2);
-                                s.vertices[3] = mesh.coords_to_id(g3);
-                                s.sort_vertices();
-                                if (s.vertices[0] == v0) {
-                                    FeatureElement el;
-                                    if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
-                                        int idx = atomicAdd(results.node_count, 1);
-                                        if (idx < results.max_nodes) results.nodes[idx] = el;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    uint64_t n_hc = mesh.get_num_hypercubes();
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= n_hc * (uint64_t)n_types) return;
+
+    uint64_t hc_idx = tid / (uint64_t)n_types;
+    int type = (int)(tid % (uint64_t)n_types);
+
+    // Decode hypercube index to base coordinates
+    uint64_t base[4] = {0};
+    uint64_t temp = hc_idx;
+    for (int k = 0; k < d; ++k) {
+        base[k] = temp % (mesh.local_dims[k] - 1) + mesh.offset[k];
+        temp /= (mesh.local_dims[k] - 1);
+    }
+
+    // 1. Extract nodes on m-simplices via lookup table
+    Simplex s;
+    if (build_simplex_from_lut(mesh, d, m, type, base, s)) {
+        FeatureElement el;
+        if (pred.extract_device(s, data_views, n_vars, mesh, el)) {
+            int idx = atomicAdd(results.node_count, 1);
+            if (idx < results.max_nodes) results.nodes[idx] = el;
         }
     }
 
-    // 2. Perform top-level manifold patching
-    if (mesh.is_hypercube_base(local_coords)) {
-        uint64_t hc_idx = mesh.hypercube_coords_to_idx(local_coords);
+    // 2. Perform top-level manifold patching (once per hypercube)
+    if (type == 0) {
         int n_p = 1; for(int i=1; i<=d; ++i) n_p *= i;
 
         for (int p_idx = 0; p_idx < n_p; ++p_idx) {
             Simplex cell;
             mesh.get_d_simplex(hc_idx, p_idx, cell);
-            
+
             if constexpr (PredicateDevice::codimension == 1) {
                 if (d == 4) marching_pentatope_device<T>(cell, mesh, pred, data_views, results);
                 else if (d == 3) marching_tetrahedron_device<T>(cell, mesh, pred, data_views, results);
             } else {
                 uint64_t node_ids[32]; int node_masks[32]; int node_count = 0;
                 int k = d - m; // resulting manifold dimension
-                
+
                 // Combination generator for (d+1) choose (m+1)
                 int p[8]; for (int i = 0; i <= m; ++i) p[i] = i;
                 while (p[0] <= d - m) {
                     Simplex face; face.dimension = m;
                     for (int i = 0; i <= m; ++i) face.vertices[i] = cell.vertices[p[i]];
                     face.sort_vertices();
-                    
+
                     FeatureElement el;
                     if (pred.extract_device(face, data_views, n_vars, mesh, el)) {
                         int mask = 0;
@@ -351,7 +366,7 @@ __global__ void extraction_kernel(
                                 if ((node_masks[j] & tet_mask) == node_masks[j]) nodes_T[count_T++] = node_ids[j];
                             }
                             if (count_T < 2) continue;
-                            
+
                             uint64_t h_T = nodes_T[0];
                             for (int j = 1; j < count_T; ++j) {
                                 uint64_t n_id = nodes_T[j];

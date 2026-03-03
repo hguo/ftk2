@@ -370,8 +370,10 @@ public:
             CUDA_CHECK(cudaMalloc(&res.edge_count, sizeof(int))); CUDA_CHECK(cudaMalloc(&res.face_count, sizeof(int))); CUDA_CHECK(cudaMalloc(&res.volume_count, sizeof(int)));
             CUDA_CHECK(cudaMemset(res.node_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.edge_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.face_count, 0, sizeof(int))); CUDA_CHECK(cudaMemset(res.volume_count, 0, sizeof(int)));
 
-            uint64_t n_v = d_mesh.get_num_vertices();
-            extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
+            uint64_t n_hc = d_mesh.get_num_hypercubes();
+            int n_types = get_num_simplex_types(d_mesh.ndims, PredicateType::Device::codimension);
+            uint64_t total = n_hc * (uint64_t)n_types;
+            extraction_kernel<<< (total+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, h_views.size(), res);
             CUDA_CHECK(cudaDeviceSynchronize());
 
             int h_n, h_e, h_f, h_v;
@@ -752,8 +754,10 @@ public:
             CUDA_CHECK(cudaMemset(res.volume_count, 0, sizeof(int)));
 
             // Launch extraction kernel
-            uint64_t n_v = d_mesh.get_num_vertices();
-            extraction_kernel<<< (n_v+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, vars.size(), res);
+            uint64_t n_hc = d_mesh.get_num_hypercubes();
+            int n_types = get_num_simplex_types(d_mesh.ndims, PredicateType::Device::codimension);
+            uint64_t total = n_hc * (uint64_t)n_types;
+            extraction_kernel<<< (total+255)/256, 256 >>>(d_mesh, predicate_.get_device(), d_views, vars.size(), res);
             CUDA_CHECK(cudaDeviceSynchronize());
 
             // Copy results back to host
