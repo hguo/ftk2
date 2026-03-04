@@ -16,8 +16,8 @@ endif()
 
 # Find ndarray (use -Dndarray_DIR=... or -DCMAKE_PREFIX_PATH=... to specify the path)
 find_package(ndarray REQUIRED)
-
 find_package(OpenMP REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 # FTK2 library
 add_library(ftk2 STATIC 
@@ -27,7 +27,7 @@ target_include_directories(ftk2 PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
-target_link_libraries(ftk2 PUBLIC ndarray::ndarray OpenMP::OpenMP_CXX)
+target_link_libraries(ftk2 PUBLIC ndarray::ndarray OpenMP::OpenMP_CXX yaml-cpp::yaml-cpp)
 
 # High-level API (Layer 2)
 add_subdirectory(src/high_level)
