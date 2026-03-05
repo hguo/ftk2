@@ -47,8 +47,7 @@ static void gcd_normalize_poly(const __int128 P[4], double P_d[4]) {
 
 // ─── Shared-root detection via Sylvester resultant ───────────────────────────
 // Returns true iff Q and some P[k] share a common root, i.e. Res(Q, P[k]) = 0.
-// The resultant of two integer polynomials is an integer; we compute the
-// Sylvester determinant in double (exact for R≤20 where coefficients < 2^19).
+// Uses exact __int128 Bareiss fraction-free elimination (no thresholds).
 static bool has_shared_root_resultant(const __int128 Q_i128[4],
                                       const __int128 P_i128[4][4])
 {
@@ -62,35 +61,34 @@ static bool has_shared_root_resultant(const __int128 Q_i128[4],
         if (degP == 0) continue;
 
         int N = degQ + degP;
-        double mat[6][6] = {};
+        __int128 M[6][6] = {};
         for (int i = 0; i < degP; i++)
             for (int j = 0; j <= degQ; j++)
-                mat[i][i + degQ - j] = (double)Q_i128[j];
+                M[i][i + degQ - j] = Q_i128[j];
         for (int i = 0; i < degQ; i++)
             for (int j = 0; j <= degP; j++)
-                mat[degP + i][i + degP - j] = (double)P_i128[k][j];
+                M[degP + i][i + degP - j] = P_i128[k][j];
 
-        // Gaussian elimination with partial pivoting
-        double det = 1.0;
+        // Bareiss fraction-free elimination: exact integer determinant
+        __int128 prev_pivot = 1;
+        bool zero_det = false;
         for (int col = 0; col < N; col++) {
-            int pivot = col;
-            for (int row = col + 1; row < N; row++)
-                if (std::abs(mat[row][col]) > std::abs(mat[pivot][col]))
-                    pivot = row;
-            if (pivot != col) {
+            int pivot = -1;
+            for (int row = col; row < N; row++)
+                if (M[row][col] != 0) { pivot = row; break; }
+            if (pivot < 0) { zero_det = true; break; }
+            if (pivot != col)
                 for (int j = 0; j < N; j++)
-                    std::swap(mat[col][j], mat[pivot][j]);
-                det = -det;
-            }
-            if (std::abs(mat[col][col]) < 1e-300) { det = 0; break; }
-            det *= mat[col][col];
+                    std::swap(M[col][j], M[pivot][j]);
             for (int row = col + 1; row < N; row++) {
-                double factor = mat[row][col] / mat[col][col];
-                for (int j = col; j < N; j++)
-                    mat[row][j] -= factor * mat[col][j];
+                for (int j = col + 1; j < N; j++)
+                    M[row][j] = (M[col][col] * M[row][j]
+                               - M[row][col] * M[col][j]) / prev_pivot;
+                M[row][col] = 0;
             }
+            prev_pivot = M[col][col];
         }
-        if (std::abs(det) < 0.5) return true;  // integer resultant is exactly 0
+        if (zero_det || M[N-1][N-1] == 0) return true;
     }
     return false;
 }
@@ -281,21 +279,21 @@ static void run_test_case(const TestCase& tc, int N)
             std::cout << "    " << cnt << " triangles with " << n << " puncture(s)\n";
     }
 
-    // G2 global deduplication: a vertex puncture (two barycentric coords ≈ 0)
+    // D00 global deduplication: a vertex puncture (two barycentric coords = 0)
     // can be claimed by multiple faces incident to the same mesh vertex.  The
-    // solver G2 rule (claim iff v_m is triangle minimum) emits one record per
+    // solver D00 rule (claim iff v_m is triangle minimum) emits one record per
     // qualifying face, but we need exactly one globally.  Keep the puncture from
     // the lexicographically smallest face (vertex-index tuple), which is unique.
     {
-        // Map from mesh-vertex-id → list of G2 puncture indices at that vertex.
+        // Map from mesh-vertex-id → list of D00 puncture indices at that vertex.
+        // For integer-derived barycentric coords, zero bary coords are exactly 0.0.
         std::map<uint64_t, std::vector<int>> vtx_g2;
-        const float bary_tol = 1e-5f;
         for (int p : plist) {
             const auto& v = complex.vertices[p];
             const float* bc = v.barycentric_coords[0];
             int n_zero = 0, m = -1;
             for (int k = 0; k < 3; k++) {
-                if (std::abs(bc[k]) < bary_tol) n_zero++;
+                if (bc[k] == 0.0f) n_zero++;
                 else m = k;
             }
             if (n_zero == 2 && m >= 0)
@@ -321,7 +319,7 @@ static void run_test_case(const TestCase& tc, int N)
         if (!to_remove.empty()) {
             plist.erase(std::remove_if(plist.begin(), plist.end(),
                         [&](int p){ return to_remove.count(p) > 0; }), plist.end());
-            std::cout << "  G2 global dedup: removed " << to_remove.size()
+            std::cout << "  D00 global dedup: removed " << to_remove.size()
                       << " duplicate vertex punctures\n";
         }
     }

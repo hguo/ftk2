@@ -906,19 +906,27 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     }
 
     // Use deduplicated puncture count for classification.
-    // Edge/vertex punctures are intermediate waypoints on the PV curve
-    // (the curve passes through an edge/vertex between two faces), not
-    // independent face crossings.  Exclude them from T-count, interval
-    // occupancy, and pairing.
+    // Edge/vertex punctures at critical λ (λ=0 for C1v/C0v, λ=∞ for
+    // C1w/C0w) are waypoints: the PV curve passes through the sub-simplex
+    // smoothly at the field-zero critical point.  These are excluded from
+    // T-count, interval occupancy, and pairing.
+    //
+    // Edge/vertex punctures at generic λ (D01/D00) are genuine curve
+    // endpoints — the curve enters/exits a face at the shared edge/vertex.
+    // These ARE counted and paired normally.
     int n = (int)cc.punctures.size();
+    auto is_waypoint = [](const ClassifiedCase::PunctureInfo& pi) {
+        return (pi.is_edge || pi.is_vertex) &&
+               (pi.lambda == 0.0 || std::isinf(pi.lambda));
+    };
     int n_face = 0;  // face-interior punctures only
     for (const auto& pi : cc.punctures)
-        if (!pi.is_edge && !pi.is_vertex) n_face++;
+        if (!is_waypoint(pi)) n_face++;
 
-    // Recount interval occupancy excluding edge/vertex punctures
+    // Recount interval occupancy excluding waypoints
     for (auto& iv : cc.intervals) iv.n_pv = 0;
     for (const auto& pi : cc.punctures)
-        if (!pi.is_edge && !pi.is_vertex && pi.interval_idx >= 0)
+        if (!is_waypoint(pi) && pi.interval_idx >= 0)
             cc.intervals[pi.interval_idx].n_pv++;
 
     // Build sorted interval-occupancy tuple: collect non-zero n_pv counts
@@ -1110,12 +1118,12 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     // lambda within each interval, handle Cw merging, pair consecutively,
     // handle SR pass-through unpaired remainders.
     {
-        // Group face-interior puncture indices by interval
-        // (edge/vertex punctures are waypoints, not paired)
+        // Group non-waypoint puncture indices by interval.
+        // Only critical waypoints (C1v/C0v/C1w/C0w at λ=0/∞) are excluded.
         std::map<int, std::vector<int>> iv_puncs;
         for (int i = 0; i < (int)cc.punctures.size(); i++) {
-            if (cc.punctures[i].is_edge || cc.punctures[i].is_vertex)
-                continue;  // skip waypoints
+            if (is_waypoint(cc.punctures[i]))
+                continue;  // skip critical waypoints
             int iv = cc.punctures[i].interval_idx;
             if (iv >= 0)
                 iv_puncs[iv].push_back(i);
@@ -1217,9 +1225,13 @@ static void print_json(const ClassifiedCase& cc) {
     printf("{");
     printf("\"seed\":%lu,", (unsigned long)cc.gpu.seed);
     printf("\"category\":\"%s\",", cc.category.c_str());
+    auto is_waypoint_out = [](const ClassifiedCase::PunctureInfo& pi) {
+        return (pi.is_edge || pi.is_vertex) &&
+               (pi.lambda == 0.0 || std::isinf(pi.lambda));
+    };
     int n_face_out = 0;
     for (const auto& pi : cc.punctures)
-        if (!pi.is_edge && !pi.is_vertex) n_face_out++;
+        if (!is_waypoint_out(pi)) n_face_out++;
     printf("\"n_punctures\":%d,", n_face_out);
     printf("\"n_total\":%d,", (int)cc.punctures.size());
     printf("\"n_raw\":%d,", cc.gpu.total_punctures);
@@ -1336,12 +1348,16 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     int n = (int)cc.punctures.size();
 
     // ── 1. Puncture-interval consistency ──────────────────────────────────
-    // interval.n_pv counts face-interior punctures only (edge/vertex excluded)
+    // Waypoints = edge/vertex at critical λ (0 or ∞) only.
+    auto is_waypoint = [](const ClassifiedCase::PunctureInfo& pi) {
+        return (pi.is_edge || pi.is_vertex) &&
+               (pi.lambda == 0.0 || std::isinf(pi.lambda));
+    };
     int sum_iv_npv = 0;
     for (const auto& iv : cc.intervals) sum_iv_npv += iv.n_pv;
     int n_face_check = 0;
     for (const auto& pi : cc.punctures)
-        if (!pi.is_edge && !pi.is_vertex) n_face_check++;
+        if (!is_waypoint(pi)) n_face_check++;
     if (sum_iv_npv != n_face_check)
         fprintf(stderr, "[WARN seed=%lu] Σ interval.n_pv=%d ≠ n_face=%d\n",
                 (unsigned long)seed, sum_iv_npv, n_face_check);
@@ -1363,17 +1379,17 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     }
 
     // ── 2. Pair completeness ─────────────────────────────────────────────
-    // Edge/vertex punctures are waypoints (not paired).  Only face-interior
-    // punctures should be paired.  n_face must be even.
+    // Waypoints (C1v/C0v/C1w/C0w at λ=0/∞) are not paired.
+    // All other punctures (including D01/D00 at generic λ) must be paired.
     int n_face = 0;
     for (const auto& pi : cc.punctures)
-        if (!pi.is_edge && !pi.is_vertex) n_face++;
+        if (!is_waypoint(pi)) n_face++;
 
     if (2 * (int)cc.pairs.size() != n_face)
         fprintf(stderr, "[WARN seed=%lu] 2×pairs=%d ≠ n_face=%d (n_total=%d)\n",
                 (unsigned long)seed, 2*(int)cc.pairs.size(), n_face, n);
 
-    // Check each face puncture appears in exactly one pair
+    // Check each non-waypoint puncture appears in exactly one pair
     std::vector<int> pair_count(n, 0);
     for (const auto& pp : cc.pairs) {
         if (pp.pi_a >= 0 && pp.pi_a < n) pair_count[pp.pi_a]++;
@@ -1384,8 +1400,7 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
                      (unsigned long)seed, pp.pi_b);
     }
     for (int i = 0; i < n; i++) {
-        bool is_waypoint = cc.punctures[i].is_edge || cc.punctures[i].is_vertex;
-        int expected = is_waypoint ? 0 : 1;
+        int expected = is_waypoint(cc.punctures[i]) ? 0 : 1;
         if (pair_count[i] != expected)
             fprintf(stderr, "[WARN seed=%lu] puncture %d appears in %d pairs (expected %d)\n",
                     (unsigned long)seed, i, pair_count[i], expected);

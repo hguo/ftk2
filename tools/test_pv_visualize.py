@@ -125,15 +125,20 @@ class VisualizeChecker:
                         f"{prefix}: category has D00 but no vertex/puncture supports it")
 
         # ── 4. Pair completeness (mirrors C++ verify_case) ──
-        # Edge/vertex punctures are waypoints, not paired.
+        # Only edge/vertex at critical λ (0 or ∞) are waypoints.
+        # D01/D00 at generic λ are counted and paired.
         pairs = case_data.get('pairs', [])
-        n_face = sum(1 for p in punctures
-                     if not p.get('is_edge', False) and not p.get('is_vertex', False))
+        def _is_waypoint(p):
+            if not (p.get('is_edge', False) or p.get('is_vertex', False)):
+                return False
+            lam = p.get('lambda')
+            return lam == 0.0 or lam is None  # None = infinity
+        n_face = sum(1 for p in punctures if not _is_waypoint(p))
         if 2 * len(pairs) != n_face:
             self.errors.append(
                 f"{prefix}: 2×pairs={2*len(pairs)} ≠ n_face={n_face}")
 
-        # ── 5. T-number matches n_face (face-interior punctures only) ──
+        # ── 5. T-number matches n_face (non-waypoint punctures) ──
         import re
         m = re.match(r'T(\d+)', cat)
         if m:
@@ -203,7 +208,7 @@ class VisualizeChecker:
             self.warnings.append(f"{prefix}: has_shared_root=true but SR not in category")
 
         # ── 11. Interval consistency ──
-        # interval.n_pv counts face-interior punctures only
+        # interval.n_pv counts non-waypoint punctures only
         intervals = case_data.get('intervals', [])
         sum_npv = sum(iv['n_pv'] for iv in intervals)
         if sum_npv != n_face:
