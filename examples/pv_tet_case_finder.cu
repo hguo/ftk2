@@ -964,14 +964,34 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             });
         }
 
-        // Infinity merging: when Q[3]=0, the PV curve wraps through infinity,
-        // connecting the leftmost and rightmost Q-intervals on the projective line.
-        // This is a polynomial topology property, independent of the Cw tag
-        // (which requires w=0 to be inside the tet).
-        bool q3_zero = (Q[3] == 0.0);
+        // Infinity merging: the two infinity-extending half-intervals connect
+        // through infinity when the PV curve at λ→±∞ is inside the tet.
+        //
+        // Case 1: Q[3]=0 → deg(Q)<3, the curve reaches λ=∞ (Cw-type).
+        // Case 2: Q[3]≠0 → asymptotic point μ_k(∞) = P_k[3]/Q[3].
+        //         If all P_k[3] have the same sign as Q[3] (exact integer check),
+        //         the asymptotic point is inside the tet and the curve wraps
+        //         through infinity without Cw.
+        //
+        // For integer inputs, P_k[3] and Q[3] are exact integers in double.
+        bool merge_infinity;
+        if (Q[3] == 0.0) {
+            merge_infinity = true;
+        } else {
+            // Exact integer sign check: P_k[3] * Q[3] >= 0 for all k
+            int64_t q3 = llround(Q[3]);
+            merge_infinity = true;
+            for (int k = 0; k < 4; k++) {
+                int64_t pk3 = llround(P[k][3]);
+                if ((pk3 > 0 && q3 < 0) || (pk3 < 0 && q3 > 0)) {
+                    merge_infinity = false;
+                    break;
+                }
+            }
+        }
         std::set<int> right_pis_set, left_pis_set;
 
-        if (q3_zero && iv_puncs.size() >= 2) {
+        if (merge_infinity && iv_puncs.size() >= 2) {
             int left_iv = iv_puncs.begin()->first;
             int right_iv = iv_puncs.rbegin()->first;
             if (left_iv != right_iv &&
@@ -994,7 +1014,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         for (auto& [iv_idx, pis] : iv_puncs) {
             for (int j = 0; j + 1 < (int)pis.size(); j += 2) {
                 int pi_a = pis[j], pi_b = pis[j + 1];
-                bool is_cross = q3_zero &&
+                bool is_cross = merge_infinity &&
                     ((right_pis_set.count(pi_a) && left_pis_set.count(pi_b)) ||
                      (left_pis_set.count(pi_a) && right_pis_set.count(pi_b)));
                 cc.pairs.push_back({pi_a, pi_b, is_cross, iv_idx});
