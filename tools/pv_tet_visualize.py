@@ -384,8 +384,7 @@ def draw_special_points(ax, case_data, segments=None):
     if segments is None:
         segments = []
 
-    # D01: puncture on a tet edge (one bary coord ≈ 0)
-    # Deduplicate: two adjacent faces can report the same edge point
+    # D01: punctures on tet edge (from C++ is_edge flag)
     if 'D01' in category:
         punctures = case_data['punctures']
         d01_offsets = [
@@ -394,43 +393,34 @@ def draw_special_points(ax, case_data, segments=None):
             np.array([0.08, -0.10, 0.10]),
             np.array([-0.08, 0.10, 0.12]),
         ]
-        d01_positions = []  # (pos, lam) for dedup
+        d01_count = 0
         for i, pi in enumerate(punctures):
-            bary = np.array(pi['bary'])
-            n_small = np.sum(np.abs(bary) < 1e-3)
-            if n_small >= 1:
-                pos = bary_to_3d(bary, pi['face'])
-                # Skip if too close to an already-labeled D01 point
-                is_dup = False
-                for prev_pos, _ in d01_positions:
-                    if np.linalg.norm(pos - prev_pos) < 0.05:
-                        is_dup = True
-                        break
-                if is_dup:
-                    continue
-                lam = pi['lambda']
-                d01_positions.append((pos, lam))
-                lam_str = f'$\\lambda={lam:.2f}$' if lam is not None else r'$\lambda=\infty$'
-                off = d01_offsets[len(d01_positions) - 1 % len(d01_offsets)]
-                ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
-                          [pos[2], pos[2]+off[2]],
-                          color='#dd5500', linewidth=1.2, linestyle='-')
-                ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                        f'D01  {lam_str}',
-                        fontsize=8, ha='left' if off[0] > 0 else 'right',
-                        va='bottom',
-                        color='#aa4400', fontweight='bold',
-                        bbox=dict(facecolor='#fff4ee', alpha=0.9,
-                                  edgecolor='#dd5500', linewidth=1.2,
-                                  boxstyle='round,pad=0.3'))
+            if not pi.get('is_edge', False):
+                continue
+            pos = bary_to_3d(pi['bary'], pi['face'])
+            lam = pi['lambda']
+            lam_str = f'$\\lambda={lam:.2f}$' if lam is not None else r'$\lambda=\infty$'
+            off = d01_offsets[d01_count % len(d01_offsets)]
+            d01_count += 1
+            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
+                      [pos[2], pos[2]+off[2]],
+                      color='#dd5500', linewidth=1.2, linestyle='-')
+            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
+                    f'D01  {lam_str}',
+                    fontsize=8, ha='left' if off[0] > 0 else 'right',
+                    va='bottom',
+                    color='#aa4400', fontweight='bold',
+                    bbox=dict(facecolor='#fff4ee', alpha=0.9,
+                              edgecolor='#dd5500', linewidth=1.2,
+                              boxstyle='round,pad=0.3'))
 
     # D00: vertices where V x W = 0
     if 'D00' in category:
         d00_verts = find_d00_vertices(case_data)
         for vi in d00_verts:
             p = TET_VERTS[vi]
-            # Large magenta star
-            ax.scatter(p[0], p[1], p[2], c='#ff00ff', s=250, marker='*',
+            # Magenta square (consistent with lambda-ring D00 marker)
+            ax.scatter(p[0], p[1], p[2], c='#9900cc', s=100, marker='s',
                        zorder=10, edgecolors='black', linewidth=1.0)
             # Leader line from offset annotation to point
             off = np.array([0.08, 0.08, 0.12])
@@ -445,7 +435,7 @@ def draw_special_points(ax, case_data, segments=None):
             # Find λ from any nonzero component
             d00_lam = None
             for comp in range(3):
-                if abs(Wi[comp]) > 1e-10:
+                if Wi[comp] != 0:
                     d00_lam = -Vi[comp] / Wi[comp]
                     break
             if d00_lam is not None:
@@ -587,16 +577,11 @@ def _find_special_punctures(case_data):
     """Return set of puncture indices that are D01/D00 (labeled separately)."""
     category = case_data['category']
     special = set()
-    if 'D01' in category:
-        for i, pi in enumerate(case_data['punctures']):
-            bary = np.array(pi['bary'])
-            if np.sum(np.abs(bary) < 1e-3) >= 1:
-                special.add(i)
-    if 'D00' in category:
-        for i, pi in enumerate(case_data['punctures']):
-            bary = np.array(pi['bary'])
-            if np.sum(np.abs(bary) < 1e-3) >= 2:
-                special.add(i)
+    for i, pi in enumerate(case_data['punctures']):
+        if 'D01' in category and pi.get('is_edge', False):
+            special.add(i)
+        if 'D00' in category and pi.get('is_vertex', False):
+            special.add(i)
     return special
 
 
@@ -622,12 +607,9 @@ def draw_puncture_markers(ax, case_data, segments):
     for i, pi in enumerate(punctures):
         pos = bary_to_3d(pi['bary'], pi['face'])
         color = punc_color.get(i, '#666666')
-        bary = np.array(pi['bary'])
-        n_small = np.sum(np.abs(bary) < 1e-4)
-
-        if n_small >= 2:
+        if pi.get('is_vertex', False):
             marker, size = 'D', 60
-        elif n_small == 1:
+        elif pi.get('is_edge', False):
             marker, size = 's', 50
         else:
             marker, size = 'o', 40
@@ -814,26 +796,13 @@ def draw_lambda_ring(ax, case_data, segments):
                             lam_d = -V[vi][k] / W[vi][k]
                             break
                 d_markers.append((lam_d, 'D00'))
-        # D01: punctures with one near-zero bary coord (on tet edge)
+        # D01: punctures on tet edge (from C++ is_edge flag)
         for pi in punctures:
-            bary = pi.get('bary')
-            if not bary:
-                continue
-            n_small = sum(1 for b in bary if abs(b) < 1e-3)
-            if n_small >= 2:
-                continue  # D00 vertex, already handled above
-            if n_small >= 1:
+            if pi.get('is_vertex', False):
+                continue  # D00, handled above
+            if pi.get('is_edge', False):
                 lam_d = pi['lambda']
-                # Deduplicate by λ proximity
-                is_dup = False
-                for prev_lam, _ in d_markers:
-                    if prev_lam is None and lam_d is None:
-                        is_dup = True; break
-                    if prev_lam is not None and lam_d is not None:
-                        if abs(prev_lam - lam_d) < 0.01:
-                            is_dup = True; break
-                if not is_dup:
-                    d_markers.append((lam_d, 'D01'))
+                d_markers.append((lam_d, 'D01'))
 
         d_color = '#9900cc'
         d_label_offsets = [0.35, 0.55, 0.75, 0.45, 0.65]
@@ -854,6 +823,39 @@ def draw_lambda_ring(ax, case_data, segments):
                     bbox=dict(boxstyle='round,pad=0.15',
                               facecolor='#f4eeff',
                               edgecolor=d_color, linewidth=0.8))
+
+    # ── Mark C1v/C0v/C1w/C0w on ring ──
+    # Edge/vertex punctures at λ=0 (Cv) or λ=∞ (Cw)
+    cv_markers = []  # (angle, label)
+    for pi in punctures:
+        lam = pi.get('lambda')
+        is_edge = pi.get('is_edge', False)
+        is_vertex = pi.get('is_vertex', False)
+        if not is_edge and not is_vertex:
+            continue
+        if lam is not None and lam == 0.0:
+            label = 'C0v' if is_vertex else 'C1v'
+            cv_markers.append((lambda_to_angle(0.0, scale), label))
+        elif lam is None or (lam is not None and abs(lam) > 1e30):
+            label = 'C0w' if is_vertex else 'C1w'
+            cv_markers.append((np.pi / 2, label))  # infinity angle
+    if cv_markers:
+        cv_color = '#008800'
+        cv_offsets = [0.35, 0.55, 0.75]
+        for ci, (a, label) in enumerate(cv_markers):
+            sx, sy = angle_to_xy(a, R_ring)
+            ax.plot(sx, sy, 'v', color=cv_color, markersize=9,
+                    zorder=9, markeredgecolor='black', markeredgewidth=1.0)
+            lr = R_ring + cv_offsets[ci % len(cv_offsets)]
+            lx, ly = angle_to_xy(a, lr)
+            mx, my = angle_to_xy(a, R_ring + 0.06)
+            ax.plot([mx, lx], [my, ly], '-', color=cv_color, linewidth=0.8)
+            ax.text(lx, ly, label,
+                    ha='center', va='center', fontsize=7,
+                    color=cv_color, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.15',
+                              facecolor='#eeffee',
+                              edgecolor=cv_color, linewidth=0.8))
 
     # ── Puncture ticks with lambda labels OUTSIDE the ring ──
     punc_color = {}
@@ -959,7 +961,7 @@ def draw_info_panel(ax, case_data, segments):
             Vi = np.array(case_data['V'][vi], dtype=float)
             d00_lam = None
             for comp in range(3):
-                if abs(Wi[comp]) > 1e-10:
+                if Wi[comp] != 0:
                     d00_lam = -Vi[comp] / Wi[comp]
                     break
             lam_s = f'{d00_lam:.3f}' if d00_lam is not None else '?'
@@ -1052,11 +1054,20 @@ def visualize_case(case_data, output_path=None):
     ax_ring = fig.add_subplot(gs[0, 1])
     draw_lambda_ring(ax_ring, case_data, segments)
 
-    disc_labels = {1: r'$\Delta_Q > 0$ (3 roots)',
-                   -1: r'$\Delta_Q < 0$ (1 root)',
-                   0: r'$\Delta_Q = 0$'}
-    disc_str = disc_labels.get(case_data['Q_disc_sign'],
-                               f'$\\Delta_Q$ sign={case_data["Q_disc_sign"]}')
+    # Determine Q degree from coefficients
+    Q_coeffs = case_data.get('Q_coeffs', [0,0,0,0])
+    degQ = 3
+    while degQ > 0 and Q_coeffs[degQ] == 0:
+        degQ -= 1
+    n_qr = len(case_data.get('Q_roots', []))
+    if degQ < 3:
+        disc_str = f'Q degree {degQ} ({n_qr} root{"s" if n_qr != 1 else ""})'
+    else:
+        disc_labels = {1: r'$\Delta_Q > 0$ (3 roots)',
+                       -1: r'$\Delta_Q < 0$ (1 root)',
+                       0: r'$\Delta_Q = 0$'}
+        disc_str = disc_labels.get(case_data['Q_disc_sign'],
+                                   f'$\\Delta_Q$ sign={case_data["Q_disc_sign"]}')
     ax_ring.set_title(f'$\\lambda$-ring: {disc_str}', fontsize=10)
 
     # Panel (c): Info

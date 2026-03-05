@@ -738,7 +738,13 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     if (degQ == 0 && Q[0] == 0.0) q_type = "Qz";  // Q ≡ 0 (data degeneracy D)
     else if (degQ == 0) q_type = "Q0";              // Q = const ≠ 0
     else if (degQ == 1) q_type = "Q1";
-    else if (degQ == 2) q_type = "Q2";
+    else if (degQ == 2) {
+        // Quadratic discriminant: b²-4ac where Q = aλ² + bλ + c
+        double disc2 = Q[1]*Q[1] - 4*Q[2]*Q[0];
+        if (disc2 > 0) q_type = "Q2";          // 2 real roots
+        else if (disc2 < 0) q_type = "Q2-";    // 0 real roots
+        else q_type = "Q2o";                    // 1 repeated root
+    }
     else {
         if (cc.Q_disc_sign > 0) q_type = "Q3+";
         else if (cc.Q_disc_sign < 0) q_type = "Q3-";
@@ -1266,8 +1272,13 @@ static void print_json(const ClassifiedCase& cc) {
         printf("{\"face\":%d,\"lambda\":", pi.face);
         if (std::isinf(pi.lambda)) printf("null");
         else printf("%.15g", pi.lambda);
-        printf(",\"bary\":[%.15g,%.15g,%.15g],\"interval\":%d}",
+        printf(",\"bary\":[%.15g,%.15g,%.15g],\"interval\":%d",
                pi.bary[0], pi.bary[1], pi.bary[2], pi.interval_idx);
+        if (pi.is_edge)
+            printf(",\"is_edge\":true,\"tet_edge\":[%d,%d]", pi.tet_edge[0], pi.tet_edge[1]);
+        if (pi.is_vertex)
+            printf(",\"is_vertex\":true,\"tet_vertex\":%d", pi.tet_vertex);
+        printf("}");
         if (i + 1 < cc.punctures.size()) printf(",");
     }
     printf("],");
@@ -1507,16 +1518,28 @@ static int rand_int_cpu(uint32_t& state, int R) {
 }
 
 static TetCaseGPU generate_tet_from_seed(uint64_t global_id, uint64_t base_seed, int R) {
-    uint32_t state = (uint32_t)(global_id ^ (base_seed * 2654435761ULL));
-    for (int i = 0; i < 4; i++) lcg_next_cpu(state);
-
     TetCaseGPU tc;
-    for (int i = 0; i < 4; i++)
-        for (int j = 0; j < 3; j++)
-            tc.V[i][j] = rand_int_cpu(state, R);
-    for (int i = 0; i < 4; i++)
-        for (int j = 0; j < 3; j++)
-            tc.W[i][j] = rand_int_cpu(state, R);
+
+    if (global_id == 0) {
+        // Seed 0: analytically constructed bubble case (T0_Q2_B)
+        // V∥W never holds inside tet, but PV curve forms a closed loop.
+        static const int bubble_V[4][3] = {{2,3,-1},{-1,-2,-1},{0,-1,2},{-2,-2,0}};
+        static const int bubble_W[4][3] = {{3,0,3},{-1,0,-1},{-3,-2,-1},{0,3,-3}};
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 3; j++) {
+                tc.V[i][j] = bubble_V[i][j];
+                tc.W[i][j] = bubble_W[i][j];
+            }
+    } else {
+        uint32_t state = (uint32_t)(global_id ^ (base_seed * 2654435761ULL));
+        for (int i = 0; i < 4; i++) lcg_next_cpu(state);
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 3; j++)
+                tc.V[i][j] = rand_int_cpu(state, R);
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 3; j++)
+                tc.W[i][j] = rand_int_cpu(state, R);
+    }
 
     // Solve PV on CPU (face vertex ordering matches GPU)
     static const int fv[4][3] = {
