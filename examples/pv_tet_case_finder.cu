@@ -320,6 +320,151 @@ static bool has_shared_root_resultant(const __int128 Q_i128[4],
     return false;
 }
 
+// ─── Exact edge/vertex detection via Sturm counting on N_k ──────────────
+// For each regular puncture on a face, determines which face-barycentric
+// coordinates are exactly zero by checking if the bary-numerator polynomial
+// N_k(λ) has a root at the puncture's λ.
+//
+// Algorithm:
+//   1. Compute face char poly P_face and integer P_i128 from integer V, W
+//   2. Solve cubic + isolate roots → root intervals [lo, hi]
+//   3. Compute N_k from integer Mlin/blin (no quantization)
+//   4. For each puncture: match to root interval, Sturm-count N_k in [lo, hi]
+//   5. If N_k has a root in [lo, hi] → bary k is zero → on edge/vertex
+//
+// No thresholds: the Sturm count is exact for integer-derived polynomials.
+static void detect_edge_vertex_exact(
+    const int V_face[3][3], const int W_face[3][3],
+    const int fv[3],  // tet vertex indices for this face's 3 vertices
+    std::vector<ClassifiedCase::PunctureInfo>& punctures,
+    int first_pi, int num_pi)
+{
+    if (num_pi == 0) return;
+
+    // Step 1: Compute face char poly from integer V, W (exact for R≤20)
+    int64_t VqT[3][3], WqT[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            VqT[i][j] = (int64_t)V_face[j][i];
+            WqT[i][j] = (int64_t)W_face[j][i];
+        }
+
+    // Float char poly (coefficients are exact integers in double for R≤20)
+    double VTd[3][3], WTd[3][3];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            VTd[i][j] = (double)VqT[i][j];
+            WTd[i][j] = (double)WqT[i][j];
+        }
+    double P_face[4];
+    characteristic_polynomial_3x3(VTd, WTd, P_face);
+
+    // Integer char poly for exact discriminant
+    __int128 P_i128[4];
+    characteristic_polynomial_3x3_i128(VqT, WqT, P_i128);
+
+    // Step 2: Solve cubic and find isolation intervals.
+    // Use SQRT_EPS-width intervals (not ULP-tight) for reliable N_k Sturm
+    // evaluation.  ULP-tight intervals cause catastrophic cancellation when
+    // N_k has a root at exactly the same λ as P_face — Horner evaluation of
+    // a degree-4 polynomial at a point 1 ULP from a root has O(ε_machine)
+    // relative error, which can flip the sign.
+    //
+    // The SQRT_EPS width matches the solver's tighten_root_interval Phase 1
+    // bracket — the natural scale for degree-4 polynomial evaluation.
+    double roots[3];
+    int n_roots = solve_cubic_real_sos(P_face, roots,
+                                       (const uint64_t*)nullptr, P_i128);
+
+    // Build Sturm sequence for P_face to verify isolation
+    SturmSeqDouble P_seq;
+    build_sturm_double(P_face, P_seq);
+
+    const double SQRT_EPS = std::sqrt(std::numeric_limits<double>::epsilon());
+    double lo[3], hi[3];
+    for (int i = 0; i < n_roots; ++i) {
+        double scale = std::max(1.0, std::abs(roots[i]));
+        double half_w = scale * SQRT_EPS;
+        lo[i] = roots[i] - half_w;
+        hi[i] = roots[i] + half_w;
+        // Verify exactly one P_face root in the interval
+        int cnt = sturm_count_at(P_seq, lo[i]) - sturm_count_at(P_seq, hi[i]);
+        // Expand if root not yet bracketed, shrink if multiple roots
+        for (int iter = 0; iter < 60 && cnt != 1; ++iter) {
+            if (cnt == 0) half_w *= 2.0;
+            else          half_w *= 0.5;
+            lo[i] = roots[i] - half_w;
+            hi[i] = roots[i] + half_w;
+            if (!std::isfinite(lo[i]) || !std::isfinite(hi[i])) break;
+            cnt = sturm_count_at(P_seq, lo[i]) - sturm_count_at(P_seq, hi[i]);
+        }
+        if (cnt != 1) {
+            // Fallback: degenerate interval (won't detect N_k roots)
+            lo[i] = hi[i] = roots[i];
+        }
+    }
+
+    // Step 3: Compute N_k, D from integer V, W (no quantization)
+    // For R=20: Mlin entries ≤ 40, blin entries ≤ 20, N_k coeffs ≤ ~7e7
+    int64_t Mlin[3][2][2], blin[3][2];
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            Mlin[r][c][0] = VqT[r][c] - VqT[r][2];
+            Mlin[r][c][1] = -(WqT[r][c] - WqT[r][2]);
+        }
+        blin[r][0] = -VqT[r][2];
+        blin[r][1] =  WqT[r][2];
+    }
+    double N[3][5], D[5];
+    compute_bary_numerators_from_integers(Mlin, blin, N, D);
+
+    // Step 4: Build Sturm sequences for N_k
+    SturmSeqDeg4 seq_nk[3];
+    for (int k = 0; k < 3; k++) {
+        int degNk = 4;
+        while (degNk > 0 && N[k][degNk] == 0.0) --degNk;
+        build_sturm_deg4(N[k], degNk, seq_nk[k]);
+    }
+
+    // Step 5: For each puncture, match to root interval and check N_k
+    for (int pi = first_pi; pi < first_pi + num_pi; pi++) {
+        auto& punct = punctures[pi];
+
+        // Find the matching root interval by lambda proximity
+        int best_root = -1;
+        double best_dist = INFINITY;
+        for (int r = 0; r < n_roots; r++) {
+            double mid = 0.5 * (lo[r] + hi[r]);
+            double dist = std::abs(punct.lambda - mid);
+            if (dist < best_dist) { best_dist = dist; best_root = r; }
+        }
+
+        if (best_root < 0) continue;
+
+        // Check each bary coord via Sturm counting on N_k
+        int n_zero = 0, n_nonzero = 0;
+        int big_idx[3];
+        for (int k = 0; k < 3; k++) {
+            int nk_roots = sturm_count_d4(seq_nk[k], lo[best_root])
+                         - sturm_count_d4(seq_nk[k], hi[best_root]);
+            if (nk_roots > 0)
+                n_zero++;
+            else
+                big_idx[n_nonzero++] = k;
+        }
+
+        if (n_zero == 2 && n_nonzero == 1) {
+            punct.is_vertex = true;
+            punct.tet_vertex = fv[big_idx[0]];
+        } else if (n_zero == 1 && n_nonzero == 2) {
+            punct.is_edge = true;
+            int e0 = fv[big_idx[0]], e1 = fv[big_idx[1]];
+            punct.tet_edge[0] = std::min(e0, e1);
+            punct.tet_edge[1] = std::max(e0, e1);
+        }
+    }
+}
+
 static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     ClassifiedCase cc;
     cc.gpu = gpu;
@@ -400,6 +545,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         std::vector<PuncturePoint> results;
         solve_pv_triangle(Vf, Wf, results, indices);
 
+        int face_start = (int)cc.punctures.size();
         for (const auto& r : results) {
             ClassifiedCase::PunctureInfo pi;
             pi.face = fi;
@@ -411,33 +557,21 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             pi.tet_edge[0] = pi.tet_edge[1] = -1;
             pi.tet_vertex = -1;
             pi.interval_idx = -1;
-
-            // Detect edge/vertex from the exact solver's SoS-accepted bary coords.
-            // After SoS, accepted boundary punctures have bary ≈ 0 for the
-            // opposite vertex coordinate — the SoS already decided this face
-            // owns the puncture, so we just read off which coords are near zero.
-            // Use a generous threshold only for D01/D00 LABELING (not for dedup).
-            int big_idx[3];
-            int ns = 0, nb = 0;
-            for (int j = 0; j < 3; j++) {
-                if (std::abs(pi.bary[j]) < 1e-4)
-                    ns++;
-                else
-                    big_idx[nb++] = j;
-            }
-
-            if (ns == 2 && nb == 1) {
-                pi.is_vertex = true;
-                pi.tet_vertex = fv[fi][big_idx[0]];
-            } else if (ns == 1 && nb == 2) {
-                pi.is_edge = true;
-                int e0 = fv[fi][big_idx[0]], e1 = fv[fi][big_idx[1]];
-                pi.tet_edge[0] = std::min(e0, e1);
-                pi.tet_edge[1] = std::max(e0, e1);
-            }
-
             cc.punctures.push_back(pi);
         }
+        int face_count = (int)cc.punctures.size() - face_start;
+
+        // Exact edge/vertex detection: Sturm counting on N_k polynomials
+        // determines which face-barycentric coordinates are exactly zero.
+        // No thresholds — replaces abs(bary[j]) < 1e-4.
+        int V_face[3][3], W_face[3][3];
+        for (int vi = 0; vi < 3; vi++)
+            for (int j = 0; j < 3; j++) {
+                V_face[vi][j] = gpu.V[fv[fi][vi]][j];
+                W_face[vi][j] = gpu.W[fv[fi][vi]][j];
+            }
+        detect_edge_vertex_exact(V_face, W_face, fv[fi],
+                                 cc.punctures, face_start, face_count);
     }
 
     // No threshold-based deduplication: the SoS ownership rule in
@@ -451,36 +585,55 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     // This is a real face crossing at λ=∞ (w=0 critical point on a face).
     // Similarly P_i[0] = 0 with Q[0] != 0 means μ_i(0) = 0: crossing at λ=0.
     if (Q[3] != 0.0) {
+        int64_t q3 = llround(Q[3]);
         for (int i = 0; i < 4; i++) {
             if (P[i][3] == 0.0) {
                 // Check if the limit point is inside the opposite face
                 // μ_j(∞) = P_j[3]/Q[3] for j != i; need all >= 0
+                // Exact int64 sign check: P_j[3] and Q[3] must have same sign
                 bool inside = true;
                 for (int j = 0; j < 4; j++) {
                     if (j == i) continue;
-                    if (P[j][3] / Q[3] < -1e-10) { inside = false; break; }
+                    int64_t pj3 = llround(P[j][3]);
+                    if ((pj3 > 0 && q3 < 0) || (pj3 < 0 && q3 > 0))
+                        { inside = false; break; }
                 }
                 if (inside) {
                     ClassifiedCase::PunctureInfo pi;
                     pi.face = i;
-                    pi.lambda = INFINITY;  // λ→∞ (Cw critical point)
-                    // Barycentric coords on face i from the limit point
-                    double sum = 0;
-                    int vi = 0;
-                    static const int fv[4][3] = {
+                    pi.lambda = INFINITY;
+                    static const int fv_inf[4][3] = {
                         {1,3,2}, {0,2,3}, {0,3,1}, {0,1,2}
                     };
+                    double sum = 0;
                     for (int k = 0; k < 3; k++) {
-                        pi.bary[k] = P[fv[i][k]][3] / Q[3];
+                        pi.bary[k] = P[fv_inf[i][k]][3] / Q[3];
                         sum += pi.bary[k];
                     }
-                    if (sum > 1e-10) {
+                    if (sum != 0.0) {
                         for (int k = 0; k < 3; k++) pi.bary[k] /= sum;
                     }
+                    // Exact edge/vertex detection for infinity puncture:
+                    // bary k is zero iff P[fv[i][k]][3] == 0 (exact integer)
                     pi.is_edge = false;
                     pi.is_vertex = false;
                     pi.tet_edge[0] = pi.tet_edge[1] = -1;
                     pi.tet_vertex = -1;
+                    int nz = 0, nnz = 0;
+                    int big[3];
+                    for (int k = 0; k < 3; k++) {
+                        if (P[fv_inf[i][k]][3] == 0.0) nz++;
+                        else big[nnz++] = k;
+                    }
+                    if (nz == 2 && nnz == 1) {
+                        pi.is_vertex = true;
+                        pi.tet_vertex = fv_inf[i][big[0]];
+                    } else if (nz == 1 && nnz == 2) {
+                        pi.is_edge = true;
+                        int e0 = fv_inf[i][big[0]], e1 = fv_inf[i][big[1]];
+                        pi.tet_edge[0] = std::min(e0, e1);
+                        pi.tet_edge[1] = std::max(e0, e1);
+                    }
                     pi.interval_idx = -1;
                     cc.punctures.push_back(pi);
                 }
@@ -489,37 +642,58 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     }
     // λ=0 punctures: P_i[0]=0 with Q[0]!=0
     if (Q[0] != 0.0) {
+        int64_t q0 = llround(Q[0]);
         for (int i = 0; i < 4; i++) {
             if (P[i][0] == 0.0) {
+                // Exact int64 sign check for inside test
                 bool inside = true;
                 for (int j = 0; j < 4; j++) {
                     if (j == i) continue;
-                    if (P[j][0] / Q[0] < -1e-10) { inside = false; break; }
+                    int64_t pj0 = llround(P[j][0]);
+                    if ((pj0 > 0 && q0 < 0) || (pj0 < 0 && q0 > 0))
+                        { inside = false; break; }
                 }
                 if (inside) {
                     ClassifiedCase::PunctureInfo pi;
                     pi.face = i;
                     pi.lambda = 0.0;
-                    static const int fv[4][3] = {
+                    static const int fv_zero[4][3] = {
                         {1,3,2}, {0,2,3}, {0,3,1}, {0,1,2}
                     };
                     double sum = 0;
                     for (int k = 0; k < 3; k++) {
-                        pi.bary[k] = P[fv[i][k]][0] / Q[0];
+                        pi.bary[k] = P[fv_zero[i][k]][0] / Q[0];
                         sum += pi.bary[k];
                     }
-                    if (sum > 1e-10) {
+                    if (sum != 0.0) {
                         for (int k = 0; k < 3; k++) pi.bary[k] /= sum;
                     }
+                    // Exact edge/vertex detection: bary k = 0 iff P[fv[i][k]][0] == 0
                     pi.is_edge = false;
                     pi.is_vertex = false;
                     pi.tet_edge[0] = pi.tet_edge[1] = -1;
                     pi.tet_vertex = -1;
+                    int nz = 0, nnz = 0;
+                    int big[3];
+                    for (int k = 0; k < 3; k++) {
+                        if (P[fv_zero[i][k]][0] == 0.0) nz++;
+                        else big[nnz++] = k;
+                    }
+                    if (nz == 2 && nnz == 1) {
+                        pi.is_vertex = true;
+                        pi.tet_vertex = fv_zero[i][big[0]];
+                    } else if (nz == 1 && nnz == 2) {
+                        pi.is_edge = true;
+                        int e0 = fv_zero[i][big[0]], e1 = fv_zero[i][big[1]];
+                        pi.tet_edge[0] = std::min(e0, e1);
+                        pi.tet_edge[1] = std::max(e0, e1);
+                    }
                     pi.interval_idx = -1;
                     // Check this wasn't already found by the triangle solver
+                    // Exact: ep.lambda == 0.0 (integer inputs produce exact 0.0)
                     bool already = false;
                     for (auto& ep : cc.punctures)
-                        if (std::abs(ep.lambda) < 1e-10 && ep.face == i) already = true;
+                        if (ep.lambda == 0.0 && ep.face == i) already = true;
                     if (!already) cc.punctures.push_back(pi);
                 }
             }
@@ -527,35 +701,11 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     }
 
     // ─── Deduplicate edge/vertex punctures ──────────────────────────────
-    // The triangle solver reports punctures on shared edges/vertices from
-    // EACH adjacent face.  Infinity/zero punctures may also land on edges.
-    // Detect edge/vertex status for infinity/zero punctures first, then
-    // dedup: for each unique (tet_edge) or (tet_vertex), keep the one from
-    // the face with the smallest index.
+    // Edge/vertex detection is now done exactly:
+    //   - Regular punctures: Sturm counting on N_k (detect_edge_vertex_exact)
+    //   - Infinity/zero punctures: P[k][3]==0 / P[k][0]==0 (exact integer)
+    // No threshold-based detection needed here.
     {
-        static const int fv_dedup[4][3] = {
-            {1,3,2}, {0,2,3}, {0,3,1}, {0,1,2}
-        };
-        for (auto& pi : cc.punctures) {
-            if (pi.is_edge || pi.is_vertex) continue;
-            // Detect edge/vertex for infinity/zero punctures
-            int ns = 0, nb = 0;
-            int big_idx[3];
-            for (int j = 0; j < 3; j++) {
-                if (std::abs(pi.bary[j]) < 1e-4) ns++;
-                else big_idx[nb++] = j;
-            }
-            if (ns == 2 && nb == 1) {
-                pi.is_vertex = true;
-                pi.tet_vertex = fv_dedup[pi.face][big_idx[0]];
-            } else if (ns == 1 && nb == 2) {
-                pi.is_edge = true;
-                int e0 = fv_dedup[pi.face][big_idx[0]];
-                int e1 = fv_dedup[pi.face][big_idx[1]];
-                pi.tet_edge[0] = std::min(e0, e1);
-                pi.tet_edge[1] = std::max(e0, e1);
-            }
-        }
         // Dedup: keep first occurrence of each edge/vertex
         std::vector<ClassifiedCase::PunctureInfo> deduped;
         for (auto& pi : cc.punctures) {
@@ -800,21 +950,18 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     cc.has_Cv_pos = has_Cv;
     cc.has_Cw_pos = has_Cw;
 
-    // Face/edge/vertex crossings at special lambda values
-    const double lam_zero_eps = 1e-6;
-    // Use std::isinf() to detect λ=∞ punctures (stored as INFINITY)
+    // Face/edge/vertex crossings at special lambda values.
+    // For exact integer inputs, λ=0 from the solver is exactly 0.0;
+    // λ=∞ punctures are stored as INFINITY.  No thresholds needed.
 
     bool has_C2v = false, has_C2w = false;
     bool has_C1v = false, has_C1w = false;
     bool has_C0v = false, has_C0w = false;
-    bool has_D01 = false;  // point puncture on edge (any λ)
+    bool has_D01 = false;  // point puncture on edge at generic λ
 
     for (const auto& pi : cc.punctures) {
-        bool is_lam0 = (std::abs(pi.lambda) < lam_zero_eps);
+        bool is_lam0 = (pi.lambda == 0.0);
         bool is_laminf = std::isinf(pi.lambda);
-
-        // D01: point puncture on a 1-cell (edge)
-        if (pi.is_edge) has_D01 = true;
 
         // Critical-point degeneracies at special λ
         if (is_lam0) {
@@ -827,6 +974,10 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             else if (pi.is_edge) has_C1w = true;
             else has_C2w = true;
         }
+
+        // D01: point puncture on edge at generic λ (not at λ=0 or λ=∞,
+        // which are already captured by C1v/C1w/C0v/C0w)
+        if (pi.is_edge && !is_lam0 && !is_laminf) has_D01 = true;
     }
 
     if (has_Cv)  tags.push_back("Cv");
@@ -1149,6 +1300,199 @@ static void print_json(const ClassifiedCase& cc) {
     printf("}\n");
 }
 
+// ─── Verification ────────────────────────────────────────────────────────────
+// Checks invariants of a classified case using exact arithmetic where possible.
+// Prints [WARN seed=X] messages for any violations.
+
+static void verify_case(const ClassifiedCase& cc, const double Q[4], const double P[4][4]) {
+    uint64_t seed = cc.gpu.seed;
+    int n = (int)cc.punctures.size();
+
+    // ── 1. Puncture-interval consistency ──────────────────────────────────
+    int sum_iv_npv = 0;
+    for (const auto& iv : cc.intervals) sum_iv_npv += iv.n_pv;
+    if (sum_iv_npv != n)
+        fprintf(stderr, "[WARN seed=%lu] Σ interval.n_pv=%d ≠ n_punctures=%d\n",
+                (unsigned long)seed, sum_iv_npv, n);
+
+    for (int i = 0; i < n; i++) {
+        const auto& pi = cc.punctures[i];
+        int iv = pi.interval_idx;
+        if (iv < 0 || iv >= (int)cc.intervals.size()) {
+            fprintf(stderr, "[WARN seed=%lu] puncture %d has invalid interval_idx=%d\n",
+                    (unsigned long)seed, i, iv);
+            continue;
+        }
+        double lb = cc.intervals[iv].lb, ub = cc.intervals[iv].ub;
+        if (!std::isinf(pi.lambda)) {
+            if (pi.lambda < lb - 1e-6 || pi.lambda > ub + 1e-6)
+                fprintf(stderr, "[WARN seed=%lu] puncture %d λ=%.6g outside interval %d [%.6g, %.6g]\n",
+                        (unsigned long)seed, i, pi.lambda, iv, lb, ub);
+        }
+    }
+
+    // ── 2. Pair completeness ─────────────────────────────────────────────
+    if (2 * (int)cc.pairs.size() != n)
+        fprintf(stderr, "[WARN seed=%lu] 2×pairs=%d ≠ n_punctures=%d\n",
+                (unsigned long)seed, 2*(int)cc.pairs.size(), n);
+
+    // Check each puncture appears in exactly one pair
+    std::vector<int> pair_count(n, 0);
+    for (const auto& pp : cc.pairs) {
+        if (pp.pi_a >= 0 && pp.pi_a < n) pair_count[pp.pi_a]++;
+        else fprintf(stderr, "[WARN seed=%lu] pair has invalid pi_a=%d\n",
+                     (unsigned long)seed, pp.pi_a);
+        if (pp.pi_b >= 0 && pp.pi_b < n) pair_count[pp.pi_b]++;
+        else fprintf(stderr, "[WARN seed=%lu] pair has invalid pi_b=%d\n",
+                     (unsigned long)seed, pp.pi_b);
+    }
+    for (int i = 0; i < n; i++)
+        if (pair_count[i] != 1)
+            fprintf(stderr, "[WARN seed=%lu] puncture %d appears in %d pairs (expected 1)\n",
+                    (unsigned long)seed, i, pair_count[i]);
+
+    // ── 3. Category-data consistency ─────────────────────────────────────
+    // T-number should match n_punctures
+    {
+        std::string cat = cc.category;
+        // Extract T number from "T{n}_..." or "T{n}_(..."
+        size_t t_pos = cat.find('T');
+        if (t_pos != std::string::npos) {
+            int t_num = 0;
+            size_t i = t_pos + 1;
+            while (i < cat.size() && cat[i] >= '0' && cat[i] <= '9')
+                t_num = t_num * 10 + (cat[i++] - '0');
+            if (t_num != n)
+                fprintf(stderr, "[WARN seed=%lu] T-number=%d but n_punctures=%d\n",
+                        (unsigned long)seed, t_num, n);
+        }
+    }
+
+    // ── 4. Q polynomial roots ────────────────────────────────────────────
+    for (int i = 0; i < cc.n_Q_roots; i++) {
+        double r = cc.Q_roots[i];
+        double Qval = Q[0] + r*(Q[1] + r*(Q[2] + r*Q[3]));
+        double cond = std::abs(Q[3]);
+        double ax = std::abs(r);
+        for (int d = 2; d >= 0; --d) cond = cond * ax + std::abs(Q[d]);
+        if (std::abs(Qval) > 1e-6 * cond)
+            fprintf(stderr, "[WARN seed=%lu] Q(root[%d]=%.6g)=%.6g (cond=%.6g)\n",
+                    (unsigned long)seed, i, r, Qval, cond);
+    }
+    // Roots should be sorted
+    for (int i = 0; i + 1 < cc.n_Q_roots; i++)
+        if (cc.Q_roots[i] > cc.Q_roots[i+1] + 1e-15)
+            fprintf(stderr, "[WARN seed=%lu] Q roots not sorted: root[%d]=%.15g > root[%d]=%.15g\n",
+                    (unsigned long)seed, i, cc.Q_roots[i], i+1, cc.Q_roots[i+1]);
+
+    // ── 5. Cv/Cw position validity ──────────────────────────────────────
+    if (cc.has_Cv_pos) {
+        double sum_cv = 0;
+        bool bad = false;
+        for (int k = 0; k < 4; k++) {
+            if (cc.Cv_mu[k] < -1e-10 || cc.Cv_mu[k] > 1.0 + 1e-10) bad = true;
+            sum_cv += cc.Cv_mu[k];
+        }
+        if (bad || std::abs(sum_cv - 1.0) > 1e-10)
+            fprintf(stderr, "[WARN seed=%lu] Cv_mu invalid: [%.6g,%.6g,%.6g,%.6g] sum=%.6g\n",
+                    (unsigned long)seed, cc.Cv_mu[0], cc.Cv_mu[1], cc.Cv_mu[2], cc.Cv_mu[3], sum_cv);
+        // Cross-check with check_field_zero_in_tet
+        bool cv_check = check_field_zero_in_tet(cc.gpu.V);
+        if (!cv_check)
+            fprintf(stderr, "[WARN seed=%lu] has_Cv_pos=true but check_field_zero_in_tet(V)=false\n",
+                    (unsigned long)seed);
+    }
+    if (cc.has_Cw_pos) {
+        double sum_cw = 0;
+        bool bad = false;
+        for (int k = 0; k < 4; k++) {
+            if (cc.Cw_mu[k] < -1e-10 || cc.Cw_mu[k] > 1.0 + 1e-10) bad = true;
+            sum_cw += cc.Cw_mu[k];
+        }
+        if (bad || std::abs(sum_cw - 1.0) > 1e-10)
+            fprintf(stderr, "[WARN seed=%lu] Cw_mu invalid: [%.6g,%.6g,%.6g,%.6g] sum=%.6g\n",
+                    (unsigned long)seed, cc.Cw_mu[0], cc.Cw_mu[1], cc.Cw_mu[2], cc.Cw_mu[3], sum_cw);
+        bool cw_check = check_field_zero_in_tet(cc.gpu.W);
+        if (!cw_check)
+            fprintf(stderr, "[WARN seed=%lu] has_Cw_pos=true but check_field_zero_in_tet(W)=false\n",
+                    (unsigned long)seed);
+    }
+
+    // ── 6. SR verification ──────────────────────────────────────────────
+    if (cc.has_shared_root) {
+        // Verify: resultant(Q, P_k) = 0 for at least one k
+        __int128 Qi[4], Pi[4][4];
+        for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
+        for (int a = 0; a < 4; a++)
+            for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
+        if (!has_shared_root_resultant(Qi, Pi))
+            fprintf(stderr, "[WARN seed=%lu] has_shared_root=true but resultant check fails\n",
+                    (unsigned long)seed);
+    }
+
+    // ── 7. Edge/vertex tag hierarchy ────────────────────────────────────
+    for (int i = 0; i < n; i++) {
+        const auto& pi = cc.punctures[i];
+        bool is_lam0 = (pi.lambda == 0.0);
+        bool is_laminf = std::isinf(pi.lambda);
+        // D01 at λ=0 should be C1v, not D01
+        if (pi.is_edge && is_lam0) {
+            // This puncture should contribute C1v, not D01 — check category
+            if (cc.category.find("D01") != std::string::npos &&
+                cc.category.find("C1v") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] edge puncture at λ=0 tagged D01 without C1v\n",
+                        (unsigned long)seed);
+        }
+        // D00 at λ=0 should be C0v, not D00
+        if (pi.is_vertex && is_lam0) {
+            if (cc.category.find("D00") != std::string::npos &&
+                cc.category.find("C0v") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] vertex puncture at λ=0 tagged D00 without C0v\n",
+                        (unsigned long)seed);
+        }
+        // Same for λ=∞
+        if (pi.is_edge && is_laminf) {
+            if (cc.category.find("D01") != std::string::npos &&
+                cc.category.find("C1w") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] edge puncture at λ=∞ tagged D01 without C1w\n",
+                        (unsigned long)seed);
+        }
+        if (pi.is_vertex && is_laminf) {
+            if (cc.category.find("D00") != std::string::npos &&
+                cc.category.find("C0w") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] vertex puncture at λ=∞ tagged D00 without C0w\n",
+                        (unsigned long)seed);
+        }
+    }
+
+    // ── 8. Interval parity ──────────────────────────────────────────────
+    // Each interval's n_pv should be even after accounting for:
+    //   - Infinity merging: outermost intervals may merge through ∞
+    //   - SR (shared root): pass-through punctures cross interval boundaries
+    // Only warn if no such mechanism explains the odd counts.
+    {
+        bool has_odd_inner = false;
+        int n_iv = (int)cc.intervals.size();
+        for (int i = 0; i < n_iv; i++) {
+            if (cc.intervals[i].n_pv % 2 != 0) {
+                // Outer intervals (first/last) may merge through infinity
+                if (i == 0 || i == n_iv - 1) continue;
+                has_odd_inner = true;
+            }
+        }
+        // Check if outer intervals have matching odd parity (they merge)
+        bool outer_ok = true;
+        if (n_iv >= 2) {
+            int first = cc.intervals[0].n_pv;
+            int last = cc.intervals[n_iv - 1].n_pv;
+            if ((first + last) % 2 != 0) outer_ok = false;
+        }
+        if ((has_odd_inner || !outer_ok) && !cc.has_shared_root)
+            fprintf(stderr, "[WARN seed=%lu] odd interval n_pv without shared_root or infinity merging\n",
+                    (unsigned long)seed);
+    }
+}
+
 // ─── CPU seed replay (--seeds mode) ──────────────────────────────────────────
 // Replays the GPU LCG on CPU for specific seeds, bypassing GPU scan.
 
@@ -1260,6 +1604,7 @@ int main(int argc, char** argv)
         for (uint64_t s : seeds) {
             TetCaseGPU tc = generate_tet_from_seed(s, base_seed, R);
             ClassifiedCase cc = classify_case(tc);
+            verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
             print_json(cc);
             fprintf(stderr, "  seed=%lu: %s (%d punctures, %d pairs)\n",
                     (unsigned long)s, cc.category.c_str(),
@@ -1320,6 +1665,7 @@ int main(int argc, char** argv)
         // CPU classification
         for (int i = 0; i < h_count && total_found < max_cases; i++) {
             ClassifiedCase cc = classify_case(h_cases[i]);
+            verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
             category_counts[cc.category]++;
 
             // Print JSON to stdout

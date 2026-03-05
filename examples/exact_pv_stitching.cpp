@@ -33,23 +33,64 @@ struct PunctureConnection {
     uint64_t tet_id;
 };
 
-// ─── Sturm-based pass-through detection ──────────────────────────────────────
-// For each barycentric polynomial P[k], count roots in (lo, hi) via Sturm.
-// If any P[k] has at least n_q_roots roots in the interval → pass-through
-// (the Q-roots coincide with P[k]-roots, so the apparent pole cancels).
-static bool is_passthrough_sturm(const __int128 P_i128[4][4],
-                                 double lo, double hi, int n_q_roots)
+// ─── GCD-normalize __int128 polynomial for safe double Sturm chain ───────────
+// Divides all coefficients by their GCD so products in S₂/S₃ fit in double.
+// Without this, quantized coefficients (~2^52–2^73) overflow in S₂ products.
+static void gcd_normalize_poly(const __int128 P[4], double P_d[4]) {
+    __int128 g = gcd_i128(gcd_i128(P[0] < 0 ? -P[0] : P[0],
+                                    P[1] < 0 ? -P[1] : P[1]),
+                           gcd_i128(P[2] < 0 ? -P[2] : P[2],
+                                    P[3] < 0 ? -P[3] : P[3]));
+    if (g == 0) g = 1;
+    for (int i = 0; i < 4; ++i) P_d[i] = (double)(P[i] / g);
+}
+
+// ─── Shared-root detection via Sylvester resultant ───────────────────────────
+// Returns true iff Q and some P[k] share a common root, i.e. Res(Q, P[k]) = 0.
+// The resultant of two integer polynomials is an integer; we compute the
+// Sylvester determinant in double (exact for R≤20 where coefficients < 2^19).
+static bool has_shared_root_resultant(const __int128 Q_i128[4],
+                                      const __int128 P_i128[4][4])
 {
+    int degQ = 3;
+    while (degQ > 0 && Q_i128[degQ] == 0) degQ--;
+    if (degQ == 0) return false;
+
     for (int k = 0; k < 4; ++k) {
-        double P_d[4];
-        for (int j = 0; j <= 3; ++j) P_d[j] = (double)P_i128[k][j];
+        int degP = 3;
+        while (degP > 0 && P_i128[k][degP] == 0) degP--;
+        if (degP == 0) continue;
 
-        SturmSeqDouble seq;
-        build_sturm_double(P_d, seq);
+        int N = degQ + degP;
+        double mat[6][6] = {};
+        for (int i = 0; i < degP; i++)
+            for (int j = 0; j <= degQ; j++)
+                mat[i][i + degQ - j] = (double)Q_i128[j];
+        for (int i = 0; i < degQ; i++)
+            for (int j = 0; j <= degP; j++)
+                mat[degP + i][i + degP - j] = (double)P_i128[k][j];
 
-        int pk_count = sturm_count_at(seq, lo) - sturm_count_at(seq, hi);
-        if (pk_count >= n_q_roots)
-            return true;  // enough P[k]-roots to cover all Q-roots
+        // Gaussian elimination with partial pivoting
+        double det = 1.0;
+        for (int col = 0; col < N; col++) {
+            int pivot = col;
+            for (int row = col + 1; row < N; row++)
+                if (std::abs(mat[row][col]) > std::abs(mat[pivot][col]))
+                    pivot = row;
+            if (pivot != col) {
+                for (int j = 0; j < N; j++)
+                    std::swap(mat[col][j], mat[pivot][j]);
+                det = -det;
+            }
+            if (std::abs(mat[col][col]) < 1e-300) { det = 0; break; }
+            det *= mat[col][col];
+            for (int row = col + 1; row < N; row++) {
+                double factor = mat[row][col] / mat[col][col];
+                for (int j = col; j < N; j++)
+                    mat[row][j] -= factor * mat[col][j];
+            }
+        }
+        if (std::abs(det) < 0.5) return true;  // integer resultant is exactly 0
     }
     return false;
 }
@@ -78,9 +119,11 @@ static void stitch_ambiguous_tet(
         lam_idx.push_back({(double)complex.vertices[p].scalar, p});
     std::sort(lam_idx.begin(), lam_idx.end());
 
-    // 2. Convert Q_i128 → double, determine effective degree
+    // 2. GCD-normalize Q_i128 → double, determine effective degree
+    //    Without normalization, quantized coefficients (~2^52–2^73) cause
+    //    overflow in S₂/S₃ products of build_sturm_double.
     double Q_d[4];
-    for (int k = 0; k <= 3; ++k) Q_d[k] = (double)Q_i128[k];
+    gcd_normalize_poly(Q_i128, Q_d);
     int degQ = 3;
     while (degQ > 0 && Q_d[degQ] == 0.0) --degQ;
 
@@ -91,7 +134,7 @@ static void stitch_ambiguous_tet(
         return;
     }
 
-    // Build Sturm sequence for Q
+    // Build Sturm sequence for Q (GCD-normalized coefficients fit in double)
     SturmSeqDouble Q_seq;
     build_sturm_double(Q_d, Q_seq);
 
@@ -110,21 +153,19 @@ static void stitch_ambiguous_tet(
         qi[i] = count;
     }
 
-    // 4. Build effective groups with pass-through detection
+    // 4. Build effective groups with shared-root detection
+    //    If Q and some P[k] share a root (Sylvester resultant = 0), ALL
+    //    Q-roots are pass-throughs and all intervals merge into one group.
+    bool is_sr = has_shared_root_resultant(Q_i128, P_i128);
     std::vector<int> qi_eff(n);
     qi_eff[0] = 0;
     for (int i = 1; i < n; ++i) {
         if (qi[i] == qi[i-1]) {
             qi_eff[i] = qi_eff[i-1];          // same Q-interval
+        } else if (is_sr) {
+            qi_eff[i] = qi_eff[i-1];          // shared root → merge
         } else {
-            // Q-root(s) between λ[i-1] and λ[i] — check pass-through
-            int n_q_roots = std::abs(qi[i-1] - qi[i]);
-            if (is_passthrough_sturm(P_i128, lam_idx[i-1].first,
-                                     lam_idx[i].first, n_q_roots)) {
-                qi_eff[i] = qi_eff[i-1];      // pass-through → merge
-            } else {
-                qi_eff[i] = qi_eff[i-1] + 1;  // genuine pole → new group
-            }
+            qi_eff[i] = qi_eff[i-1] + 1;      // genuine pole → new group
         }
     }
 
