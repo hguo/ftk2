@@ -451,48 +451,42 @@ def draw_special_points(ax, case_data, segments=None):
                               boxstyle='round,pad=0.3'))
 
     # Cv: critical point of v at lambda=0
+    cv_cw_color = '#008800'  # green, consistent with ring markers
     if 'Cv' in category:
         pos = compute_cv_position(case_data)
         if pos is not None:
-            cv_color = _find_segment_for_lambda(0.0, segments)
-            ax.scatter(pos[0], pos[1], pos[2], c=cv_color, s=200,
+            ax.scatter(pos[0], pos[1], pos[2], c=cv_cw_color, s=200,
                        marker='*', zorder=10, edgecolors='black',
                        linewidth=1.0)
             off = np.array([-0.08, 0.08, 0.10])
             ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
                       [pos[2], pos[2]+off[2]],
-                      color=cv_color, linewidth=1.2, linestyle='-')
+                      color=cv_cw_color, linewidth=1.2, linestyle='-')
             ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
                     r'Cv ($\lambda=0$)',
                     fontsize=8, ha='right', va='bottom',
-                    color=cv_color, fontweight='bold',
-                    bbox=dict(facecolor='white', alpha=0.9,
-                              edgecolor=cv_color, linewidth=1.2,
+                    color=cv_cw_color, fontweight='bold',
+                    bbox=dict(facecolor='#eeffee', alpha=0.9,
+                              edgecolor=cv_cw_color, linewidth=1.2,
                               boxstyle='round,pad=0.3'))
 
     # Cw: critical point of w at lambda->inf
     if 'Cw' in category:
         pos = compute_cw_position(case_data)
         if pos is not None:
-            # Cw belongs to the infinity-spanning segment
-            cw_color = '#333333'
-            for seg in segments:
-                if seg.get('infinity_spanning', False):
-                    cw_color = seg['color']
-                    break
-            ax.scatter(pos[0], pos[1], pos[2], c=cw_color, s=200,
+            ax.scatter(pos[0], pos[1], pos[2], c=cv_cw_color, s=200,
                        marker='*', zorder=10, edgecolors='black',
                        linewidth=1.0)
             off = np.array([0.10, -0.06, 0.10])
             ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
                       [pos[2], pos[2]+off[2]],
-                      color=cw_color, linewidth=1.2, linestyle='-')
+                      color=cv_cw_color, linewidth=1.2, linestyle='-')
             ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
                     r'Cw ($\lambda \to \infty$)',
                     fontsize=8, ha='left', va='bottom',
-                    color=cw_color, fontweight='bold',
-                    bbox=dict(facecolor='white', alpha=0.9,
-                              edgecolor=cw_color, linewidth=1.2,
+                    color=cv_cw_color, fontweight='bold',
+                    bbox=dict(facecolor='#eeffee', alpha=0.9,
+                              edgecolor=cv_cw_color, linewidth=1.2,
                               boxstyle='round,pad=0.3'))
 
 
@@ -587,6 +581,7 @@ def _find_special_punctures(case_data):
 
 def draw_puncture_markers(ax, case_data, segments):
     """Draw puncture points colored by segment, with lambda labels."""
+    category = case_data['category']
     punctures = case_data['punctures']
     special = _find_special_punctures(case_data)
 
@@ -621,8 +616,12 @@ def draw_puncture_markers(ax, case_data, segments):
         if i in special:
             continue
 
-        # Lambda label with leader line
+        # Skip lambda label if Cv/Cw marker is at same position
         lam = pi['lambda']
+        if 'Cv' in category and lam is not None and lam == 0.0:
+            continue
+        if 'Cw' in category and (lam is None or (lam is not None and abs(lam) > 1e30)):
+            continue
         lam_str = f'$\\lambda$={lam:.2f}' if lam is not None else r'$\lambda=\infty$'
         off = label_offsets[i % len(label_offsets)]
         lp = pos + off
@@ -643,11 +642,14 @@ def draw_lambda_ring(ax, case_data, segments):
     Q_roots = case_data['Q_roots']
     punctures = case_data['punctures']
 
-    # Choose scale to spread Q roots around the ring
+    # Choose scale so all finite λ values get reasonable angular separation.
+    # arctan(λ/scale) maps [-∞,+∞] to [-π/2, π/2].  Using max(|λ|) as
+    # scale ensures the most extreme puncture maps to arctan(1) = 45°,
+    # leaving 45° of ring between it and ∞.
     all_lams = [p['lambda'] for p in punctures if p['lambda'] is not None]
     all_lams += [r for r in Q_roots]
     abs_vals = [abs(v) for v in all_lams if abs(v) > 1e-15]
-    scale = np.median(abs_vals) * 1.2 if abs_vals else 1.0
+    scale = max(abs_vals) if abs_vals else 1.0
     scale = max(scale, 0.5)
 
     R_ring = 1.0
@@ -824,38 +826,39 @@ def draw_lambda_ring(ax, case_data, segments):
                               facecolor='#f4eeff',
                               edgecolor=d_color, linewidth=0.8))
 
-    # ── Mark C1v/C0v/C1w/C0w on ring ──
-    # Edge/vertex punctures at λ=0 (Cv) or λ=∞ (Cw)
-    cv_markers = []  # (angle, label)
-    for pi in punctures:
-        lam = pi.get('lambda')
-        is_edge = pi.get('is_edge', False)
-        is_vertex = pi.get('is_vertex', False)
-        if not is_edge and not is_vertex:
-            continue
-        if lam is not None and lam == 0.0:
-            label = 'C0v' if is_vertex else 'C1v'
-            cv_markers.append((lambda_to_angle(0.0, scale), label))
-        elif lam is None or (lam is not None and abs(lam) > 1e30):
-            label = 'C0w' if is_vertex else 'C1w'
-            cv_markers.append((np.pi / 2, label))  # infinity angle
-    if cv_markers:
-        cv_color = '#008800'
-        cv_offsets = [0.35, 0.55, 0.75]
-        for ci, (a, label) in enumerate(cv_markers):
-            sx, sy = angle_to_xy(a, R_ring)
-            ax.plot(sx, sy, 'v', color=cv_color, markersize=9,
-                    zorder=9, markeredgecolor='black', markeredgewidth=1.0)
-            lr = R_ring + cv_offsets[ci % len(cv_offsets)]
-            lx, ly = angle_to_xy(a, lr)
-            mx, my = angle_to_xy(a, R_ring + 0.06)
-            ax.plot([mx, lx], [my, ly], '-', color=cv_color, linewidth=0.8)
-            ax.text(lx, ly, label,
-                    ha='center', va='center', fontsize=7,
-                    color=cv_color, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.15',
-                              facecolor='#eeffee',
-                              edgecolor=cv_color, linewidth=0.8))
+    # ── Mark Cv/Cw on ring (text labels, like SR) ──
+    # Cv: critical point of v (v=0) at λ=0; Cw: critical point of w at λ→∞
+    cv_color = '#008800'
+    if 'Cv' in category:
+        a = lambda_to_angle(0.0, scale)
+        sx, sy = angle_to_xy(a, R_ring)
+        ax.plot(sx, sy, '*', color=cv_color, markersize=10,
+                zorder=9, markeredgecolor='black', markeredgewidth=0.8)
+        lr = R_ring + 0.35
+        lx, ly = angle_to_xy(a, lr)
+        mx, my = angle_to_xy(a, R_ring + 0.06)
+        ax.plot([mx, lx], [my, ly], '-', color=cv_color, linewidth=0.8)
+        ax.text(lx, ly, r'Cv ($\lambda=0$)',
+                ha='center', va='center', fontsize=7,
+                color=cv_color, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.15',
+                          facecolor='#eeffee',
+                          edgecolor=cv_color, linewidth=0.8))
+    if 'Cw' in category:
+        a = np.pi / 2  # infinity angle
+        sx, sy = angle_to_xy(a, R_ring)
+        ax.plot(sx, sy, '*', color=cv_color, markersize=10,
+                zorder=9, markeredgecolor='black', markeredgewidth=0.8)
+        lr = R_ring + 0.55  # further out to avoid overlap with puncture labels
+        lx, ly = angle_to_xy(a, lr)
+        mx, my = angle_to_xy(a, R_ring + 0.06)
+        ax.plot([mx, lx], [my, ly], '-', color=cv_color, linewidth=0.8)
+        ax.text(lx, ly, r'Cw ($\lambda \to \infty$)',
+                ha='center', va='center', fontsize=7,
+                color=cv_color, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.15',
+                          facecolor='#eeffee',
+                          edgecolor=cv_color, linewidth=0.8))
 
     # ── Puncture ticks with lambda labels OUTSIDE the ring ──
     punc_color = {}
@@ -894,15 +897,23 @@ def draw_lambda_ring(ax, case_data, segments):
         x2, y2 = angle_to_xy(a, 1.07)
         ax.plot([x1, x2], [y1, y2], '-', color=color, linewidth=2.0, zorder=7)
 
-        # Lambda label outside ring
-        lr = label_radii[i]
-        lx, ly = angle_to_xy(a, lr)
-        mx, my = angle_to_xy(a, R_ring + 0.08)
-        ax.plot([mx, lx], [my, ly], '-', color=color, linewidth=0.6, alpha=0.5)
-        ax.text(lx, ly, lam_str, ha='center', va='center', fontsize=7,
-                color=color,
-                bbox=dict(boxstyle='round,pad=0.1', facecolor='white',
-                          edgecolor='#dddddd', linewidth=0.3))
+        # Skip lambda label if Cv/Cw marker is at same position
+        skip_label = False
+        if 'Cv' in category and lam is not None and lam == 0.0:
+            skip_label = True
+        if 'Cw' in category and (lam is None or (lam is not None and abs(lam) > 1e30)):
+            skip_label = True
+
+        if not skip_label:
+            # Lambda label outside ring
+            lr = label_radii[i]
+            lx, ly = angle_to_xy(a, lr)
+            mx, my = angle_to_xy(a, R_ring + 0.08)
+            ax.plot([mx, lx], [my, ly], '-', color=color, linewidth=0.6, alpha=0.5)
+            ax.text(lx, ly, lam_str, ha='center', va='center', fontsize=7,
+                    color=color,
+                    bbox=dict(boxstyle='round,pad=0.1', facecolor='white',
+                              edgecolor='#dddddd', linewidth=0.3))
 
     ax.set_xlim(-2.0, 2.0)
     ax.set_ylim(-1.6, 2.0)

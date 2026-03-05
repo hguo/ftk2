@@ -275,47 +275,43 @@ static bool has_shared_root_resultant(const __int128 Q_i128[4],
         // Actually, for degrees up to 3+3=6, we can use fraction-free elimination.
 
         int N = degQ + degP;
-        // Build Sylvester matrix as double (coefficients fit in double for R<=20)
-        double S[6][6] = {};
+        // Build Sylvester matrix with __int128 (exact for integer coefficients)
+        __int128 M[6][6] = {};
         for (int i = 0; i < degP; i++)
             for (int j = 0; j <= degQ; j++)
-                S[i][i + degQ - j] = (double)Q_i128[j];
+                M[i][i + degQ - j] = Q_i128[j];
         for (int i = 0; i < degQ; i++)
             for (int j = 0; j <= degP; j++)
-                S[degP + i][i + degP - j] = (double)P_i128[k][j];
+                M[degP + i][i + degP - j] = P_i128[k][j];
 
-        // Compute determinant via LU decomposition
-        // For N<=6, use cofactor expansion or direct Gaussian elimination
-        double mat[6][6];
-        for (int i = 0; i < N; i++)
-            for (int j = 0; j < N; j++)
-                mat[i][j] = S[i][j];
-
-        double det = 1.0;
+        // Bareiss fraction-free elimination: exact integer determinant.
+        // Each step: M[i][j] = (M[i][j]*M[k][k] - M[i][k]*M[k][j]) / prev_pivot
+        // The division is exact (Bareiss's theorem).
+        __int128 prev_pivot = 1;
+        bool zero_det = false;
         for (int col = 0; col < N; col++) {
-            // Partial pivoting
-            int pivot = col;
-            for (int row = col + 1; row < N; row++)
-                if (std::abs(mat[row][col]) > std::abs(mat[pivot][col]))
-                    pivot = row;
-            if (pivot != col) {
+            // Partial pivoting (for numerical stability, though exact)
+            int pivot = -1;
+            for (int row = col; row < N; row++)
+                if (M[row][col] != 0) { pivot = row; break; }
+            if (pivot < 0) { zero_det = true; break; }
+            if (pivot != col)
                 for (int j = 0; j < N; j++)
-                    std::swap(mat[col][j], mat[pivot][j]);
-                det = -det;
-            }
-            if (std::abs(mat[col][col]) < 1e-30) { det = 0; break; }
-            det *= mat[col][col];
-            double inv = 1.0 / mat[col][col];
-            for (int row = col + 1; row < N; row++) {
-                double f = mat[row][col] * inv;
-                for (int j = col; j < N; j++)
-                    mat[row][j] -= f * mat[col][j];
-            }
+                    std::swap(M[col][j], M[pivot][j]);
+            for (int row = col + 1; row < N; row++)
+                for (int j = col + 1; j < N; j++) {
+                    M[row][j] = (M[col][col] * M[row][j]
+                               - M[row][col] * M[col][j]) / prev_pivot;
+                }
+            // Zero out below pivot (not needed for det, but keeps matrix clean)
+            for (int row = col + 1; row < N; row++)
+                M[row][col] = 0;
+            prev_pivot = M[col][col];
         }
 
-        // The resultant is an integer (Q, P have integer coeffs).
-        // If |det| < 0.5, it's exactly 0.
-        if (std::abs(det) < 0.5) return true;
+        // Resultant = M[N-1][N-1] (the last diagonal element after Bareiss)
+        // It's exactly 0 iff Q and P_k share a root.
+        if (zero_det || M[N-1][N-1] == 0) return true;
     }
     return false;
 }
