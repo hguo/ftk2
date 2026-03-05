@@ -905,8 +905,21 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         cc.intervals[0].n_pv = (int)cc.punctures.size();
     }
 
-    // Use deduplicated puncture count for classification
+    // Use deduplicated puncture count for classification.
+    // Edge/vertex punctures are intermediate waypoints on the PV curve
+    // (the curve passes through an edge/vertex between two faces), not
+    // independent face crossings.  Exclude them from T-count, interval
+    // occupancy, and pairing.
     int n = (int)cc.punctures.size();
+    int n_face = 0;  // face-interior punctures only
+    for (const auto& pi : cc.punctures)
+        if (!pi.is_edge && !pi.is_vertex) n_face++;
+
+    // Recount interval occupancy excluding edge/vertex punctures
+    for (auto& iv : cc.intervals) iv.n_pv = 0;
+    for (const auto& pi : cc.punctures)
+        if (!pi.is_edge && !pi.is_vertex && pi.interval_idx >= 0)
+            cc.intervals[pi.interval_idx].n_pv++;
 
     // Build sorted interval-occupancy tuple: collect non-zero n_pv counts
     std::vector<int> occ;
@@ -914,8 +927,8 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         if (iv.n_pv > 0) occ.push_back(iv.n_pv);
     std::sort(occ.begin(), occ.end());
 
-    // T-category: T{n} + sorted tuple suffix (e.g. T4_(2,2), T8_(4,4))
-    std::string t_type = "T" + std::to_string(n);
+    // T-category: T{n_face} + sorted tuple suffix (e.g. T4_(2,2), T8_(4,4))
+    std::string t_type = "T" + std::to_string(n_face);
     if (occ.size() > 1) {
         // Multiple occupied intervals: append _(n1,n2,...)
         t_type += "_(";
@@ -1097,9 +1110,12 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     // lambda within each interval, handle Cw merging, pair consecutively,
     // handle SR pass-through unpaired remainders.
     {
-        // Group puncture indices by interval
+        // Group face-interior puncture indices by interval
+        // (edge/vertex punctures are waypoints, not paired)
         std::map<int, std::vector<int>> iv_puncs;
         for (int i = 0; i < (int)cc.punctures.size(); i++) {
+            if (cc.punctures[i].is_edge || cc.punctures[i].is_vertex)
+                continue;  // skip waypoints
             int iv = cc.punctures[i].interval_idx;
             if (iv >= 0)
                 iv_puncs[iv].push_back(i);
@@ -1201,7 +1217,11 @@ static void print_json(const ClassifiedCase& cc) {
     printf("{");
     printf("\"seed\":%lu,", (unsigned long)cc.gpu.seed);
     printf("\"category\":\"%s\",", cc.category.c_str());
-    printf("\"n_punctures\":%d,", (int)cc.punctures.size());
+    int n_face_out = 0;
+    for (const auto& pi : cc.punctures)
+        if (!pi.is_edge && !pi.is_vertex) n_face_out++;
+    printf("\"n_punctures\":%d,", n_face_out);
+    printf("\"n_total\":%d,", (int)cc.punctures.size());
     printf("\"n_raw\":%d,", cc.gpu.total_punctures);
     printf("\"n_deduplicated\":%d,", cc.n_deduplicated);
 
@@ -1316,11 +1336,15 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     int n = (int)cc.punctures.size();
 
     // ── 1. Puncture-interval consistency ──────────────────────────────────
+    // interval.n_pv counts face-interior punctures only (edge/vertex excluded)
     int sum_iv_npv = 0;
     for (const auto& iv : cc.intervals) sum_iv_npv += iv.n_pv;
-    if (sum_iv_npv != n)
-        fprintf(stderr, "[WARN seed=%lu] Σ interval.n_pv=%d ≠ n_punctures=%d\n",
-                (unsigned long)seed, sum_iv_npv, n);
+    int n_face_check = 0;
+    for (const auto& pi : cc.punctures)
+        if (!pi.is_edge && !pi.is_vertex) n_face_check++;
+    if (sum_iv_npv != n_face_check)
+        fprintf(stderr, "[WARN seed=%lu] Σ interval.n_pv=%d ≠ n_face=%d\n",
+                (unsigned long)seed, sum_iv_npv, n_face_check);
 
     for (int i = 0; i < n; i++) {
         const auto& pi = cc.punctures[i];
@@ -1339,11 +1363,17 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     }
 
     // ── 2. Pair completeness ─────────────────────────────────────────────
-    if (2 * (int)cc.pairs.size() != n)
-        fprintf(stderr, "[WARN seed=%lu] 2×pairs=%d ≠ n_punctures=%d\n",
-                (unsigned long)seed, 2*(int)cc.pairs.size(), n);
+    // Edge/vertex punctures are waypoints (not paired).  Only face-interior
+    // punctures should be paired.  n_face must be even.
+    int n_face = 0;
+    for (const auto& pi : cc.punctures)
+        if (!pi.is_edge && !pi.is_vertex) n_face++;
 
-    // Check each puncture appears in exactly one pair
+    if (2 * (int)cc.pairs.size() != n_face)
+        fprintf(stderr, "[WARN seed=%lu] 2×pairs=%d ≠ n_face=%d (n_total=%d)\n",
+                (unsigned long)seed, 2*(int)cc.pairs.size(), n_face, n);
+
+    // Check each face puncture appears in exactly one pair
     std::vector<int> pair_count(n, 0);
     for (const auto& pp : cc.pairs) {
         if (pp.pi_a >= 0 && pp.pi_a < n) pair_count[pp.pi_a]++;
@@ -1353,10 +1383,13 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
         else fprintf(stderr, "[WARN seed=%lu] pair has invalid pi_b=%d\n",
                      (unsigned long)seed, pp.pi_b);
     }
-    for (int i = 0; i < n; i++)
-        if (pair_count[i] != 1)
-            fprintf(stderr, "[WARN seed=%lu] puncture %d appears in %d pairs (expected 1)\n",
-                    (unsigned long)seed, i, pair_count[i]);
+    for (int i = 0; i < n; i++) {
+        bool is_waypoint = cc.punctures[i].is_edge || cc.punctures[i].is_vertex;
+        int expected = is_waypoint ? 0 : 1;
+        if (pair_count[i] != expected)
+            fprintf(stderr, "[WARN seed=%lu] puncture %d appears in %d pairs (expected %d)\n",
+                    (unsigned long)seed, i, pair_count[i], expected);
+    }
 
     // ── 3. Category-data consistency ─────────────────────────────────────
     // T-number should match n_punctures
@@ -1369,15 +1402,23 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
             size_t i = t_pos + 1;
             while (i < cat.size() && cat[i] >= '0' && cat[i] <= '9')
                 t_num = t_num * 10 + (cat[i++] - '0');
-            if (t_num != n)
-                fprintf(stderr, "[WARN seed=%lu] T-number=%d but n_punctures=%d\n",
-                        (unsigned long)seed, t_num, n);
+            if (t_num != n_face)
+                fprintf(stderr, "[WARN seed=%lu] T-number=%d but n_face=%d (n_total=%d)\n",
+                        (unsigned long)seed, t_num, n_face, n);
         }
     }
 
     // ── 4. Q polynomial roots ────────────────────────────────────────────
     for (int i = 0; i < cc.n_Q_roots; i++) {
         double r = cc.Q_roots[i];
+        // For roots near 0, use exact integer evaluation: Q(0) = Q[0]
+        if (std::abs(r) < 1e-10) {
+            int64_t Q0_int = llround(Q[0]);
+            if (Q0_int != 0)
+                fprintf(stderr, "[WARN seed=%lu] Q(root[%d]=%.6g): Q[0]=%ld ≠ 0\n",
+                        (unsigned long)seed, i, r, (long)Q0_int);
+            continue;
+        }
         double Qval = Q[0] + r*(Q[1] + r*(Q[2] + r*Q[3]));
         double cond = std::abs(Q[3]);
         double ax = std::abs(r);
@@ -1473,10 +1514,8 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     }
 
     // ── 8. Interval parity ──────────────────────────────────────────────
-    // Each interval's n_pv should be even after accounting for:
-    //   - Infinity merging: outermost intervals may merge through ∞
-    //   - SR (shared root): pass-through punctures cross interval boundaries
-    // Only warn if no such mechanism explains the odd counts.
+    // Each interval's n_pv (face-interior punctures only) should be even
+    // after accounting for infinity merging and SR pass-through.
     {
         bool has_odd_inner = false;
         int n_iv = (int)cc.intervals.size();
