@@ -150,6 +150,12 @@ struct ClassifiedCase {
     bool has_shared_root;
     bool has_B;                // bubble (closed loop inside tet, T0 only)
 
+    // Cv/Cw positions (tet barycentric coords, valid if has_Cv/has_Cw)
+    bool has_Cv_pos;
+    double Cv_mu[4];          // tet bary coords where v=0
+    bool has_Cw_pos;
+    double Cw_mu[4];          // tet bary coords where w=0
+
     struct PunctureInfo {
         int face;
         double lambda;
@@ -178,36 +184,54 @@ struct ClassifiedCase {
     std::vector<PuncturePair> pairs;
 };
 
-// Check if field=0 is inside tet interior (critical point)
-static bool check_field_zero_in_tet(const int F[4][3]) {
+// Check if field=0 is inside tet interior (critical point).
+// For integer inputs (|F[i][j]| <= R=20), uses exact int64_t arithmetic
+// for the determinant and Cramer numerators.  No thresholds.
+// Returns true and writes barycentric coords to mu_out if found inside.
+static bool check_field_zero_in_tet(const int F[4][3], double mu_out[4] = nullptr) {
     // Solve: sum_i mu_i * F_i = 0, sum mu_i = 1
     // => (F_0-F_3)*mu_0 + (F_1-F_3)*mu_1 + (F_2-F_3)*mu_2 = -F_3
-    double A[3][3], b[3];
+    int64_t A[3][3], b[3];
     for (int c = 0; c < 3; c++) {
-        A[c][0] = F[0][c] - F[3][c];
-        A[c][1] = F[1][c] - F[3][c];
-        A[c][2] = F[2][c] - F[3][c];
-        b[c] = -F[3][c];
+        A[c][0] = (int64_t)F[0][c] - F[3][c];
+        A[c][1] = (int64_t)F[1][c] - F[3][c];
+        A[c][2] = (int64_t)F[2][c] - F[3][c];
+        b[c] = -(int64_t)F[3][c];
     }
-    double det = A[0][0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
-               - A[0][1]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
-               + A[0][2]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]);
-    if (std::abs(det) < 1e-15) return false;
-    double inv = 1.0 / det;
-    double mu[4];
-    mu[0] = inv * (b[0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
-                - A[0][1]*(b[1]*A[2][2]-A[1][2]*b[2])
-                + A[0][2]*(b[1]*A[2][1]-A[1][1]*b[2]));
-    mu[1] = inv * (A[0][0]*(b[1]*A[2][2]-A[1][2]*b[2])
-                - b[0]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
-                + A[0][2]*(A[1][0]*b[2]-b[1]*A[2][0]));
-    mu[2] = inv * (A[0][0]*(A[1][1]*b[2]-b[1]*A[2][1])
-                - A[0][1]*(A[1][0]*b[2]-b[1]*A[2][0])
-                + b[0]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]));
-    mu[3] = 1.0 - mu[0] - mu[1] - mu[2];
-    const double eps = 1e-6;
-    for (int i = 0; i < 4; i++)
-        if (mu[i] < -eps || mu[i] > 1.0 + eps) return false;
+    // det is exact integer; |A[i][j]| <= 2R=40, so |det| < 6*40^3 = 384000
+    int64_t det = A[0][0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
+                - A[0][1]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
+                + A[0][2]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]);
+    if (det == 0) return false;  // singular: degenerate (D11/D22/D33)
+
+    // Cramer numerators (exact integers)
+    int64_t n0 = b[0]*(A[1][1]*A[2][2]-A[1][2]*A[2][1])
+               - A[0][1]*(b[1]*A[2][2]-A[1][2]*b[2])
+               + A[0][2]*(b[1]*A[2][1]-A[1][1]*b[2]);
+    int64_t n1 = A[0][0]*(b[1]*A[2][2]-A[1][2]*b[2])
+               - b[0]*(A[1][0]*A[2][2]-A[1][2]*A[2][0])
+               + A[0][2]*(A[1][0]*b[2]-b[1]*A[2][0]);
+    int64_t n2 = A[0][0]*(A[1][1]*b[2]-b[1]*A[2][1])
+               - A[0][1]*(A[1][0]*b[2]-b[1]*A[2][0])
+               + b[0]*(A[1][0]*A[2][1]-A[1][1]*A[2][0]);
+    int64_t n3 = det - n0 - n1 - n2;  // mu_3 = 1 - mu_0 - mu_1 - mu_2
+
+    // Inside tet: all mu_k = n_k/det in [0, 1], i.e. n_k and det have same sign
+    // and |n_k| <= |det|.
+    if (det > 0) {
+        if (n0 < 0 || n1 < 0 || n2 < 0 || n3 < 0) return false;
+        if (n0 > det || n1 > det || n2 > det || n3 > det) return false;
+    } else {
+        if (n0 > 0 || n1 > 0 || n2 > 0 || n3 > 0) return false;
+        if (n0 < det || n1 < det || n2 < det || n3 < det) return false;
+    }
+    if (mu_out) {
+        double inv = 1.0 / (double)det;
+        mu_out[0] = (double)n0 * inv;
+        mu_out[1] = (double)n1 * inv;
+        mu_out[2] = (double)n2 * inv;
+        mu_out[3] = (double)n3 * inv;
+    }
     return true;
 }
 
@@ -301,6 +325,8 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     cc.gpu = gpu;
     cc.has_shared_root = false;
     cc.has_B = false;
+    cc.has_Cv_pos = false;
+    cc.has_Cw_pos = false;
 
     // Convert to double arrays
     double Vd[4][3], Wd[4][3];
@@ -763,13 +789,16 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     //   C1v/C1w : same on edge (d=1)
     //   C0v/C0w : same at vertex (d=0)
 
-    // Tet interior: v=0 or w=0 anywhere inside
-    // Q[0] = det(A) = 0 means λ=0 is a Q-root → v=0 at the PV point (Cv).
-    // Q[3] = det(B) = 0 means λ→∞ is a Q-root → w=0 (Cw).
-    // check_field_zero_in_tet fails when det=0 (singular system), so we
-    // also detect Cv/Cw via Q coefficients (exact for integer-derived doubles).
-    bool has_Cv = check_field_zero_in_tet(gpu.V) || (Q[0] == 0.0);
-    bool has_Cw = check_field_zero_in_tet(gpu.W) || (Q[3] == 0.0);
+    // Tet interior: v=0 or w=0 anywhere inside.
+    // check_field_zero_in_tet solves V*mu=0 (or W*mu=0) via exact integer
+    // Cramer's rule.  Returns false when det=0 (singular: D11/D22/D33
+    // degeneracy) or when the solution is outside the tet.
+    // No Q[0]/Q[3] fallback: Q(0)=0 means det(A)=0 (singular), which is
+    // necessary but NOT sufficient for v=0 inside the tet.
+    bool has_Cv = check_field_zero_in_tet(gpu.V, cc.Cv_mu);
+    bool has_Cw = check_field_zero_in_tet(gpu.W, cc.Cw_mu);
+    cc.has_Cv_pos = has_Cv;
+    cc.has_Cw_pos = has_Cw;
 
     // Face/edge/vertex crossings at special lambda values
     const double lam_zero_eps = 1e-6;
@@ -935,12 +964,14 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             });
         }
 
-        // Cw merging: merge leftmost and rightmost intervals (they connect
-        // through infinity on the projective line)
-        bool has_cw_tag = (cc.category.find("Cw") != std::string::npos);
+        // Infinity merging: when Q[3]=0, the PV curve wraps through infinity,
+        // connecting the leftmost and rightmost Q-intervals on the projective line.
+        // This is a polynomial topology property, independent of the Cw tag
+        // (which requires w=0 to be inside the tet).
+        bool q3_zero = (Q[3] == 0.0);
         std::set<int> right_pis_set, left_pis_set;
 
-        if (has_cw_tag && iv_puncs.size() >= 2) {
+        if (q3_zero && iv_puncs.size() >= 2) {
             int left_iv = iv_puncs.begin()->first;
             int right_iv = iv_puncs.rbegin()->first;
             if (left_iv != right_iv &&
@@ -963,7 +994,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         for (auto& [iv_idx, pis] : iv_puncs) {
             for (int j = 0; j + 1 < (int)pis.size(); j += 2) {
                 int pi_a = pis[j], pi_b = pis[j + 1];
-                bool is_cross = has_cw_tag &&
+                bool is_cross = q3_zero &&
                     ((right_pis_set.count(pi_a) && left_pis_set.count(pi_b)) ||
                      (left_pis_set.count(pi_a) && right_pis_set.count(pi_b)));
                 cc.pairs.push_back({pi_a, pi_b, is_cross, iv_idx});
@@ -1082,7 +1113,19 @@ static void print_json(const ClassifiedCase& cc) {
     printf("],");
 
     printf("\"has_shared_root\":%s,", cc.has_shared_root ? "true" : "false");
-    printf("\"has_B\":%s", cc.has_B ? "true" : "false");
+    printf("\"has_B\":%s,", cc.has_B ? "true" : "false");
+
+    // Cv/Cw positions (tet barycentric)
+    if (cc.has_Cv_pos)
+        printf("\"Cv_mu\":[%.15g,%.15g,%.15g,%.15g],",
+               cc.Cv_mu[0], cc.Cv_mu[1], cc.Cv_mu[2], cc.Cv_mu[3]);
+    else
+        printf("\"Cv_mu\":null,");
+    if (cc.has_Cw_pos)
+        printf("\"Cw_mu\":[%.15g,%.15g,%.15g,%.15g]",
+               cc.Cw_mu[0], cc.Cw_mu[1], cc.Cw_mu[2], cc.Cw_mu[3]);
+    else
+        printf("\"Cw_mu\":null");
     printf("}\n");
 }
 

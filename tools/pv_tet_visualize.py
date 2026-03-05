@@ -316,29 +316,21 @@ def find_d00_vertices(case_data):
 
 
 def compute_cv_position(case_data):
-    """Compute Cv position (lambda=0): mu_i = P_i(0)/Q(0)."""
-    Q = case_data['Q_coeffs']
-    P = case_data['P_coeffs']
-    Q0 = Q[0]
-    if abs(Q0) < 1e-30:
+    """Read Cv position from C++ JSON (tet barycentric coords)."""
+    mu = case_data.get('Cv_mu')
+    if mu is None:
         return None
-    mu = np.array([P[i][0] / Q0 for i in range(4)])
-    if np.all(mu > -1e-6) and np.all(mu < 1 + 1e-6):
-        return bary_tet_to_3d(np.clip(mu, 0, 1))
-    return None
+    mu = np.clip(mu, 0, 1)
+    return bary_tet_to_3d(mu)
 
 
 def compute_cw_position(case_data):
-    """Compute Cw position (lambda->inf): mu_i = P_i[3]/Q[3]."""
-    Q = case_data['Q_coeffs']
-    P = case_data['P_coeffs']
-    Q3 = Q[3] if len(Q) > 3 else 0
-    if abs(Q3) < 1e-30:
+    """Read Cw position from C++ JSON (tet barycentric coords)."""
+    mu = case_data.get('Cw_mu')
+    if mu is None:
         return None
-    mu = np.array([P[i][3] / Q3 if len(P[i]) > 3 else 0 for i in range(4)])
-    if np.all(mu > -1e-6) and np.all(mu < 1 + 1e-6):
-        return bary_tet_to_3d(np.clip(mu, 0, 1))
-    return None
+    mu = np.clip(mu, 0, 1)
+    return bary_tet_to_3d(mu)
 
 
 def draw_tet_wireframe(ax):
