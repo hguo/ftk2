@@ -906,8 +906,8 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     }
 
     // Use deduplicated puncture count for classification.
-    // Edge/vertex punctures at critical λ (λ=0 for C1v/C0v, λ=∞ for
-    // C1w/C0w) are waypoints: the PV curve passes through the sub-simplex
+    // Edge/vertex punctures at critical λ (λ=0 for Cv1/Cv0, λ=∞ for
+    // Cw1/Cw0) are waypoints: the PV curve passes through the sub-simplex
     // smoothly at the field-zero critical point.  These are excluded from
     // T-count, interval occupancy, and pairing.
     //
@@ -953,14 +953,18 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     std::vector<std::string> tags;
     if (cc.has_shared_root) tags.push_back("SR");
 
-    // Critical-point degeneracies: C[d]{v|w}
-    //   d = dimension of simplex element (omitted for tet interior = nondegenerate)
+    // Critical-point degeneracies: Cv{d} / Cw{d}
+    //   d = dimension of simplex element where the critical point lies
+    //       (omitted when the zero is in the tet interior)
     //   v = lambda=0 (v-field zero), w = lambda->inf (w-field zero)
     //
-    //   Cv/Cw   : field zero in tet interior (nondegenerate, d=3 omitted)
-    //   C2v/C2w : PV curve crosses face at lambda=0 / lambda->inf (d=2)
-    //   C1v/C1w : same on edge (d=1)
-    //   C0v/C0w : same at vertex (d=0)
+    //   Cv/Cw   : field zero in tet interior (d=3 omitted)
+    //   Cv2/Cw2 : field zero on face (d=2)
+    //   Cv1/Cw1 : field zero on edge (d=1)
+    //   Cv0/Cw0 : field zero at vertex (d=0)
+    //
+    // Only the most specific (lowest-dimension) tag is emitted;
+    // e.g. Cv on edge → Cv1 (not Cv + Cv1).
 
     // Tet interior: v=0 or w=0 anywhere inside.
     // check_field_zero_in_tet solves V*mu=0 (or W*mu=0) via exact integer
@@ -1003,14 +1007,21 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         if (pi.is_edge && !is_lam0 && !is_laminf) has_D01 = true;
     }
 
-    if (has_Cv)  tags.push_back("Cv");
-    if (has_Cw)  tags.push_back("Cw");
-    if (has_C2v) tags.push_back("C2v");
-    if (has_C2w) tags.push_back("C2w");
-    if (has_C1v) tags.push_back("C1v");
-    if (has_C1w) tags.push_back("C1w");
-    if (has_C0v) tags.push_back("C0v");
-    if (has_C0w) tags.push_back("C0w");
+    // Emit a single Cv{d}/Cw{d} tag using the most specific (lowest) d.
+    // When Cv and a face/edge/vertex tag both hold for the same critical point,
+    // only the most specific tag is kept (e.g. Cv + C1v → Cv1, not Cv_C1v).
+    if (has_Cv || has_C2v || has_C1v || has_C0v) {
+        if (has_C0v)      tags.push_back("Cv0");
+        else if (has_C1v) tags.push_back("Cv1");
+        else if (has_C2v) tags.push_back("Cv2");
+        else              tags.push_back("Cv");
+    }
+    if (has_Cw || has_C2w || has_C1w || has_C0w) {
+        if (has_C0w)      tags.push_back("Cw0");
+        else if (has_C1w) tags.push_back("Cw1");
+        else if (has_C2w) tags.push_back("Cw2");
+        else              tags.push_back("Cw");
+    }
 
     // ─── Dmd tags: PV m-manifold on d-cell ───────────────────────────────
     // D00: point on vertex (V∥W at vertex)
@@ -1119,7 +1130,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     // handle SR pass-through unpaired remainders.
     {
         // Group non-waypoint puncture indices by interval.
-        // Only critical waypoints (C1v/C0v/C1w/C0w at λ=0/∞) are excluded.
+        // Only critical waypoints (Cv1/Cv0/Cw1/Cw0 at λ=0/∞) are excluded.
         std::map<int, std::vector<int>> iv_puncs;
         for (int i = 0; i < (int)cc.punctures.size(); i++) {
             if (is_waypoint(cc.punctures[i]))
@@ -1379,7 +1390,7 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     }
 
     // ── 2. Pair completeness ─────────────────────────────────────────────
-    // Waypoints (C1v/C0v/C1w/C0w at λ=0/∞) are not paired.
+    // Waypoints (Cv1/Cv0/Cw1/Cw0 at λ=0/∞) are not paired.
     // All other punctures (including D01/D00 at generic λ) must be paired.
     int n_face = 0;
     for (const auto& pi : cc.punctures)
@@ -1498,32 +1509,31 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
         const auto& pi = cc.punctures[i];
         bool is_lam0 = (pi.lambda == 0.0);
         bool is_laminf = std::isinf(pi.lambda);
-        // D01 at λ=0 should be C1v, not D01
+        // D01 at λ=0 should be Cv1, not D01
         if (pi.is_edge && is_lam0) {
-            // This puncture should contribute C1v, not D01 — check category
             if (cc.category.find("D01") != std::string::npos &&
-                cc.category.find("C1v") == std::string::npos)
-                fprintf(stderr, "[WARN seed=%lu] edge puncture at λ=0 tagged D01 without C1v\n",
+                cc.category.find("Cv1") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] edge puncture at λ=0 tagged D01 without Cv1\n",
                         (unsigned long)seed);
         }
-        // D00 at λ=0 should be C0v, not D00
+        // D00 at λ=0 should be Cv0, not D00
         if (pi.is_vertex && is_lam0) {
             if (cc.category.find("D00") != std::string::npos &&
-                cc.category.find("C0v") == std::string::npos)
-                fprintf(stderr, "[WARN seed=%lu] vertex puncture at λ=0 tagged D00 without C0v\n",
+                cc.category.find("Cv0") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] vertex puncture at λ=0 tagged D00 without Cv0\n",
                         (unsigned long)seed);
         }
         // Same for λ=∞
         if (pi.is_edge && is_laminf) {
             if (cc.category.find("D01") != std::string::npos &&
-                cc.category.find("C1w") == std::string::npos)
-                fprintf(stderr, "[WARN seed=%lu] edge puncture at λ=∞ tagged D01 without C1w\n",
+                cc.category.find("Cw1") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] edge puncture at λ=∞ tagged D01 without Cw1\n",
                         (unsigned long)seed);
         }
         if (pi.is_vertex && is_laminf) {
             if (cc.category.find("D00") != std::string::npos &&
-                cc.category.find("C0w") == std::string::npos)
-                fprintf(stderr, "[WARN seed=%lu] vertex puncture at λ=∞ tagged D00 without C0w\n",
+                cc.category.find("Cw0") == std::string::npos)
+                fprintf(stderr, "[WARN seed=%lu] vertex puncture at λ=∞ tagged D00 without Cw0\n",
                         (unsigned long)seed);
         }
     }

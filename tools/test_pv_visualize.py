@@ -69,8 +69,8 @@ class VisualizeChecker:
 
         for i in range(n):
             if i not in punc_color:
-                # Unpaired punctures (T-odd with C1v/C0v/C1w/C0w) are OK grey
-                has_crit = any(tag in cat for tag in ['C1v', 'C0v', 'C1w', 'C0w'])
+                # Unpaired punctures (T-odd with Cv1/Cv0/Cw1/Cw0) are OK grey
+                has_crit = any(tag in cat for tag in ['Cv1', 'Cv0', 'Cw1', 'Cw0'])
                 if not has_crit:
                     self.errors.append(
                         f"{prefix}: puncture {i} has no segment color (grey fallback)")
@@ -78,7 +78,7 @@ class VisualizeChecker:
                 n_uncolored = sum(1 for j in range(n) if j not in punc_color)
                 if n_uncolored > 1:
                     self.errors.append(
-                        f"{prefix}: {n_uncolored} punctures uncolored (max 1 for C1v/C0v)")
+                        f"{prefix}: {n_uncolored} punctures uncolored (max 1 for Cv1/Cv0)")
 
         # ── 2. Cv/Cw marker color matches segment (not fixed green) ──
         if 'Cv' in cat and case_data.get('Cv_mu') is not None:

@@ -15,6 +15,7 @@ Usage:
 import json
 import sys
 import os
+import re
 import argparse
 import numpy as np
 import matplotlib
@@ -450,12 +451,16 @@ def draw_special_points(ax, case_data, segments=None):
                               edgecolor='#cc00cc', linewidth=1.2,
                               boxstyle='round,pad=0.3'))
 
-    # Cv: critical point of v at lambda=0
+    # Cv/Cv2/Cv1/Cv0: critical point of v at lambda=0
     cv_cw_default = '#008800'  # green fallback
-    if 'Cv' in category:
+    # Extract specific Cv tag from category (Cv0, Cv1, Cv2, or Cv)
+    cv_tag = None
+    cv_m = re.search(r'\bCv(\d?)\b', category)
+    if cv_m:
+        cv_tag = 'Cv' + cv_m.group(1)  # e.g. "Cv1", "Cv2", or "Cv"
+    if cv_tag:
         pos = compute_cv_position(case_data)
         if pos is not None:
-            # Use segment color if Cv lies on a curve segment, else green
             seg_color = _find_segment_for_lambda(0.0, segments)
             cv_color = seg_color if seg_color != '#333333' else cv_cw_default
             ax.scatter(pos[0], pos[1], pos[2], c=cv_color, s=200,
@@ -466,18 +471,21 @@ def draw_special_points(ax, case_data, segments=None):
                       [pos[2], pos[2]+off[2]],
                       color=cv_color, linewidth=1.2, linestyle='-')
             ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    r'Cv ($\lambda=0$)',
+                    cv_tag + r' ($\lambda=0$)',
                     fontsize=8, ha='right', va='bottom',
                     color=cv_color, fontweight='bold',
                     bbox=dict(facecolor='#eeffee', alpha=0.9,
                               edgecolor=cv_color, linewidth=1.2,
                               boxstyle='round,pad=0.3'))
 
-    # Cw: critical point of w at lambda->inf
-    if 'Cw' in category:
+    # Cw/Cw2/Cw1/Cw0: critical point of w at lambda->inf
+    cw_tag = None
+    cw_m = re.search(r'\bCw(\d?)\b', category)
+    if cw_m:
+        cw_tag = 'Cw' + cw_m.group(1)
+    if cw_tag:
         pos = compute_cw_position(case_data)
         if pos is not None:
-            # Use segment color if Cw lies on a segment reaching infinity
             cw_color = cv_cw_default
             for seg in segments:
                 if (seg.get('infinity_spanning', False) or
@@ -492,7 +500,7 @@ def draw_special_points(ax, case_data, segments=None):
                       [pos[2], pos[2]+off[2]],
                       color=cw_color, linewidth=1.2, linestyle='-')
             ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    r'Cw ($\lambda \to \infty$)',
+                    cw_tag + r' ($\lambda \to \infty$)',
                     fontsize=8, ha='left', va='bottom',
                     color=cw_color, fontweight='bold',
                     bbox=dict(facecolor='#eeffee', alpha=0.9,
@@ -837,10 +845,14 @@ def draw_lambda_ring(ax, case_data, segments):
                               edgecolor=d_color, linewidth=0.8))
 
     # ── Mark Cv/Cw on ring (text labels, like SR) ──
-    # Cv: critical point of v (v=0) at λ=0; Cw: critical point of w at λ→∞
+    # Cv{d}: critical point of v (v=0) at λ=0; Cw{d}: critical point of w at λ→∞
     # Use segment color when Cv/Cw lies on a curve segment, else green fallback
     cv_cw_default = '#008800'
-    if 'Cv' in category:
+    cv_tag_ring = None
+    cv_mr = re.search(r'\bCv(\d?)\b', category)
+    if cv_mr:
+        cv_tag_ring = 'Cv' + cv_mr.group(1)
+    if cv_tag_ring:
         seg_color = _find_segment_for_lambda(0.0, segments)
         cv_color = seg_color if seg_color != '#333333' else cv_cw_default
         a = lambda_to_angle(0.0, scale)
@@ -851,13 +863,17 @@ def draw_lambda_ring(ax, case_data, segments):
         lx, ly = angle_to_xy(a, lr)
         mx, my = angle_to_xy(a, R_ring + 0.06)
         ax.plot([mx, lx], [my, ly], '-', color=cv_color, linewidth=0.8)
-        ax.text(lx, ly, r'Cv ($\lambda=0$)',
+        ax.text(lx, ly, cv_tag_ring + r' ($\lambda=0$)',
                 ha='center', va='center', fontsize=7,
                 color=cv_color, fontweight='bold',
                 bbox=dict(boxstyle='round,pad=0.15',
                           facecolor='#eeffee',
                           edgecolor=cv_color, linewidth=0.8))
-    if 'Cw' in category:
+    cw_tag_ring = None
+    cw_mr = re.search(r'\bCw(\d?)\b', category)
+    if cw_mr:
+        cw_tag_ring = 'Cw' + cw_mr.group(1)
+    if cw_tag_ring:
         cw_color = cv_cw_default
         for seg in segments:
             if (seg.get('infinity_spanning', False) or
@@ -872,7 +888,7 @@ def draw_lambda_ring(ax, case_data, segments):
         lx, ly = angle_to_xy(a, lr)
         mx, my = angle_to_xy(a, R_ring + 0.06)
         ax.plot([mx, lx], [my, ly], '-', color=cw_color, linewidth=0.8)
-        ax.text(lx, ly, r'Cw ($\lambda \to \infty$)',
+        ax.text(lx, ly, cw_tag_ring + r' ($\lambda \to \infty$)',
                 ha='center', va='center', fontsize=7,
                 color=cw_color, fontweight='bold',
                 bbox=dict(boxstyle='round,pad=0.15',
