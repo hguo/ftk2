@@ -1771,6 +1771,7 @@ int main(int argc, char** argv)
     int max_cases = 100000;
     int batch_size = 10000000;  // 10M per batch
     const char* seeds_arg = nullptr;
+    const char* vw_file = nullptr;
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -1784,6 +1785,8 @@ int main(int argc, char** argv)
             base_seed = (uint64_t)atoll(argv[++i]);
         else if (strcmp(argv[i], "--seeds") == 0 && i + 1 < argc)
             seeds_arg = argv[++i];
+        else if (strcmp(argv[i], "--vw-file") == 0 && i + 1 < argc)
+            vw_file = argv[++i];
         else if (strcmp(argv[i], "--max-cases") == 0 && i + 1 < argc)
             max_cases = atoi(argv[++i]);
         else if (strcmp(argv[i], "--batch-size") == 0 && i + 1 < argc)
@@ -1795,10 +1798,66 @@ int main(int argc, char** argv)
             fprintf(stderr, "  --range R           Integer field range [-R, R] (default: 20)\n");
             fprintf(stderr, "  --seed S            Base random seed (default: 42)\n");
             fprintf(stderr, "  --seeds S1,S2,...    Replay specific seeds on CPU (no GPU needed)\n");
+            fprintf(stderr, "  --vw-file FILE      Read V,W pairs from file (24 ints per line)\n");
             fprintf(stderr, "  --max-cases C       Max output cases (default: 100000)\n");
             fprintf(stderr, "  --batch-size B      GPU batch size (default: 10M)\n");
             return 0;
         }
+    }
+
+    // ─── VW-file mode: read V,W from file, classify each ──────────────────
+    if (vw_file) {
+        FILE* fp = fopen(vw_file, "r");
+        if (!fp) { fprintf(stderr, "Cannot open %s\n", vw_file); return 1; }
+        fprintf(stderr, "VW-file mode: reading from %s\n", vw_file);
+        int line_num = 0;
+        int best_punct = 0;
+        char linebuf[1024];
+        while (fgets(linebuf, sizeof(linebuf), fp)) {
+            line_num++;
+            TetCaseGPU tc;
+            memset(&tc, 0, sizeof(tc));
+            tc.seed = line_num;
+            int vals[24];
+            int n = sscanf(linebuf, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+                &vals[0],&vals[1],&vals[2],&vals[3],&vals[4],&vals[5],
+                &vals[6],&vals[7],&vals[8],&vals[9],&vals[10],&vals[11],
+                &vals[12],&vals[13],&vals[14],&vals[15],&vals[16],&vals[17],
+                &vals[18],&vals[19],&vals[20],&vals[21],&vals[22],&vals[23]);
+            if (n != 24) continue;
+            for (int i = 0; i < 4; i++)
+                for (int j = 0; j < 3; j++) {
+                    tc.V[i][j] = vals[i*3+j];
+                    tc.W[i][j] = vals[12+i*3+j];
+                }
+            // Solve PV on 4 faces
+            static const int fv[4][3] = {{1,3,2},{0,2,3},{0,3,1},{0,1,2}};
+            tc.total_punctures = 0;
+            for (int fi = 0; fi < 4; fi++) {
+                int Vf[3][3], Wf[3][3];
+                for (int vi = 0; vi < 3; vi++)
+                    for (int ci = 0; ci < 3; ci++) {
+                        Vf[vi][ci] = tc.V[fv[fi][vi]][ci];
+                        Wf[vi][ci] = tc.W[fv[fi][vi]][ci];
+                    }
+                tc.face[fi] = solve_pv_triangle_device(Vf, Wf);
+                tc.total_punctures += tc.face[fi].count;
+            }
+            ClassifiedCase cc = classify_case(tc);
+            int np = (int)cc.punctures.size();
+            if (np > best_punct) {
+                best_punct = np;
+                fprintf(stderr, "  line %d: %s (%d punctures, raw=%d)\n",
+                        line_num, cc.category.c_str(), np, cc.gpu.total_punctures);
+                print_json(cc);
+            }
+            if (np >= 12) {
+                fprintf(stderr, "*** T12 FOUND at line %d! ***\n", line_num);
+            }
+        }
+        fclose(fp);
+        fprintf(stderr, "Done. %d lines, best=%d punctures\n", line_num, best_punct);
+        return 0;
     }
 
     // ─── Seeds mode: CPU-only replay of specific seeds ───────────────────
