@@ -148,6 +148,7 @@ struct ClassifiedCase {
     double Q_roots[3];
     double P_coeffs[4][4];
     bool has_shared_root;
+    bool has_non_isolated_sr;  // gcd(Q, P_k) degree ≥ 2 for some k
     bool has_B;                // bubble (closed loop inside tet, T0 only)
 
     // Cv/Cw positions (tet barycentric coords, valid if has_Cv/has_Cw)
@@ -316,6 +317,65 @@ static bool has_shared_root_resultant(const __int128 Q_i128[4],
     return false;
 }
 
+// ─── Exact polynomial GCD degree via pseudo-remainder ────────────────────
+// Returns the degree of gcd(a, b) where a, b have integer coefficients
+// (stored as double, degree ≤ 3).  Uses __int128 to avoid overflow during
+// the pseudo-remainder steps.  Content reduction after each step keeps
+// coefficients bounded.
+static int poly_gcd_degree_i128(const double* a_in, int da, const double* b_in, int db) {
+    __int128 p[4] = {}, q[4] = {};
+    for (int i = 0; i <= std::min(da, 3); i++) p[i] = llround(a_in[i]);
+    for (int i = 0; i <= std::min(db, 3); i++) q[i] = llround(b_in[i]);
+
+    while (da > 0 && p[da] == 0) da--;
+    while (db > 0 && q[db] == 0) db--;
+    if (da == 0 && p[0] == 0) return db;
+    if (db == 0 && q[0] == 0) return da;
+
+    int dp = da, dq = db;
+
+    auto content_reduce = [](__int128* poly, int d) {
+        if (d < 0) return;
+        __int128 g = poly[0] < 0 ? -poly[0] : poly[0];
+        for (int i = 1; i <= d; i++) {
+            __int128 v = poly[i] < 0 ? -poly[i] : poly[i];
+            while (v != 0) { __int128 t = g % v; g = v; v = t; }
+        }
+        if (g > 1) for (int i = 0; i <= d; i++) poly[i] /= g;
+    };
+
+    while (!(dq == 0 && q[0] == 0)) {
+        if (dp < dq) {
+            std::swap(dp, dq);
+            for (int i = 0; i < 4; i++) std::swap(p[i], q[i]);
+        }
+        // Pseudo-remainder: r = lc(q) * p - (p[dp]/...) * q * x^shift
+        __int128 r[4] = {};
+        int dr = dp;
+        for (int i = 0; i <= dp; i++) r[i] = p[i];
+
+        while (dr >= dq && dr >= 0) {
+            if (r[dr] == 0) { dr--; continue; }
+            __int128 rdr = r[dr];
+            __int128 qdq = q[dq];
+            int shift = dr - dq;
+            for (int i = 0; i <= dr; i++) r[i] *= qdq;
+            for (int i = 0; i <= dq; i++) r[shift + i] -= rdr * q[i];
+            dr--;
+        }
+        if (dr < 0) { dr = 0; r[0] = 0; }
+        while (dr > 0 && r[dr] == 0) dr--;
+
+        content_reduce(r, dr);
+
+        dp = dq;
+        for (int i = 0; i < 4; i++) p[i] = q[i];
+        dq = dr;
+        for (int i = 0; i < 4; i++) q[i] = r[i];
+    }
+    return dp;
+}
+
 // ─── Exact edge/vertex detection via Sturm counting on N_k ──────────────
 // For each regular puncture on a face, determines which face-barycentric
 // coordinates are exactly zero by checking if the bary-numerator polynomial
@@ -465,6 +525,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     ClassifiedCase cc;
     cc.gpu = gpu;
     cc.has_shared_root = false;
+    cc.has_non_isolated_sr = false;
     cc.has_B = false;
     cc.has_Cv_pos = false;
     cc.has_Cw_pos = false;
@@ -951,7 +1012,17 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
 
     // Collect degeneracy tags (joined without leading underscore after Q-type)
     std::vector<std::string> tags;
-    if (cc.has_shared_root) tags.push_back("SR");
+
+    // Shared-root classification: SR (isolated, gcd=1) vs ISR (non-isolated, gcd≥2)
+    if (cc.has_shared_root) {
+        // Check gcd degree for each face to distinguish ISR from SR
+        cc.has_non_isolated_sr = false;
+        for (int k = 0; k < 4; k++) {
+            int gd = poly_gcd_degree_i128(Q, 3, P[k], 3);
+            if (gd >= 2) { cc.has_non_isolated_sr = true; break; }
+        }
+        tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
+    }
 
     // Critical-point degeneracies: Cv{d} / Cw{d}
     //   d = dimension of simplex element where the critical point lies
@@ -1334,6 +1405,7 @@ static void print_json(const ClassifiedCase& cc) {
     printf("],");
 
     printf("\"has_shared_root\":%s,", cc.has_shared_root ? "true" : "false");
+    printf("\"has_non_isolated_sr\":%s,", cc.has_non_isolated_sr ? "true" : "false");
     printf("\"has_B\":%s,", cc.has_B ? "true" : "false");
 
     // Cv/Cw positions (tet barycentric)
@@ -1392,15 +1464,38 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     // ── 2. Pair completeness ─────────────────────────────────────────────
     // Waypoints (Cv1/Cv0/Cw1/Cw0 at λ=0/∞) are not paired.
     // All other punctures (including D01/D00 at generic λ) must be paired.
+    //
+    // With SR: each Q-root shared with some P_k allows one unpaired
+    // puncture (the curve enters/exits via SR passage instead of face
+    // crossing).  The discrepancy (n_face - 2×pairs) must be ≤ the
+    // number of Q-roots that are shared with at least one P_k.
     int n_face = 0;
     for (const auto& pi : cc.punctures)
         if (!is_waypoint(pi)) n_face++;
 
-    if (2 * (int)cc.pairs.size() != n_face)
-        fprintf(stderr, "[WARN seed=%lu] 2×pairs=%d ≠ n_face=%d (n_total=%d)\n",
-                (unsigned long)seed, 2*(int)cc.pairs.size(), n_face, n);
+    int n_sr_roots = 0;
+    if (cc.has_shared_root) {
+        // Count Q-roots where at least one P_k vanishes
+        for (int ri = 0; ri < cc.n_Q_roots; ri++) {
+            double r = cc.Q_roots[ri];
+            for (int k = 0; k < 4; k++) {
+                double pk_val = P[k][0] + P[k][1]*r + P[k][2]*r*r + P[k][3]*r*r*r;
+                double pk_scale = std::max({std::abs(P[k][0]), std::abs(P[k][1]),
+                                            std::abs(P[k][2]), std::abs(P[k][3]), 1.0});
+                if (std::abs(pk_val) < pk_scale * 1e-6) {
+                    n_sr_roots++;
+                    break;
+                }
+            }
+        }
+    }
 
-    // Check each non-waypoint puncture appears in exactly one pair
+    int discrepancy = n_face - 2 * (int)cc.pairs.size();
+    if (discrepancy != 0 && discrepancy > n_sr_roots)
+        fprintf(stderr, "[WARN seed=%lu] 2×pairs=%d ≠ n_face=%d (n_total=%d, sr_roots=%d)\n",
+                (unsigned long)seed, 2*(int)cc.pairs.size(), n_face, n, n_sr_roots);
+
+    // Check each non-waypoint puncture appears in at most one pair
     std::vector<int> pair_count(n, 0);
     for (const auto& pp : cc.pairs) {
         if (pp.pi_a >= 0 && pp.pi_a < n) pair_count[pp.pi_a]++;
@@ -1411,10 +1506,14 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
                      (unsigned long)seed, pp.pi_b);
     }
     for (int i = 0; i < n; i++) {
-        int expected = is_waypoint(cc.punctures[i]) ? 0 : 1;
-        if (pair_count[i] != expected)
-            fprintf(stderr, "[WARN seed=%lu] puncture %d appears in %d pairs (expected %d)\n",
-                    (unsigned long)seed, i, pair_count[i], expected);
+        if (is_waypoint(cc.punctures[i])) {
+            if (pair_count[i] != 0)
+                fprintf(stderr, "[WARN seed=%lu] waypoint puncture %d appears in %d pairs\n",
+                        (unsigned long)seed, i, pair_count[i]);
+        } else if (pair_count[i] > 1) {
+            fprintf(stderr, "[WARN seed=%lu] puncture %d appears in %d pairs (expected ≤1)\n",
+                    (unsigned long)seed, i, pair_count[i]);
+        }
     }
 
     // ── 3. Category-data consistency ─────────────────────────────────────
@@ -1492,7 +1591,7 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
                     (unsigned long)seed);
     }
 
-    // ── 6. SR verification ──────────────────────────────────────────────
+    // ── 6. SR/ISR verification ─────────────────────────────────────────
     if (cc.has_shared_root) {
         // Verify: resultant(Q, P_k) = 0 for at least one k
         __int128 Qi[4], Pi[4][4];
@@ -1501,6 +1600,19 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
             for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
         if (!has_shared_root_resultant(Qi, Pi))
             fprintf(stderr, "[WARN seed=%lu] has_shared_root=true but resultant check fails\n",
+                    (unsigned long)seed);
+
+        // Cross-check ISR flag: gcd(Q, P_k) ≥ 2 for some k
+        bool verified_isr = false;
+        for (int k = 0; k < 4; k++) {
+            int gd = poly_gcd_degree_i128(Q, 3, P[k], 3);
+            if (gd >= 2) { verified_isr = true; break; }
+        }
+        if (cc.has_non_isolated_sr && !verified_isr)
+            fprintf(stderr, "[WARN seed=%lu] ISR tag but no gcd degree ≥ 2\n",
+                    (unsigned long)seed);
+        if (!cc.has_non_isolated_sr && verified_isr)
+            fprintf(stderr, "[WARN seed=%lu] gcd degree ≥ 2 found but ISR tag missing\n",
                     (unsigned long)seed);
     }
 
@@ -1581,7 +1693,7 @@ static TetCaseGPU generate_tet_from_seed(uint64_t global_id, uint64_t base_seed,
     TetCaseGPU tc;
 
     if (global_id == 0) {
-        // Seed 0: analytically constructed bubble case (T0_Q2_B)
+        // Seed 0: analytically constructed bubble case (T0_Q2-_Cv_B)
         // V∥W never holds inside tet, but PV curve forms a closed loop.
         static const int bubble_V[4][3] = {{2,3,-1},{-1,-2,-1},{0,-1,2},{-2,-2,0}};
         static const int bubble_W[4][3] = {{3,0,3},{-1,0,-1},{-3,-2,-1},{0,3,-3}};
@@ -1589,6 +1701,16 @@ static TetCaseGPU generate_tet_from_seed(uint64_t global_id, uint64_t base_seed,
             for (int j = 0; j < 3; j++) {
                 tc.V[i][j] = bubble_V[i][j];
                 tc.W[i][j] = bubble_W[i][j];
+            }
+    } else if (global_id == 1) {
+        // Seed 1: non-isolated SR case (Q3+ with gcd(Q,P_2) deg 2).
+        // Found by random search at R=5.
+        static const int nisr_V[4][3] = {{5,0,1},{3,2,4},{1,2,-2},{2,4,4}};
+        static const int nisr_W[4][3] = {{0,1,3},{3,-5,3},{0,4,5},{1,1,0}};
+        for (int i = 0; i < 4; i++)
+            for (int j = 0; j < 3; j++) {
+                tc.V[i][j] = nisr_V[i][j];
+                tc.W[i][j] = nisr_W[i][j];
             }
     } else {
         uint32_t state = (uint32_t)(global_id ^ (base_seed * 2654435761ULL));

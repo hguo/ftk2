@@ -508,7 +508,9 @@ def draw_special_points(ax, case_data, segments=None):
                               boxstyle='round,pad=0.3'))
 
 
-    # SR: shared root — Q-root where some P_k also vanishes
+    # SR/ISR: shared root — Q-root where some P_k also vanishes
+    # ISR = non-isolated SR (gcd(Q, P_k) ≥ 2)
+    sr_label_prefix = 'ISR' if 'ISR' in category else 'SR'
     if 'SR' in category:
         Q = case_data['Q_coeffs']
         P = case_data['P_coeffs']
@@ -552,7 +554,7 @@ def draw_special_points(ax, case_data, segments=None):
                       [pos[2], pos[2]+off[2]],
                       color='#ff8800', linewidth=1.2, linestyle='-')
             ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    f'SR ($\\lambda={qr:.2f}$)',
+                    f'{sr_label_prefix} ($\\lambda={qr:.2f}$)',
                     fontsize=8, ha='left', va='bottom',
                     color='#cc6600', fontweight='bold',
                     bbox=dict(facecolor='#fff8ee', alpha=0.9,
@@ -757,9 +759,10 @@ def draw_lambda_ring(ax, case_data, segments):
                 bbox=dict(boxstyle='round,pad=0.15', facecolor='white',
                           edgecolor='#cccccc', linewidth=0.5))
 
-    # ── Mark SR points on ring ──
-    # SR: Q-root where some P_k also vanishes (true shared root)
+    # ── Mark SR/ISR points on ring ──
+    # SR: isolated shared root (gcd=1); ISR: non-isolated (gcd≥2)
     category = case_data.get('category', '')
+    sr_ring_label = 'ISR' if 'ISR' in category else 'SR'
     if 'SR' in category:
         Q_coeffs = case_data['Q_coeffs']
         P_coeffs = case_data['P_coeffs']
@@ -785,7 +788,7 @@ def draw_lambda_ring(ax, case_data, segments):
             lx, ly = angle_to_xy(a, lr)
             mx, my = angle_to_xy(a, R_ring + 0.06)
             ax.plot([mx, lx], [my, ly], '-', color='#ff8800', linewidth=0.8)
-            ax.text(lx, ly, 'SR',
+            ax.text(lx, ly, sr_ring_label,
                     ha='center', va='center', fontsize=8,
                     color='#cc6600', fontweight='bold',
                     bbox=dict(boxstyle='round,pad=0.15',
