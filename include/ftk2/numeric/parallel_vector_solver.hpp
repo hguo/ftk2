@@ -1495,7 +1495,8 @@ FTK_HOST_DEVICE inline void compute_bary_numerators_from_integers(
 template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
-                     const uint64_t* indices = nullptr);
+                     const uint64_t* indices = nullptr,
+                     uint64_t tet_fourth = UINT64_MAX);
 
 /**
  * @brief Solve for parallel vector curve in a tetrahedron (3-simplex)
@@ -2009,7 +2010,8 @@ FTK_HOST_DEVICE void characteristic_polynomials_pv_tetrahedron(const T V[4][3], 
 template <typename T>
 int solve_pv_triangle(const T V[3][3], const T W[3][3],
                      std::vector<PuncturePoint>& punctures,
-                     const uint64_t* indices) {
+                     const uint64_t* indices,
+                     uint64_t tet_fourth) {
     punctures.clear();
 
     // ----------------------------------------------------------------
@@ -2340,15 +2342,23 @@ int solve_pv_triangle(const T V[3][3], const T W[3][3],
             if (!(indices[m] < std::min(indices[a], indices[b]))) continue;
         } else {
             // G0 (interior) or G1 (exactly one boundary coord): apply the
-            // standard SoS min-index ownership rule for each boundary coord k.
+            // SoS ownership rule for each boundary coord k.
             bool reject = false;
             for (int k = 0; k < 3; k++) {
                 if (bsign[k] > 0) continue;   // interior coordinate, accept
                 // bsign[k] == 0: boundary for this k → apply SoS
                 if (!indices) { reject = true; break; }
-                int ii = (k + 1) % 3, jj = (k + 2) % 3;
-                if (!(indices[k] < std::min(indices[ii], indices[jj]))) {
-                    reject = true; break;
+                if (tet_fourth != UINT64_MAX) {
+                    // Tet mode: the other face sharing this edge has opposite
+                    // vertex = tet_fourth.  Accept iff our opposite vertex
+                    // (indices[k]) is smaller.
+                    if (!(indices[k] < tet_fourth)) { reject = true; break; }
+                } else {
+                    // Mesh mode: standard rule
+                    int ii = (k + 1) % 3, jj = (k + 2) % 3;
+                    if (!(indices[k] < std::min(indices[ii], indices[jj]))) {
+                        reject = true; break;
+                    }
                 }
             }
             if (reject) continue;
@@ -2439,7 +2449,8 @@ FTK_HOST_DEVICE inline int try_certify_nk_sign_device(
 template <typename T>
 FTK_HOST_DEVICE PunctureResult solve_pv_triangle_device(
         const T V[3][3], const T W[3][3],
-        const uint64_t* indices = nullptr) {
+        const uint64_t* indices = nullptr,
+        uint64_t tet_fourth = UINT64_MAX) {
     PunctureResult result;
     result.count = 0;
 
@@ -2553,7 +2564,8 @@ FTK_HOST_DEVICE PunctureResult solve_pv_triangle_device(
         }
 
         if (n_bnd == 2) {
-            // G2: vertex puncture
+            // G2: vertex puncture — owned by face whose non-zero vertex
+            // has the smallest index (unchanged).
             if (!indices) continue;
             int m = -1;
             for (int k = 0; k < 3; k++) if (bsign[k] != 0) { m = k; break; }
@@ -2565,9 +2577,15 @@ FTK_HOST_DEVICE PunctureResult solve_pv_triangle_device(
             for (int k = 0; k < 3; k++) {
                 if (bsign[k] > 0) continue;
                 if (!indices) { reject = true; break; }
-                int ii = (k + 1) % 3, jj = (k + 2) % 3;
-                if (!(indices[k] < pvs_min_u64(indices[ii], indices[jj]))) {
-                    reject = true; break;
+                if (tet_fourth != UINT64_MAX) {
+                    // Tet mode: accept iff our opposite vertex < other face's
+                    if (!(indices[k] < tet_fourth)) { reject = true; break; }
+                } else {
+                    // Mesh mode: standard rule
+                    int ii = (k + 1) % 3, jj = (k + 2) % 3;
+                    if (!(indices[k] < pvs_min_u64(indices[ii], indices[jj]))) {
+                        reject = true; break;
+                    }
                 }
             }
             if (reject) continue;

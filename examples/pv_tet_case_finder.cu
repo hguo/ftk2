@@ -113,7 +113,8 @@ __global__ void tet_case_finder_kernel(
         for (int vi = 0; vi < 3; vi++)
             indices[vi] = (uint64_t)d_face_verts[fi][vi];
 
-        faces[fi] = solve_pv_triangle_device(Vf, Wf, indices);
+        uint64_t tet_fourth = (uint64_t)fi;  // face fi is opposite vertex fi
+        faces[fi] = solve_pv_triangle_device(Vf, Wf, indices, tet_fourth);
 
         if (faces[fi].count > 0 && faces[fi].count < INT_MAX)
             total += faces[fi].count;
@@ -315,6 +316,39 @@ static bool has_shared_root_resultant(const __int128 Q_i128[4],
         if (zero_det || M[N-1][N-1] == 0) return true;
     }
     return false;
+}
+
+// ─── Check if any shared root resolves inside/on the tet ─────────────────
+// For each Q-root λ*, if Res(Q, P_k)=0 for some k:
+//   - If any P_j(λ*) ≠ 0 → μ_j diverges → point escapes to ∞ → outside
+//   - If ALL P_j(λ*)=0 → removable singularity → μ_j = P_j'(λ*)/Q'(λ*)
+//     Check if resolved μ_j ≥ 0 for all j and Σμ_j = 1 → inside/on tet
+// Returns true if at least one shared root resolves inside or on the boundary.
+// ─── Check if a shared root is relevant to the PV curve in this tet ──────
+// After interval assignment, check if the shared Q-root sits between two
+// intervals that both contain punctures.  If not, the SR is outside the
+// curve's λ-range and doesn't affect topology inside the tet.
+//
+// For infinity-spanning intervals: the two outermost intervals wrap around
+// through ±∞, so an SR at the boundary between them IS relevant if both
+// have punctures (the curve passes through infinity).
+static bool is_shared_root_relevant(
+    const __int128 Q_i128[4], const __int128 P_i128[4][4],
+    const double Q_roots[], int n_Q_roots,
+    const std::vector<ClassifiedCase::IntervalInfo>& intervals)
+{
+    if (n_Q_roots == 0) return false;
+    int n_intervals = (int)intervals.size();
+    if (n_intervals < 2) return false;
+
+    // SR is relevant if punctures are distributed across 2+ intervals.
+    // This means the curve passes through at least one Q-interval boundary,
+    // which requires an SR pass-through.  If all punctures are in a single
+    // interval, the SR is outside the curve's range and irrelevant.
+    int n_occupied = 0;
+    for (const auto& iv : intervals)
+        if (iv.n_pv > 0) n_occupied++;
+    return n_occupied >= 2;
 }
 
 // ─── Exact polynomial GCD degree via pseudo-remainder ────────────────────
@@ -598,9 +632,10 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             (uint64_t)fv[fi][0], (uint64_t)fv[fi][1], (uint64_t)fv[fi][2]
         };
 
-        // Exact CPU solver with SoS
+        // Exact CPU solver with SoS (tet mode: pass 4th vertex index)
+        uint64_t tet_fourth = (uint64_t)fi;  // face fi is opposite vertex fi
         std::vector<PuncturePoint> results;
-        solve_pv_triangle(Vf, Wf, results, indices);
+        solve_pv_triangle(Vf, Wf, results, indices, tet_fourth);
 
         int face_start = (int)cc.punctures.size();
         for (const auto& r : results) {
@@ -864,14 +899,16 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             cc.intervals[interval_idx].n_pv++;
         }
 
-        // Shared root: exact resultant check (replaces Sturm-based pass-through)
-        // Use float Q/P (exact integers for integer input) converted to __int128
+        // Shared root: exact resultant + relevance check
+        // SR is relevant only if it sits between intervals with punctures
         {
             __int128 Qi[4], Pi[4][4];
             for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
             for (int a = 0; a < 4; a++)
                 for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
-            cc.has_shared_root = has_shared_root_resultant(Qi, Pi);
+            bool has_sr_algebraic = has_shared_root_resultant(Qi, Pi);
+            cc.has_shared_root = has_sr_algebraic &&
+                is_shared_root_relevant(Qi, Pi, cc.Q_roots, cc.n_Q_roots, cc.intervals);
         }
 
     } else if (degQ > 0 && cc.n_Q_roots > 1) {
@@ -951,13 +988,15 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             }
         }
 
-        // Shared root: exact resultant check
+        // Shared root: exact resultant check + inside-tet filter
         {
             __int128 Qi[4], Pi[4][4];
             for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
             for (int a = 0; a < 4; a++)
                 for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
-            cc.has_shared_root = has_shared_root_resultant(Qi, Pi);
+            bool has_sr_algebraic = has_shared_root_resultant(Qi, Pi);
+            cc.has_shared_root = has_sr_algebraic &&
+                is_shared_root_relevant(Qi, Pi, cc.Q_roots, cc.n_Q_roots, cc.intervals);
         }
     } else {
         // degQ == 0 or no Q roots: all punctures in single interval
@@ -1055,9 +1094,12 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     bool has_C2v = false, has_C2w = false;
     bool has_C1v = false, has_C1w = false;
     bool has_C0v = false, has_C0w = false;
-    bool has_D01 = false;  // point puncture on edge at generic λ
+    bool has_D01 = false;  // isolated PV point on edge (deferred until after pairing)
+    // Collect indices of edge punctures at generic λ for post-pairing D01 check
+    std::vector<int> edge_punct_indices;
 
-    for (const auto& pi : cc.punctures) {
+    for (int pi_idx = 0; pi_idx < (int)cc.punctures.size(); pi_idx++) {
+        const auto& pi = cc.punctures[pi_idx];
         bool is_lam0 = (pi.lambda == 0.0);
         bool is_laminf = std::isinf(pi.lambda);
 
@@ -1073,9 +1115,9 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             else has_C2w = true;
         }
 
-        // D01: point puncture on edge at generic λ (not at λ=0 or λ=∞,
-        // which are already captured by C1v/C1w/C0v/C0w)
-        if (pi.is_edge && !is_lam0 && !is_laminf) has_D01 = true;
+        // Candidate D01: edge puncture at generic λ (deferred check)
+        if (pi.is_edge && !is_lam0 && !is_laminf)
+            edge_punct_indices.push_back(pi_idx);
     }
 
     // Emit a single Cv{d}/Cw{d} tag using the most specific (lowest) d.
@@ -1171,11 +1213,13 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     bool has_D33 = lam_compat(0,1) && lam_compat(1,2) && lam_compat(2,3);
 
     // Append highest-dimensional Dmd tag
+    // Note: D01 is deferred until after pairing (checked below).
+    // D00 is tentatively added here; removed later if D01 is confirmed.
+    bool has_D00_tentative = false;
     if (has_D33)      tags.push_back("D33");
     else if (has_D22) tags.push_back("D22");
     else if (has_D11) tags.push_back("D11");
-    else if (has_D01) tags.push_back("D01");
-    else if (has_D00) tags.push_back("D00");
+    else if (has_D00) { tags.push_back("D00"); has_D00_tentative = true; }
 
     // Internal loop: T0 case with closed PV curve entirely inside tet.
     // Requires Q with no real roots and all μ_k(0) = P_k(0)/Q(0) > 0.
@@ -1296,6 +1340,61 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         });
         for (int j = 0; j + 1 < (int)up.size(); j += 2)
             cc.pairs.push_back({up[j], up[j + 1], false, -1});
+    }
+
+    // ─── Deferred D01 check ──────────────────────────────────────────────
+    // D01 = isolated PV point on edge.  An edge puncture that is paired with
+    // a puncture on a *different* face or edge is NOT isolated — it's a regular
+    // curve crossing at an edge position.  Only flag D01 when both punctures
+    // in a pair are edge punctures on the SAME tet edge (degenerate tangency)
+    // or when an edge puncture is unpaired.
+    if (!edge_punct_indices.empty()) {
+        // Build set of edge puncture indices for quick lookup
+        std::set<int> edge_set(edge_punct_indices.begin(), edge_punct_indices.end());
+
+        // Check each edge puncture: is it paired with the same tet edge?
+        for (int ei : edge_punct_indices) {
+            const auto& pi = cc.punctures[ei];
+            bool paired_same_edge = false;
+            bool is_paired = false;
+
+            for (const auto& pp : cc.pairs) {
+                int partner = -1;
+                if (pp.pi_a == ei) { partner = pp.pi_b; is_paired = true; }
+                else if (pp.pi_b == ei) { partner = pp.pi_a; is_paired = true; }
+                if (partner < 0) continue;
+
+                // Check if partner is also on the same tet edge
+                const auto& pj = cc.punctures[partner];
+                if (pj.is_edge &&
+                    pi.tet_edge[0] == pj.tet_edge[0] &&
+                    pi.tet_edge[1] == pj.tet_edge[1]) {
+                    paired_same_edge = true;
+                }
+                break;
+            }
+
+            // D01 only if unpaired or paired on same edge (degenerate tangency)
+            if (!is_paired || paired_same_edge) {
+                has_D01 = true;
+                break;
+            }
+        }
+
+        // Append D01 to category if confirmed (wasn't added during initial tagging)
+        if (has_D01) {
+            if (has_D00_tentative) {
+                // Replace D00 with D01 (D01 is higher-dimensional)
+                auto pos = cc.category.find("_D00");
+                if (pos != std::string::npos)
+                    cc.category.replace(pos, 4, "_D01");
+            } else if (cc.category.find("D01") == std::string::npos &&
+                       cc.category.find("D11") == std::string::npos &&
+                       cc.category.find("D22") == std::string::npos &&
+                       cc.category.find("D33") == std::string::npos) {
+                cc.category += "_D01";
+            }
+        }
     }
 
     return cc;
@@ -1738,7 +1837,8 @@ static TetCaseGPU generate_tet_from_seed(uint64_t global_id, uint64_t base_seed,
         uint64_t indices[3] = {
             (uint64_t)fv[fi][0], (uint64_t)fv[fi][1], (uint64_t)fv[fi][2]
         };
-        tc.face[fi] = solve_pv_triangle_device(Vf, Wf, indices);
+        uint64_t tet_fourth = (uint64_t)fi;
+        tc.face[fi] = solve_pv_triangle_device(Vf, Wf, indices, tet_fourth);
         if (tc.face[fi].count > 0 && tc.face[fi].count < INT_MAX)
             tc.total_punctures += tc.face[fi].count;
     }
@@ -1840,8 +1940,13 @@ int main(int argc, char** argv)
                         Vf[vi][ci] = tc.V[fv[fi][vi]][ci];
                         Wf[vi][ci] = tc.W[fv[fi][vi]][ci];
                     }
-                tc.face[fi] = solve_pv_triangle_device(Vf, Wf);
-                tc.total_punctures += tc.face[fi].count;
+                uint64_t indices[3] = {
+                    (uint64_t)fv[fi][0], (uint64_t)fv[fi][1], (uint64_t)fv[fi][2]
+                };
+                uint64_t tet_fourth = (uint64_t)fi;
+                tc.face[fi] = solve_pv_triangle_device(Vf, Wf, indices, tet_fourth);
+                if (tc.face[fi].count > 0 && tc.face[fi].count < INT_MAX)
+                    tc.total_punctures += tc.face[fi].count;
             }
             ClassifiedCase cc = classify_case(tc);
             int np = (int)cc.punctures.size();
