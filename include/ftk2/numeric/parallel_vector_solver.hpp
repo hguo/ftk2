@@ -815,7 +815,7 @@ FTK_HOST_DEVICE void characteristic_polynomials_pv_tetrahedron(const T V[4][3], 
 // Q coeffs ≤ 2^73, P coeffs ≤ 2^75 — all fit __int128.
 
 template <typename T>
-void compute_tet_QP_i128(const T V[4][3], const T W[4][3],
+FTK_HOST_DEVICE void compute_tet_QP_i128(const T V[4][3], const T W[4][3],
                          __int128 Q_i128[4], __int128 P_i128[4][4]) {
     int64_t Vq[4][3], Wq[4][3];
     quantize_field_4x3_tet(V, Vq);
@@ -931,7 +931,7 @@ FTK_HOST_DEVICE inline int discriminant_sign_i128(const __int128 P[4]) {
 // --- 1.1  Content Reduction ------------------------------------------------
 // Divide all coefficients of poly[0..deg] by their GCD.
 // Does not change roots.  Mandatory before PRS/resultant to avoid overflow.
-inline void content_reduce_i128(__int128* poly, int deg) {
+FTK_HOST_DEVICE inline void content_reduce_i128(__int128* poly, int deg) {
     if (deg < 0) return;
     __int128 g = 0;
     for (int i = 0; i <= deg; i++) {
@@ -943,7 +943,7 @@ inline void content_reduce_i128(__int128* poly, int deg) {
 }
 
 // Return the effective degree of poly[0..max_deg] (strip trailing zeros).
-inline int effective_degree_i128(const __int128* poly, int max_deg) {
+FTK_HOST_DEVICE inline int effective_degree_i128(const __int128* poly, int max_deg) {
     int d = max_deg;
     while (d > 0 && poly[d] == 0) d--;
     return d;
@@ -953,7 +953,7 @@ inline int effective_degree_i128(const __int128* poly, int max_deg) {
 // Computes r = prem(f, g) and returns deg(r).  Content-reduces the result.
 // f has degree df, g has degree dg, with dg <= df.
 // r must have space for at least df+1 entries.
-inline int prem_i128(const __int128* f, int df,
+FTK_HOST_DEVICE inline int prem_i128(const __int128* f, int df,
                      const __int128* g, int dg,
                      __int128* r) {
     // Copy f into r
@@ -981,7 +981,7 @@ inline int prem_i128(const __int128* f, int df,
 // --- 1.3  Polynomial GCD with Coefficients ---------------------------------
 // Returns degree of h = gcd(f, g) and writes the GCD polynomial to h.
 // h must have space for at least min(df,dg)+1 entries.
-inline int poly_gcd_full_i128(const __int128* f_in, int df,
+FTK_HOST_DEVICE inline int poly_gcd_full_i128(const __int128* f_in, int df,
                               const __int128* g_in, int dg,
                               __int128* h) {
     __int128 p[8] = {}, q[8] = {};
@@ -1029,7 +1029,7 @@ inline int poly_gcd_full_i128(const __int128* f_in, int df,
 // --- 1.4  Exact Polynomial Division ----------------------------------------
 // Returns degree of q = f/g.  Assumes g divides f exactly.
 // q must have space for df-dg+1 entries.
-inline int poly_exact_div_i128(const __int128* f, int df,
+FTK_HOST_DEVICE inline int poly_exact_div_i128(const __int128* f, int df,
                                const __int128* g, int dg,
                                __int128* q) {
     __int128 rem[8] = {};
@@ -1050,7 +1050,7 @@ inline int poly_exact_div_i128(const __int128* f, int df,
 // --- 1.5  Resultant Sign via Bareiss ---------------------------------------
 // Returns +1, -1, or 0 for sign(Res(f, g)).
 // Content-reduces inputs first to keep intermediate products in __int128.
-inline int resultant_sign_i128(const __int128* f_in, int df,
+FTK_HOST_DEVICE inline int resultant_sign_i128(const __int128* f_in, int df,
                                const __int128* g_in, int dg) {
     // Handle degenerate degrees
     if (df <= 0 || dg <= 0) {
@@ -1099,12 +1099,6 @@ inline int resultant_sign_i128(const __int128* f_in, int df,
     // Fix: factor out gcd(M[c][c], M[r][c]) before multiplying.
     __int128 prev_pivot = 1;
     int sign_swaps = 0;
-    auto abs128 = [](__int128 x) -> __int128 { return x < 0 ? -x : x; };
-    auto gcd128 = [&](__int128 a, __int128 b) -> __int128 {
-        a = abs128(a); b = abs128(b);
-        while (b) { __int128 t = b; b = a % b; a = t; }
-        return a;
-    };
     for (int col = 0; col < N; col++) {
         // Partial pivoting
         int pivot = -1;
@@ -1122,14 +1116,14 @@ inline int resultant_sign_i128(const __int128* f_in, int df,
             // b=M[r][j], d=M[c][j].
             // Factor out gcd(|a|,|c|) to reduce product sizes and prevent overflow.
             __int128 a = M[col][col], c = M[row][col];
-            __int128 g1 = gcd128(a, c);
+            __int128 g1 = gcd_i128(a, c);
             if (g1 == 0) g1 = 1;
             __int128 a1 = a / g1, c1 = c / g1;
             for (int j = col + 1; j < N; j++) {
                 // a*b - c*d = g1*(a1*b - c1*d).
                 // Also factor gcd(|b|,|d|) to further reduce.
                 __int128 b = M[row][j], d = M[col][j];
-                __int128 g2 = gcd128(b, d);
+                __int128 g2 = gcd_i128(b, d);
                 if (g2 == 0) g2 = 1;
                 __int128 b2 = b / g2, d2 = d / g2;
                 // a*b - c*d = g1*g2*(a1*b2 - c1*d2)
@@ -1137,7 +1131,7 @@ inline int resultant_sign_i128(const __int128* f_in, int df,
                 __int128 outer = g1 * g2;
                 // Divide by prev_pivot: result = outer * inner / prev_pivot
                 __int128 p = prev_pivot;
-                __int128 gp = gcd128(outer, p);
+                __int128 gp = gcd_i128(outer, p);
                 M[row][j] = (outer / gp) * (inner / (p / gp));
             }
         }
@@ -1156,7 +1150,7 @@ inline int resultant_sign_i128(const __int128* f_in, int df,
 // --- 1.6  Sign at Unique Root (one-root case) ------------------------------
 // Returns sign(g(α)) where f has exactly one real root α (disc < 0).
 // Formula: sign(g(α)) = sign(Res(f, g)) × sign(lc(f)^deg(g))
-inline int sign_at_unique_root_i128(const __int128* f, int df,
+FTK_HOST_DEVICE inline int sign_at_unique_root_i128(const __int128* f, int df,
                                     const __int128* g, int dg) {
     // Handle trivial g
     if (dg == 0) return (g[0] > 0) ? 1 : (g[0] < 0) ? -1 : 0;
@@ -1178,25 +1172,25 @@ struct int256_t {
     __int128 hi;            // signed high 128 bits
     unsigned __int128 lo;   // unsigned low 128 bits
 
-    int256_t() : hi(0), lo(0) {}
-    explicit int256_t(__int128 v)
+    FTK_HOST_DEVICE int256_t() : hi(0), lo(0) {}
+    FTK_HOST_DEVICE explicit int256_t(__int128 v)
         : hi(v >= 0 ? (__int128)0 : (__int128)-1),
           lo((unsigned __int128)v) {}
 
-    int sign() const {
+    FTK_HOST_DEVICE int sign() const {
         if (hi > 0) return 1;
         if (hi < 0) return -1;
         return (lo > 0) ? 1 : 0;
     }
 
-    int256_t operator+(const int256_t& r) const {
+    FTK_HOST_DEVICE int256_t operator+(const int256_t& r) const {
         int256_t s;
         s.lo = lo + r.lo;
         s.hi = hi + r.hi + (__int128)(s.lo < lo);
         return s;
     }
 
-    int256_t operator-() const {
+    FTK_HOST_DEVICE int256_t operator-() const {
         int256_t r;
         r.lo = ~lo + 1;
         r.hi = ~hi + (__int128)(r.lo == 0);
@@ -1205,7 +1199,7 @@ struct int256_t {
 };
 
 // Unsigned 128×128 → 256 multiply.
-inline void umul256(unsigned __int128 ua, unsigned __int128 ub,
+FTK_HOST_DEVICE inline void umul256(unsigned __int128 ua, unsigned __int128 ub,
                     unsigned __int128& res_hi, unsigned __int128& res_lo) {
     uint64_t a0 = (uint64_t)ua, a1 = (uint64_t)(ua >> 64);
     uint64_t b0 = (uint64_t)ub, b1 = (uint64_t)(ub >> 64);
@@ -1234,7 +1228,7 @@ inline void umul256(unsigned __int128 ua, unsigned __int128 ub,
 }
 
 // Signed 128×128 → 256-bit result.
-inline int256_t mul256(__int128 a, __int128 b) {
+FTK_HOST_DEVICE inline int256_t mul256(__int128 a, __int128 b) {
     bool neg = (a < 0) != (b < 0);
     unsigned __int128 ua = a < 0 ? (unsigned __int128)(-(a + 1)) + 1
                                  : (unsigned __int128)a;
@@ -1250,7 +1244,7 @@ inline int256_t mul256(__int128 a, __int128 b) {
 }
 
 // Multiply int256_t × __int128 → int256_t  (assumes result fits in 256 bits).
-inline int256_t mul256_128(int256_t a, __int128 b) {
+FTK_HOST_DEVICE inline int256_t mul256_128(int256_t a, __int128 b) {
     bool neg = false;
     if (a.sign() < 0) { a = -a; neg = true; }
     else if (a.sign() == 0) return int256_t();
@@ -1274,7 +1268,7 @@ inline int256_t mul256_128(int256_t a, __int128 b) {
 
 // --- Helper: sign of f(p/q) via integer Horner ----------------------------
 // Computes sign(f(p/q)) exactly.  Uses 256-bit arithmetic to avoid overflow.
-inline int sign_poly_at_rational_i128(const __int128* f, int df,
+FTK_HOST_DEVICE inline int sign_poly_at_rational_i128(const __int128* f, int df,
                                       __int128 p, __int128 q) {
     if (df <= 0) return (f[0] > 0) ? 1 : (f[0] < 0) ? -1 : 0;
     if (q == 0) {
@@ -1298,7 +1292,7 @@ inline int sign_poly_at_rational_i128(const __int128* f, int df,
 }
 
 // --- 1.7a  Derivative of integer polynomial --------------------------------
-inline int poly_derivative_i128(const __int128* f, int df, __int128* fp) {
+FTK_HOST_DEVICE inline int poly_derivative_i128(const __int128* f, int df, __int128* fp) {
     if (df <= 0) { fp[0] = 0; return 0; }
     for (int i = 0; i < df; i++) fp[i] = (__int128)(i + 1) * f[i + 1];
     return df - 1;
@@ -1307,7 +1301,7 @@ inline int poly_derivative_i128(const __int128* f, int df, __int128* fp) {
 // --- 1.7b  Square-free factorization --------------------------------------
 // Returns degree of sqfree(f) = f / gcd(f, f'), writes result to sf.
 // The square-free part has the same roots as f but all with multiplicity 1.
-inline int poly_sqfree_i128(const __int128* f, int df, __int128* sf) {
+FTK_HOST_DEVICE inline int poly_sqfree_i128(const __int128* f, int df, __int128* sf) {
     if (df <= 1) {
         for (int i = 0; i <= df; i++) sf[i] = f[i];
         return df;
@@ -1351,7 +1345,7 @@ inline int poly_sqfree_i128(const __int128* f, int df, __int128* sf) {
 //   f<0, f'>0, f''≤0: t ∈ (-∞,α₀)         → n=0
 //   f<0, f'>0, f''>0: t ∈ (β₂,α₂)         → n=2
 //   f<0, f'≤0:        t ∈ (α₁,β₂]         → n=2
-inline int count_roots_below_rational(const __int128* f, int df,
+FTK_HOST_DEVICE inline int count_roots_below_rational(const __int128* f, int df,
                                       __int128 p, __int128 q) {
     int sign_ft = sign_poly_at_rational_i128(f, df, p, q);
     if (sign_ft == 0) return -1;  // shared root
@@ -1401,7 +1395,7 @@ inline int count_roots_below_rational(const __int128* f, int df,
 // signs[] must have space for n_roots entries.
 // Returns actual number of distinct roots filled into signs[].
 
-inline int signs_at_roots_i128(const __int128* f_in, int df_max,
+FTK_HOST_DEVICE inline int signs_at_roots_i128(const __int128* f_in, int df_max,
                                const __int128* g_in, int dg_max,
                                int signs[], int max_signs,
                                int _depth = 0) {
@@ -1815,7 +1809,7 @@ inline int signs_at_roots_i128(const __int128* f_in, int df_max,
 // Returns -1 if α_i < β_j, +1 if α_i > β_j, 0 if equal.
 // f_nroots and g_nroots are the number of DISTINCT real roots (1, 2, or 3).
 // Root indices are 0-based in increasing order.
-inline int compare_roots_i128(const __int128* f, int df, int f_nroots, int f_root_idx,
+FTK_HOST_DEVICE inline int compare_roots_i128(const __int128* f, int df, int f_nroots, int f_root_idx,
                               const __int128* g, int dg, int g_nroots, int g_root_idx) {
     // Strategy: determine count_below = # of g-roots strictly below α_{f_root_idx}
     // by evaluating g, g', g'' at α_{f_root_idx} via signs_at_roots_i128,
@@ -3726,7 +3720,7 @@ struct ExactPV2Result {
     int passthrough_deg = 0;   // degree of gcd(P_0, P_1, P_2, P_3)
 };
 
-inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
+FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                                        const __int128 P_raw[4][4]) {
     ExactPV2Result result;
 
@@ -3982,7 +3976,9 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                         // Check if this root is the shared one (P of other two faces = 0)
                         bool is_shared = true;
                         int f = all_roots[r].face;
-                        for (int other : {i, j, l}) {
+                        int others[3] = {i, j, l};
+                        for (int oi = 0; oi < 3; oi++) {
+                            int other = others[oi];
                             if (other == f) continue;
                             int signs_o[3] = {};
                             signs_at_roots_i128(P[f], degP[f], P[other], degP[other], signs_o, 3);

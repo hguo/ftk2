@@ -42,6 +42,14 @@ struct TetCaseGPU {
     uint64_t seed;
 };
 
+// ─── GPU output struct for ExactPV2 ──────────────────────────────────────────
+struct TetCaseV2GPU {
+    int V[4][3], W[4][3];
+    ExactPV2Result v2;
+    int disc_sign[4];   // discriminant sign of P[k] for each face
+    uint64_t seed;
+};
+
 // ─── Face vertex ordering (consistent orientation) ──────────────────────────
 // face i = triangle opposite vertex i
 __constant__ int d_face_verts[4][3] = {
@@ -138,6 +146,59 @@ __global__ void tet_case_finder_kernel(
     }
 }
 
+// ─── ExactPV2 GPU extraction kernel ──────────────────────────────────────────
+// One thread per random tet. Uses pure-integer solver directly on GPU.
+__global__ void tet_case_finder_v2_kernel(
+    TetCaseV2GPU* output,
+    int*          output_count,
+    int           max_output,
+    int           min_punctures,
+    int           R,
+    uint64_t      base_seed,
+    uint64_t      batch_offset)
+{
+    uint64_t tid = (uint64_t)blockIdx.x * blockDim.x + threadIdx.x;
+    uint64_t global_id = batch_offset + tid;
+
+    // Seed LCG from global thread id + base seed
+    uint32_t state = (uint32_t)(global_id ^ (base_seed * 2654435761ULL));
+    for (int i = 0; i < 4; i++) lcg_next(state);
+
+    // Generate random integer fields
+    int V[4][3], W[4][3];
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 3; j++)
+            V[i][j] = rand_int_dev(state, R);
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 3; j++)
+            W[i][j] = rand_int_dev(state, R);
+
+    // Compute Q, P polynomials (integer)
+    __int128 Q_i128[4], P_i128[4][4];
+    compute_tet_QP_i128(V, W, Q_i128, P_i128);
+
+    // Run ExactPV2 solver
+    ExactPV2Result v2 = solve_pv_tet_v2(Q_i128, P_i128);
+
+    // Filter: only keep cases with enough punctures
+    if (v2.n_punctures >= min_punctures) {
+        int idx = atomicAdd(output_count, 1);
+        if (idx < max_output) {
+            TetCaseV2GPU& out = output[idx];
+            for (int i = 0; i < 4; i++)
+                for (int j = 0; j < 3; j++) {
+                    out.V[i][j] = V[i][j];
+                    out.W[i][j] = W[i][j];
+                }
+            out.v2 = v2;
+            // Compute discriminant signs for classification
+            for (int k = 0; k < 4; k++)
+                out.disc_sign[k] = discriminant_sign_i128(P_i128[k]);
+            out.seed = global_id;
+        }
+    }
+}
+
 // ─── CPU classification ─────────────────────────────────────────────────────
 
 struct ClassifiedCase {
@@ -153,6 +214,14 @@ struct ClassifiedCase {
     int n_sr_roots;            // number of shared-root Q-root indices
     int sr_q_root_idx[3];      // which Q roots are shared roots (indices into Q_roots[])
     bool has_B;                // bubble (closed loop inside tet, T0 only)
+
+    // TN: tangency points (disc(P_k) = 0, repeated root)
+    int n_tn;                  // number of tangency faces
+    struct TNInfo {
+        int face;              // which face has the tangency
+        double lambda;         // λ at the double root
+        double bary[3];        // face bary coords at the tangency point
+    } tn_points[4];
 
     // Cv/Cw positions (tet barycentric coords, valid if has_Cv/has_Cw)
     bool has_Cv_pos;
@@ -1341,17 +1410,90 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
 
     // ─── TN tag: tangency (repeated root of P_k) ────────────────────────
     // When disc(P_k) = 0 for some face k, P_k has a repeated root.
-    // The PV curve touches face k tangentially (zero net crossings at
-    // the repeated root), reducing the effective T-count.
-    // Exact integer test: discriminant_sign_i128 returns 0 iff disc = 0.
+    // The PV curve touches face k tangentially at the double root.
+    // Only tag TN if the tangency point is inside the tet (exact integer check).
+    //
+    // Algorithm:
+    //   1. disc(P_k) = 0 → P_k has a repeated root α
+    //   2. h = gcd(P_k, P_k') → h is the repeated-root factor (linear for double root)
+    //   3. At α: μ_k = 0 (on face k). Check μ_j = P_j(α)/Q(α) ≥ 0 for j ≠ k
+    //      via sign(P_j(α)) × sign(Q(α)) ≥ 0 using exact integer eval_at_root.
+    cc.n_tn = 0;
     {
+        __int128 Qi_tn[4];
+        for (int j = 0; j < 4; j++) Qi_tn[j] = (__int128)llround(Q[j]);
+
         bool has_TN = false;
         for (int k = 0; k < 4; k++) {
             int degk = effective_degree_i128(P_i128[k], 3);
-            if (degk >= 2 && discriminant_sign_i128(P_i128[k]) == 0) {
+            if (degk < 2 || discriminant_sign_i128(P_i128[k]) != 0)
+                continue;
+
+            // Compute h = gcd(P_k, P_k') to find the repeated-root factor
+            __int128 Pk_prime[4] = {P_i128[k][1], 2*P_i128[k][2], 3*P_i128[k][3], 0};
+            int dk_prime = degk - 1;
+            while (dk_prime > 0 && Pk_prime[dk_prime] == 0) dk_prime--;
+
+            __int128 h[4] = {};
+            int dh = ftk2::poly_gcd_full_i128(P_i128[k], degk, Pk_prime, dk_prime, h);
+            if (dh < 1) continue;
+
+            // For linear h: double root at α = -h[0]/h[1]
+            // Check in-tet via exact integer sign evaluation
+            if (dh == 1) {
+                auto eval_at_root_h = [&](__int128* f, int df) -> int {
+                    __int128 val = 0;
+                    __int128 neg_h0_pow = 1;
+                    __int128 h1_pow_desc = 1;
+                    for (int i = 0; i < df; i++) h1_pow_desc *= h[1];
+                    for (int i = 0; i <= df; i++) {
+                        val += f[i] * neg_h0_pow * h1_pow_desc;
+                        neg_h0_pow *= (-h[0]);
+                        if (i < df) h1_pow_desc /= h[1];
+                    }
+                    int h1_sign = (h[1] > 0) ? 1 : -1;
+                    int factor = (df % 2 == 0) ? 1 : h1_sign;
+                    return (val > 0) ? factor : (val < 0) ? -factor : 0;
+                };
+
+                int edQ = 3;
+                while (edQ > 0 && Qi_tn[edQ] == 0) edQ--;
+                int sq = eval_at_root_h(Qi_tn, edQ);
+                if (sq == 0) continue;  // Q vanishes at double root → SR, not TN
+
+                bool in_tet = true;
+                for (int j = 0; j < 4; j++) {
+                    if (j == k) continue;  // μ_k = 0 (on face k)
+                    int edj = 3;
+                    while (edj > 0 && P_i128[j][edj] == 0) edj--;
+                    if (edj == 0 && P_i128[j][0] == 0) continue;  // P_j ≡ 0 → μ_j = 0
+                    int sp = eval_at_root_h(P_i128[j], edj);
+                    if (sp * sq < 0) { in_tet = false; break; }
+                }
+                if (!in_tet) continue;
+
                 has_TN = true;
-                break;
+                // Float λ and bary for visualization only
+                double lam_tn = -(double)h[0] / (double)h[1];
+                double bary[3] = {};
+                double Qval = Q[0] + Q[1]*lam_tn + Q[2]*lam_tn*lam_tn + Q[3]*lam_tn*lam_tn*lam_tn;
+                if (std::abs(Qval) > 1e-20) {
+                    static const int face_verts[4][3] = {{1,2,3},{0,2,3},{0,1,3},{0,1,2}};
+                    for (int fi = 0; fi < 3; fi++) {
+                        int j = face_verts[k][fi];
+                        double Pj = P[j][0] + P[j][1]*lam_tn + P[j][2]*lam_tn*lam_tn + P[j][3]*lam_tn*lam_tn*lam_tn;
+                        bary[fi] = Pj / Qval;
+                    }
+                }
+                if (cc.n_tn < 4) {
+                    cc.tn_points[cc.n_tn].face = k;
+                    cc.tn_points[cc.n_tn].lambda = lam_tn;
+                    for (int fi = 0; fi < 3; fi++)
+                        cc.tn_points[cc.n_tn].bary[fi] = bary[fi];
+                    cc.n_tn++;
+                }
             }
+            // dh >= 2: triple root — extremely rare, skip for now
         }
         if (has_TN) tags.push_back("TN");
     }
@@ -1763,6 +1905,16 @@ static void print_json(const ClassifiedCase& cc) {
     }
     printf("],");
     printf("\"has_B\":%s,", cc.has_B ? "true" : "false");
+
+    // TN points
+    printf("\"tn_points\":[");
+    for (int i = 0; i < cc.n_tn; i++) {
+        if (i > 0) printf(",");
+        printf("{\"face\":%d,\"lambda\":%.15g,\"bary\":[%.15g,%.15g,%.15g]}",
+               cc.tn_points[i].face, cc.tn_points[i].lambda,
+               cc.tn_points[i].bary[0], cc.tn_points[i].bary[1], cc.tn_points[i].bary[2]);
+    }
+    printf("],");
 
     // Cv/Cw positions (tet barycentric)
     if (cc.has_Cv_pos)
@@ -2303,10 +2455,21 @@ int main(int argc, char** argv)
 
     // Allocate GPU output buffer
     int gpu_max_output = std::min(max_cases * 2, 2000000);  // 2M max
-    TetCaseGPU* d_output;
     int* d_count;
-    CUDA_CHECK(cudaMalloc(&d_output, gpu_max_output * sizeof(TetCaseGPU)));
     CUDA_CHECK(cudaMalloc(&d_count, sizeof(int)));
+
+    // V1 GPU buffer
+    TetCaseGPU* d_output_v1 = nullptr;
+    // V2 GPU buffer
+    TetCaseV2GPU* d_output_v2 = nullptr;
+
+    if (pv_version == 2) {
+        CUDA_CHECK(cudaMalloc(&d_output_v2, gpu_max_output * sizeof(TetCaseV2GPU)));
+        // Set stack size for signs_at_roots_i128 recursion
+        CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, 16384));
+    } else {
+        CUDA_CHECK(cudaMalloc(&d_output_v1, gpu_max_output * sizeof(TetCaseGPU)));
+    }
 
     // Category histogram
     std::map<std::string, int> category_counts;
@@ -2315,7 +2478,7 @@ int main(int argc, char** argv)
     int total_found = 0;
 
     int num_batches = (num_tets + batch_size - 1) / batch_size;
-    int block_size = 256;
+    int block_size = (pv_version == 2) ? 128 : 256;  // lower block size for v2 (high register pressure)
 
     for (int batch = 0; batch < num_batches; batch++) {
         int this_batch = std::min(batch_size, num_tets - batch * batch_size);
@@ -2324,9 +2487,16 @@ int main(int argc, char** argv)
         CUDA_CHECK(cudaMemset(d_count, 0, sizeof(int)));
 
         int grid_size = (this_batch + block_size - 1) / block_size;
-        tet_case_finder_kernel<<<grid_size, block_size>>>(
-            d_output, d_count, gpu_max_output, min_punctures,
-            R, base_seed, batch_offset);
+
+        if (pv_version == 2) {
+            tet_case_finder_v2_kernel<<<grid_size, block_size>>>(
+                d_output_v2, d_count, gpu_max_output, min_punctures,
+                R, base_seed, batch_offset);
+        } else {
+            tet_case_finder_kernel<<<grid_size, block_size>>>(
+                d_output_v1, d_count, gpu_max_output, min_punctures,
+                R, base_seed, batch_offset);
+        }
         CUDA_CHECK(cudaDeviceSynchronize());
 
         // Download count
@@ -2336,32 +2506,76 @@ int main(int argc, char** argv)
 
         if (h_count == 0) continue;
 
-        // Download results
-        std::vector<TetCaseGPU> h_cases(h_count);
-        CUDA_CHECK(cudaMemcpy(h_cases.data(), d_output,
-                              h_count * sizeof(TetCaseGPU), cudaMemcpyDeviceToHost));
+        if (pv_version == 2) {
+            // Download v2 results
+            std::vector<TetCaseV2GPU> h_v2(h_count);
+            CUDA_CHECK(cudaMemcpy(h_v2.data(), d_output_v2,
+                                  h_count * sizeof(TetCaseV2GPU), cudaMemcpyDeviceToHost));
 
-        // CPU classification
-        for (int i = 0; i < h_count && total_found < max_cases; i++) {
-            ClassifiedCase cc = classify_case(h_cases[i]);
-            verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
-            category_counts[cc.category]++;
+            // CPU classification: reconstruct TetCaseGPU from V,W, then classify
+            for (int i = 0; i < h_count && total_found < max_cases; i++) {
+                TetCaseGPU tc;
+                memset(&tc, 0, sizeof(tc));
+                for (int vi = 0; vi < 4; vi++)
+                    for (int ci = 0; ci < 3; ci++) {
+                        tc.V[vi][ci] = h_v2[i].V[vi][ci];
+                        tc.W[vi][ci] = h_v2[i].W[vi][ci];
+                    }
+                // Re-solve faces on CPU for classify_case (it needs PunctureResult)
+                static const int fv[4][3] = {{1,3,2},{0,2,3},{0,3,1},{0,1,2}};
+                tc.total_punctures = 0;
+                for (int fi = 0; fi < 4; fi++) {
+                    double Vf[3][3], Wf[3][3];
+                    for (int vi = 0; vi < 3; vi++)
+                        for (int ci = 0; ci < 3; ci++) {
+                            Vf[vi][ci] = (double)tc.V[fv[fi][vi]][ci];
+                            Wf[vi][ci] = (double)tc.W[fv[fi][vi]][ci];
+                        }
+                    uint64_t indices[3] = {
+                        (uint64_t)fv[fi][0], (uint64_t)fv[fi][1], (uint64_t)fv[fi][2]
+                    };
+                    uint64_t tet_fourth = (uint64_t)fi;
+                    tc.face[fi] = solve_pv_triangle_device(Vf, Wf, indices, tet_fourth);
+                    if (tc.face[fi].count > 0 && tc.face[fi].count < INT_MAX)
+                        tc.total_punctures += tc.face[fi].count;
+                }
+                tc.seed = h_v2[i].seed;
 
-            // Print JSON to stdout
-            print_json(cc);
-            total_found++;
+                ClassifiedCase cc = classify_case(tc);
+                verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
+                category_counts[cc.category]++;
+                print_json(cc);
+                total_found++;
 
-            // Store first representative of each category
-            if (representatives.find(cc.category) == representatives.end())
-                representatives[cc.category] = cc;
+                if (representatives.find(cc.category) == representatives.end())
+                    representatives[cc.category] = cc;
+            }
+        } else {
+            // Download v1 results
+            std::vector<TetCaseGPU> h_cases(h_count);
+            CUDA_CHECK(cudaMemcpy(h_cases.data(), d_output_v1,
+                                  h_count * sizeof(TetCaseGPU), cudaMemcpyDeviceToHost));
 
-            // ExactPV2 comparison
-            if (pv_version == 2 || pv_version == 3) {
-                __int128 Q_i128[4], P_i128[4][4];
-                ftk2::compute_tet_QP_i128(h_cases[i].V, h_cases[i].W, Q_i128, P_i128);
-                ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+            // CPU classification
+            for (int i = 0; i < h_count && total_found < max_cases; i++) {
+                ClassifiedCase cc = classify_case(h_cases[i]);
+                verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
+                category_counts[cc.category]++;
 
+                // Print JSON to stdout
+                print_json(cc);
+                total_found++;
+
+                // Store first representative of each category
+                if (representatives.find(cc.category) == representatives.end())
+                    representatives[cc.category] = cc;
+
+                // ExactPV2 comparison
                 if (pv_version == 3) {
+                    __int128 Q_i128[4], P_i128[4][4];
+                    ftk2::compute_tet_QP_i128(h_cases[i].V, h_cases[i].W, Q_i128, P_i128);
+                    ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+
                     int v1_pairs = (int)cc.pairs.size();
                     if (v1_pairs != v2.n_pairs)
                         fprintf(stderr, "    [MISMATCH] seed=%lu v1=%d v2=%d (%s)\n",
@@ -2378,7 +2592,8 @@ int main(int argc, char** argv)
         if (total_found >= max_cases) break;
     }
 
-    CUDA_CHECK(cudaFree(d_output));
+    if (d_output_v1) CUDA_CHECK(cudaFree(d_output_v1));
+    if (d_output_v2) CUDA_CHECK(cudaFree(d_output_v2));
     CUDA_CHECK(cudaFree(d_count));
 
     // Print summary to stderr

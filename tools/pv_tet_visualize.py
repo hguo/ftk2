@@ -554,6 +554,39 @@ def draw_special_points(ax, case_data, segments=None):
                               boxstyle='round,pad=0.3'))
 
 
+    # TN: tangency points (disc(P_k) = 0, repeated root)
+    tn_points = case_data.get('tn_points', [])
+    if 'TN' in category and tn_points:
+        tn_color = '#9933cc'  # purple
+        tn_offsets = [
+            np.array([0.08, -0.08, 0.06]),
+            np.array([-0.06, 0.10, 0.08]),
+            np.array([0.10, 0.06, 0.04]),
+            np.array([-0.08, -0.06, 0.10]),
+        ]
+        for ti, tn in enumerate(tn_points):
+            bary = tn['bary']
+            # C++ already filters out-of-tet TN points
+            pos = bary_to_3d(bary, tn['face'])
+            # Find segment color at this λ
+            seg_color = _find_segment_for_lambda(tn['lambda'], segments)
+            marker_color = seg_color if seg_color != '#333333' else tn_color
+            ax.scatter(pos[0], pos[1], pos[2], c=marker_color, s=120,
+                       marker='^', zorder=10, edgecolors='black',
+                       linewidth=1.0)
+            off = tn_offsets[ti % len(tn_offsets)]
+            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
+                      [pos[2], pos[2]+off[2]],
+                      color=marker_color, linewidth=1.0, linestyle='-')
+            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
+                    f'TN ($\\lambda={tn["lambda"]:.2f}$)',
+                    fontsize=7, ha='left', va='bottom',
+                    color=tn_color, fontweight='bold',
+                    bbox=dict(facecolor='#f4eeff', alpha=0.9,
+                              edgecolor=tn_color, linewidth=1.0,
+                              boxstyle='round,pad=0.2'))
+
+
 def draw_vector_arrows(ax, case_data, arrow_scale=0.10):
     """Draw V (red) and W (blue) arrows at tet vertices."""
     V = np.array(case_data['V'], dtype=float)
@@ -886,6 +919,30 @@ def draw_lambda_ring(ax, case_data, segments):
                 bbox=dict(boxstyle='round,pad=0.15',
                           facecolor='#eeffee',
                           edgecolor=cw_color, linewidth=0.8))
+
+    # ── Mark TN (tangency) points on ring ──
+    tn_ring_points = case_data.get('tn_points', [])
+    if 'TN' in category and tn_ring_points:
+        tn_color = '#9933cc'
+        tn_label_offsets = [R_ring + 0.35, R_ring + 0.55, R_ring + 0.45, R_ring + 0.65]
+        for ti, tn in enumerate(tn_ring_points):
+            # Skip tangencies outside the face triangle
+            if any(b < -0.05 for b in tn['bary']):
+                continue
+            a = lambda_to_angle(tn['lambda'], scale)
+            sx, sy = angle_to_xy(a, R_ring)
+            ax.plot(sx, sy, '^', color=tn_color, markersize=8,
+                    zorder=9, markeredgecolor='black', markeredgewidth=0.8)
+            lr = tn_label_offsets[ti % len(tn_label_offsets)]
+            lx, ly = angle_to_xy(a, lr)
+            mx, my = angle_to_xy(a, R_ring + 0.06)
+            ax.plot([mx, lx], [my, ly], '-', color=tn_color, linewidth=0.6)
+            ax.text(lx, ly, f'TN ($\\lambda$={tn["lambda"]:.2f})',
+                    ha='center', va='center', fontsize=6,
+                    color=tn_color, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.1',
+                              facecolor='#f4eeff',
+                              edgecolor=tn_color, linewidth=0.6))
 
     # ── Puncture ticks with lambda labels OUTSIDE the ring ──
     punc_color = {}
