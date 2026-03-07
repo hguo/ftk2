@@ -150,6 +150,8 @@ struct ClassifiedCase {
     double P_coeffs[4][4];
     bool has_shared_root;
     bool has_non_isolated_sr;  // gcd(Q, P_k) degree ≥ 2 for some k
+    int n_sr_roots;            // number of shared-root Q-root indices
+    int sr_q_root_idx[3];      // which Q roots are shared roots (indices into Q_roots[])
     bool has_B;                // bubble (closed loop inside tet, T0 only)
 
     // Cv/Cw positions (tet barycentric coords, valid if has_Cv/has_Cw)
@@ -560,6 +562,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     cc.gpu = gpu;
     cc.has_shared_root = false;
     cc.has_non_isolated_sr = false;
+    cc.n_sr_roots = 0;
     cc.has_B = false;
     cc.has_Cv_pos = false;
     cc.has_Cw_pos = false;
@@ -859,11 +862,13 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             face_isr_valid[k] = all_vanish;
         }
 
-        // Filter: remove punctures on face k at Q roots if ISR is invalid
-        // (i.e., not all P[j] vanish at the shared root)
+        // Filter: remove punctures on face k at Q roots when face shares
+        // roots with Q.  At Q roots, bary = P(λ)/Q(λ) = 0/0 — the v1
+        // per-triangle solver's bary coords are unreliable.  The SR/ISR
+        // tagging (below) uses L'Hôpital limits for actual in-tet check.
         std::vector<ClassifiedCase::PunctureInfo> filtered;
         for (auto& pi : cc.punctures) {
-            if (face_has_isr[pi.face] && !face_isr_valid[pi.face]) {
+            if (face_has_isr[pi.face]) {
                 // Check if this puncture's λ is at a Q root
                 bool at_q_root = false;
                 // Exact: check if P[face](λ) ≈ 0 AND Q(λ) ≈ 0
@@ -1212,9 +1217,25 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
                     if (in_tet) any_in_tet = true;
                 }
             } else {
-                // deg(g) ≥ 2: use signs_at_roots_i128 for each P_red[k] at roots of g
-                // For now, conservatively tag as SR (rare case, can refine later)
-                any_in_tet = true;
+                // deg(g) ≥ 2: check each root of g via signs_at_roots_i128.
+                // Q_red and P_red[k] have degree ≤ 1 (originals ≤ 3, g ≥ 2).
+                int sq[4] = {};
+                int nrg = ftk2::signs_at_roots_i128(g, dg, Qr, dQr, sq, 4);
+                if (nrg > 0) {
+                    // For each root of g, check all P_red[k]
+                    for (int ri = 0; ri < nrg; ri++) {
+                        if (sq[ri] == 0) continue;  // Q_red = 0 at root: degenerate, skip
+                        bool in_tet = true;
+                        int sp[4] = {};
+                        for (int k = 0; k < 4; k++) {
+                            if (dPr[k] == 0 && Pr[k][0] == 0) continue;  // μ_k = 0 → on face
+                            int spk[4] = {};
+                            ftk2::signs_at_roots_i128(g, dg, Pr[k], dPr[k], spk, 4);
+                            if (spk[ri] * sq[ri] < 0) { in_tet = false; break; }
+                        }
+                        if (in_tet) { any_in_tet = true; break; }
+                    }
+                }
             }
 
             if (dg >= 2) cc.has_non_isolated_sr = true;
@@ -1222,6 +1243,24 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
 
         if (any_in_tet) {
             tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
+            // Record which Q-root indices are SR roots: evaluate g at each Q_root.
+            // g divides Q, so g's roots are a subset of Q's roots.
+            cc.n_sr_roots = 0;
+            for (int qi = 0; qi < cc.n_Q_roots && cc.n_sr_roots < 3; qi++) {
+                double r = cc.Q_roots[qi];
+                double gval = 0, gscale = 0;
+                for (int j = 0; j <= dg; j++) {
+                    double gj = (double)g[j];
+                    double rpow = 1.0;
+                    for (int p = 0; p < j; p++) rpow *= r;
+                    gval += gj * rpow;
+                    gscale += std::abs(gj * rpow);
+                }
+                bool is_root = (std::abs(gval) < 1e-10) ||
+                               (gscale > 0 && std::abs(gval) / gscale < 1e-6);
+                if (is_root)
+                    cc.sr_q_root_idx[cc.n_sr_roots++] = qi;
+            }
         } else {
             cc.has_shared_root = false;
         }
@@ -1391,6 +1430,11 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         if (lam_compat(tf[f][0], tf[f][1]) && lam_compat(tf[f][1], tf[f][2]))
             { has_D22 = true; break; }
 
+    bool has_D12 = false;  // curve on face (P[k] ≡ 0 for some face k)
+    for (int k = 0; k < 4; k++)
+        if (P[k][0]==0.0 && P[k][1]==0.0 && P[k][2]==0.0 && P[k][3]==0.0)
+            { has_D12 = true; break; }
+
     bool has_D33 = lam_compat(0,1) && lam_compat(1,2) && lam_compat(2,3);
 
     // Append highest-dimensional Dmd tag
@@ -1399,6 +1443,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     bool has_D00_tentative = false;
     if (has_D33)      tags.push_back("D33");
     else if (has_D22) tags.push_back("D22");
+    else if (has_D12) tags.push_back("D12");
     else if (has_D11) tags.push_back("D11");
     else if (has_D00) { tags.push_back("D00"); has_D00_tentative = true; }
 
@@ -1686,6 +1731,12 @@ static void print_json(const ClassifiedCase& cc) {
 
     printf("\"has_shared_root\":%s,", cc.has_shared_root ? "true" : "false");
     printf("\"has_non_isolated_sr\":%s,", cc.has_non_isolated_sr ? "true" : "false");
+    printf("\"sr_q_root_indices\":[");
+    for (int i = 0; i < cc.n_sr_roots; i++) {
+        if (i > 0) printf(",");
+        printf("%d", cc.sr_q_root_idx[i]);
+    }
+    printf("],");
     printf("\"has_B\":%s,", cc.has_B ? "true" : "false");
 
     // Cv/Cw positions (tet barycentric)

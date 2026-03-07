@@ -455,7 +455,7 @@ def draw_special_points(ax, case_data, segments=None):
     cv_cw_default = '#008800'  # green fallback
     # Extract specific Cv tag from category (Cv0, Cv1, Cv2, or Cv)
     cv_tag = None
-    cv_m = re.search(r'\bCv(\d?)\b', category)
+    cv_m = re.search(r'(?:^|_)Cv(\d?)(?=_|$)', category)
     if cv_m:
         cv_tag = 'Cv' + cv_m.group(1)  # e.g. "Cv1", "Cv2", or "Cv"
     if cv_tag:
@@ -480,7 +480,7 @@ def draw_special_points(ax, case_data, segments=None):
 
     # Cw/Cw2/Cw1/Cw0: critical point of w at lambda->inf
     cw_tag = None
-    cw_m = re.search(r'\bCw(\d?)\b', category)
+    cw_m = re.search(r'(?:^|_)Cw(\d?)(?=_|$)', category)
     if cw_m:
         cw_tag = 'Cw' + cw_m.group(1)
     if cw_tag:
@@ -508,31 +508,23 @@ def draw_special_points(ax, case_data, segments=None):
                               boxstyle='round,pad=0.3'))
 
 
-    # SR/ISR: shared root — Q-root where some P_k also vanishes
-    # ISR = non-isolated SR (gcd(Q, P_k) ≥ 2)
+    # SR/ISR: shared root — use C++ sr_q_root_indices (no float re-derivation)
     sr_label_prefix = 'ISR' if 'ISR' in category else 'SR'
-    if 'SR' in category:
+    sr_q_indices = case_data.get('sr_q_root_indices', [])
+    if 'SR' in category and sr_q_indices:
         Q = case_data['Q_coeffs']
         P = case_data['P_coeffs']
         Q_roots = case_data.get('Q_roots', [])
-        # Find true SR roots: Q-roots where P_k(qr) ≈ 0 for some k
-        sr_roots = []
-        for qr in Q_roots:
-            q_scale = max(abs(poly_eval(Q, qr + 0.01)), 1e-10)
-            for k in range(4):
-                pk_val = abs(poly_eval(P[k], qr))
-                pk_scale = max(abs(poly_eval(P[k], qr + 0.1)),
-                               abs(poly_eval(P[k], qr - 0.1)), 1e-10)
-                if pk_val / pk_scale < 1e-6:
-                    sr_roots.append(qr)
-                    break
         sr_offsets = [
             np.array([0.06, 0.10, 0.08]),
             np.array([-0.08, 0.06, 0.12]),
             np.array([0.10, -0.06, 0.10]),
         ]
-        for si, qr in enumerate(sr_roots):
-            # Compute 3D position via L'Hopital
+        for si, qi in enumerate(sr_q_indices):
+            if qi >= len(Q_roots):
+                continue
+            qr = Q_roots[qi]
+            # Compute 3D position via L'Hopital: μ_k = P_k'(λ)/Q'(λ)
             Q_prime = [Q[j] * j for j in range(1, len(Q))]
             Qp_val = poly_eval(Q_prime, qr)
             if abs(Qp_val) < 1e-20:
@@ -588,22 +580,30 @@ def draw_pv_curves(ax, segments):
 
 
 def _find_special_punctures(case_data):
-    """Return set of puncture indices that are D01/D00 (labeled separately)."""
+    """Return (skip_marker, skip_label) sets for punctures with dedicated markers.
+
+    skip_marker: D00/D01 punctures — drawn by draw_special_points with own markers.
+    skip_label:  Cv/Cw waypoints — keep puncture marker, suppress λ-label (Cv label shown instead).
+    """
     category = case_data['category']
-    special = set()
+    skip_marker = set()
+    skip_label = set()
     for i, pi in enumerate(case_data['punctures']):
         if 'D01' in category and pi.get('is_edge', False):
-            special.add(i)
+            skip_marker.add(i)
         if 'D00' in category and pi.get('is_vertex', False):
-            special.add(i)
-    return special
+            skip_marker.add(i)
+        # Cv/Cw waypoint: keep marker (it's a real boundary crossing), skip label only
+        if 'Cv' in category and pi.get('lambda') is not None and pi['lambda'] == 0.0:
+            skip_label.add(i)
+    return skip_marker, skip_label
 
 
 def draw_puncture_markers(ax, case_data, segments):
     """Draw puncture points colored by segment, with lambda labels."""
     category = case_data['category']
     punctures = case_data['punctures']
-    special = _find_special_punctures(case_data)
+    skip_marker, skip_label = _find_special_punctures(case_data)
 
     # Build puncture → color map
     punc_color = {}
@@ -620,6 +620,10 @@ def draw_puncture_markers(ax, case_data, segments):
     ]
 
     for i, pi in enumerate(punctures):
+        # Skip marker entirely for D00/D01 (drawn by draw_special_points)
+        if i in skip_marker:
+            continue
+
         pos = bary_to_3d(pi['bary'], pi['face'])
         color = punc_color.get(i, '#666666')
         if pi.get('is_vertex', False):
@@ -632,14 +636,10 @@ def draw_puncture_markers(ax, case_data, segments):
         ax.scatter(*pos, c=color, s=size, marker=marker, zorder=6,
                    edgecolors='black', linewidth=0.7)
 
-        # Skip lambda label for D01/D00 punctures (labeled by draw_special_points)
-        if i in special:
+        # Skip lambda label for Cv/Cw waypoints (Cv/Cw label shown instead)
+        if i in skip_label:
             continue
-
-        # Skip lambda label if Cv/Cw marker is at same position
         lam = pi['lambda']
-        if 'Cv' in category and lam is not None and lam == 0.0:
-            continue
         if 'Cw' in category and (lam is None or (lam is not None and abs(lam) > 1e30)):
             continue
         lam_str = f'$\\lambda$={lam:.2f}' if lam is not None else r'$\lambda=\infty$'
@@ -759,25 +759,14 @@ def draw_lambda_ring(ax, case_data, segments):
                 bbox=dict(boxstyle='round,pad=0.15', facecolor='white',
                           edgecolor='#cccccc', linewidth=0.5))
 
-    # ── Mark SR/ISR points on ring ──
-    # SR: isolated shared root (gcd=1); ISR: non-isolated (gcd≥2)
+    # ── Mark SR/ISR points on ring (using C++ sr_q_root_indices) ──
     category = case_data.get('category', '')
     sr_ring_label = 'ISR' if 'ISR' in category else 'SR'
-    if 'SR' in category:
-        Q_coeffs = case_data['Q_coeffs']
-        P_coeffs = case_data['P_coeffs']
-        sr_roots = set()
-        for qi, qr in enumerate(Q_roots):
-            for k in range(4):
-                pk_val = abs(sum(P_coeffs[k][j] * qr**j for j in range(len(P_coeffs[k]))))
-                pk_scale = max(
-                    abs(sum(P_coeffs[k][j] * (qr + 0.1)**j for j in range(len(P_coeffs[k])))),
-                    abs(sum(P_coeffs[k][j] * (qr - 0.1)**j for j in range(len(P_coeffs[k])))),
-                    1e-10)
-                if pk_val / pk_scale < 1e-6:
-                    sr_roots.add(qi)
-                    break
-        for qi in sr_roots:
+    sr_q_indices_ring = case_data.get('sr_q_root_indices', [])
+    if 'SR' in category and sr_q_indices_ring:
+        for qi in sr_q_indices_ring:
+            if qi >= len(Q_roots):
+                continue
             qr = Q_roots[qi]
             a = lambda_to_angle(qr, scale)
             sx, sy = angle_to_xy(a, R_ring)
@@ -852,7 +841,7 @@ def draw_lambda_ring(ax, case_data, segments):
     # Use segment color when Cv/Cw lies on a curve segment, else green fallback
     cv_cw_default = '#008800'
     cv_tag_ring = None
-    cv_mr = re.search(r'\bCv(\d?)\b', category)
+    cv_mr = re.search(r'(?:^|_)Cv(\d?)(?=_|$)', category)
     if cv_mr:
         cv_tag_ring = 'Cv' + cv_mr.group(1)
     if cv_tag_ring:
@@ -873,7 +862,7 @@ def draw_lambda_ring(ax, case_data, segments):
                           facecolor='#eeffee',
                           edgecolor=cv_color, linewidth=0.8))
     cw_tag_ring = None
-    cw_mr = re.search(r'\bCw(\d?)\b', category)
+    cw_mr = re.search(r'(?:^|_)Cw(\d?)(?=_|$)', category)
     if cw_mr:
         cw_tag_ring = 'Cw' + cw_mr.group(1)
     if cw_tag_ring:
@@ -924,7 +913,12 @@ def draw_lambda_ring(ax, case_data, segments):
                                    if label_radii[i_prev] < R_ring + 0.50
                                    else R_ring + 0.35)
 
+    skip_marker_ring, skip_label_ring = _find_special_punctures(case_data)
     for i, pi in enumerate(punctures):
+        # Skip ring marker for D00/D01 (drawn separately)
+        if i in skip_marker_ring:
+            continue
+
         lam = pi['lambda']
         color = punc_color.get(i, 'black')
         a = punc_angles[i]
@@ -935,14 +929,13 @@ def draw_lambda_ring(ax, case_data, segments):
         x2, y2 = angle_to_xy(a, 1.07)
         ax.plot([x1, x2], [y1, y2], '-', color=color, linewidth=2.0, zorder=7)
 
-        # Skip lambda label if Cv/Cw marker is at same position
-        skip_label = False
-        if 'Cv' in category and lam is not None and lam == 0.0:
-            skip_label = True
+        # Skip lambda label for Cv/Cw waypoints (Cv/Cw label shown instead)
+        if i in skip_label_ring:
+            continue
         if 'Cw' in category and (lam is None or (lam is not None and abs(lam) > 1e30)):
-            skip_label = True
+            continue
 
-        if not skip_label:
+        if True:
             # Lambda label outside ring
             lr = label_radii[i]
             lx, ly = angle_to_xy(a, lr)
