@@ -844,14 +844,17 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             if (dh < 1) continue;
             face_has_isr[k] = true;
 
-            // Check if all other P[j] vanish at h's roots
+            // Check if all other P[j] vanish at ALL roots of h.
+            // Must use deg(gcd(h, P[j])) == deg(h), not resultant == 0.
             bool all_vanish = true;
             for (int j = 0; j < 4; j++) {
                 if (j == k) continue;
                 int edj = 3;
                 while (edj > 0 && Pi[j][edj] == 0) edj--;
-                int rs = ftk2::resultant_sign_i128(h, dh, Pi[j], edj);
-                if (rs != 0) { all_vanish = false; break; }
+                if (edj == 0 && Pi[j][0] == 0) continue;  // P[j] ≡ 0
+                __int128 g[4] = {};
+                int dg = ftk2::poly_gcd_full_i128(h, dh, Pi[j], edj, g);
+                if (dg < dh) { all_vanish = false; break; }
             }
             face_isr_valid[k] = all_vanish;
         }
@@ -1117,41 +1120,109 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     std::vector<std::string> tags;
 
     // Shared-root classification: SR (isolated, gcd=1) vs ISR (non-isolated, gcd≥2)
-    // Only tag SR/ISR if the shared root is in/on the tet:
-    //   At a shared root α (Q(α)=P[k](α)=0), bary coords μ_j = P[j](α)/Q(α).
-    //   If any P[j](α) ≠ 0, then μ_j → ∞ → point outside tet → skip tag.
-    //   Tag only if ALL P[j](α) = 0 for every shared root.
+    // Only tag SR/ISR if the shared root is in/on the tet.
+    //
+    // Algorithm (pure integer):
+    // 1. Compute g = gcd(Q, P[0], ..., P[3]) — polynomial whose roots are
+    //    where ALL five polynomials vanish (necessary for finite bary coords).
+    // 2. If deg(g) ≥ 1: compute Q_red = Q/g, P_red[k] = P[k]/g.
+    //    At each root α of g, bary coord = P_red[k](α) / Q_red(α).
+    //    Check sign(P_red[k](α)) × sign(Q_red(α)) ≥ 0 for all k
+    //    using integer sign-at-root primitives.
     if (cc.has_shared_root) {
         __int128 Qi[4], Pi[4][4];
         for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
         for (int a = 0; a < 4; a++)
             for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
 
+        // Step 1: g = gcd(Q, P[0], ..., P[3])
+        __int128 g[4];
+        int dg;
+        // Start with Q
+        for (int i = 0; i < 4; i++) g[i] = Qi[i];
+        dg = 3;
+        while (dg > 0 && g[dg] == 0) dg--;
+        // Iterate GCD with each P[k]
+        for (int k = 0; k < 4 && dg >= 1; k++) {
+            int dk = 3;
+            while (dk > 0 && Pi[k][dk] == 0) dk--;
+            if (dk == 0 && Pi[k][0] == 0) continue;  // P[k] ≡ 0, gcd unchanged
+            __int128 g2[4] = {};
+            dg = ftk2::poly_gcd_full_i128(g, dg, Pi[k], dk, g2);
+            for (int i = 0; i < 4; i++) g[i] = g2[i];
+        }
+
         bool any_in_tet = false;
         cc.has_non_isolated_sr = false;
-        for (int k = 0; k < 4; k++) {
-            __int128 h[4] = {};
-            int dh = ftk2::poly_gcd_full_i128(Qi, 3, Pi[k], 3, h);
-            if (dh < 1) continue;
 
-            // Check if all other P[j] also vanish at h's roots
-            bool all_vanish = true;
-            for (int j = 0; j < 4; j++) {
-                if (j == k) continue;
-                int edj = 3;
-                while (edj > 0 && Pi[j][edj] == 0) edj--;
-                int rs = ftk2::resultant_sign_i128(h, dh, Pi[j], edj);
-                if (rs != 0) { all_vanish = false; break; }
+        if (dg >= 1) {
+            // Step 2: Q_red = Q/g, P_red[k] = P[k]/g
+            __int128 Qr[4] = {};
+            int dQr = ftk2::poly_exact_div_i128(Qi, 3, g, dg, Qr);
+            __int128 Pr[4][4] = {};
+            int dPr[4] = {};
+            for (int k = 0; k < 4; k++) {
+                int dk = 3;
+                while (dk > 0 && Pi[k][dk] == 0) dk--;
+                if (dk == 0 && Pi[k][0] == 0) {
+                    dPr[k] = 0; Pr[k][0] = 0;  // P[k] ≡ 0 → P_red ≡ 0 → μ_k = 0 (on face)
+                } else {
+                    dPr[k] = ftk2::poly_exact_div_i128(Pi[k], dk, g, dg, Pr[k]);
+                }
             }
-            if (all_vanish) {
+
+            // Check in-tet: at each root α of g, sign(P_red[k](α)) must agree
+            // with sign(Q_red(α)) for all k (so μ_k = P_red/Q_red ≥ 0).
+            // For each root of g, compute sign(Q_red(α)) and sign(P_red[k](α))
+            // using integer Sturm/PRS primitives.
+            //
+            // For deg(g) = 1: α = -g[0]/g[1] (rational root)
+            //   sign(f(α)) = sign(f(-g[0]/g[1])) = sign(g[1]^deg(f)) × sign(f_eval)
+            //   where f_eval = sum_i f[i]·(-g[0])^i·g[1]^(deg(f)-i)
+            if (dg == 1) {
+                // α = -g[0]/g[1], evaluate exactly
+                auto eval_at_root = [&](__int128* f, int df) -> int {
+                    // Compute f(-g[0]/g[1]) × g[1]^df
+                    __int128 val = 0;
+                    __int128 neg_g0_pow = 1;  // (-g[0])^i
+                    __int128 g1_pow_desc = 1; // g[1]^(df-i) precomputed
+                    // Precompute g[1]^df
+                    for (int i = 0; i < df; i++) g1_pow_desc *= g[1];
+                    for (int i = 0; i <= df; i++) {
+                        val += f[i] * neg_g0_pow * g1_pow_desc;
+                        neg_g0_pow *= (-g[0]);
+                        if (i < df) g1_pow_desc /= g[1];
+                    }
+                    // sign(f(α)) = sign(val) × sign(g[1]^df)  ... but val already has g[1]^df
+                    // Actually val = g[1]^df × f(α), so sign(f(α)) = sign(val) if g[1]^df > 0
+                    // g[1]^df sign: if df even, always +; if df odd, sign(g[1])
+                    int g1_sign = (g[1] > 0) ? 1 : -1;
+                    int factor = (df % 2 == 0) ? 1 : g1_sign;
+                    return (val > 0) ? factor : (val < 0) ? -factor : 0;
+                };
+
+                int sq = eval_at_root(Qr, dQr);
+                if (sq != 0) {
+                    bool in_tet = true;
+                    for (int k = 0; k < 4; k++) {
+                        if (dPr[k] == 0 && Pr[k][0] == 0) continue;  // μ_k = 0 → on face, ok
+                        int sp = eval_at_root(Pr[k], dPr[k]);
+                        if (sp * sq < 0) { in_tet = false; break; }  // μ_k < 0 → outside
+                    }
+                    if (in_tet) any_in_tet = true;
+                }
+            } else {
+                // deg(g) ≥ 2: use signs_at_roots_i128 for each P_red[k] at roots of g
+                // For now, conservatively tag as SR (rare case, can refine later)
                 any_in_tet = true;
-                if (dh >= 2) cc.has_non_isolated_sr = true;
             }
+
+            if (dg >= 2) cc.has_non_isolated_sr = true;
         }
+
         if (any_in_tet) {
             tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
         } else {
-            // SR exists algebraically but point is outside tet — don't tag
             cc.has_shared_root = false;
         }
     }
