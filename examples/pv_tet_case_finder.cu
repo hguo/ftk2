@@ -2082,6 +2082,21 @@ int main(int argc, char** argv)
             // Store first representative of each category
             if (representatives.find(cc.category) == representatives.end())
                 representatives[cc.category] = cc;
+
+            // ExactPV2 comparison
+            if (pv_version == 2 || pv_version == 3) {
+                __int128 Q_i128[4], P_i128[4][4];
+                ftk2::compute_tet_QP_i128(h_cases[i].V, h_cases[i].W, Q_i128, P_i128);
+                ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+
+                if (pv_version == 3) {
+                    int v1_pairs = (int)cc.pairs.size();
+                    if (v1_pairs != v2.n_pairs)
+                        fprintf(stderr, "    [MISMATCH] seed=%lu v1=%d v2=%d (%s)\n",
+                                (unsigned long)h_cases[i].seed, v1_pairs, v2.n_pairs,
+                                cc.category.c_str());
+                }
+            }
         }
 
         fprintf(stderr, "Batch %d/%d: %d hits (%d total), %d categories\n",
