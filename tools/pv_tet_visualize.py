@@ -1046,10 +1046,9 @@ def visualize_case(case_data, output_path=None):
     draw_tet_wireframe(ax3d)
     draw_vector_arrows(ax3d, case_data)
     draw_pv_curves(ax3d, segments)
-    draw_puncture_markers(ax3d, case_data, segments)
-    draw_special_points(ax3d, case_data, segments)
 
     # Bubble: closed PV curve inside tet (0 punctures, 0 segments)
+    # Must be drawn BEFORE draw_special_points so Cv/Cw picks up segment color.
     if case_data.get('has_B') and case_data['n_punctures'] == 0:
         Q = case_data['Q_coeffs']
         P = case_data['P_coeffs']
@@ -1073,6 +1072,9 @@ def visualize_case(case_data, output_path=None):
                      'pi_entry': -1, 'pi_exit': -1,
                      'lam_entry': None, 'lam_exit': None,
                      'infinity_spanning': True}]
+
+    draw_puncture_markers(ax3d, case_data, segments)
+    draw_special_points(ax3d, case_data, segments)
 
     ax3d.set_title(f'{case_data["n_punctures"]} punctures, '
                    f'{len(segments)} segment{"s" if len(segments) != 1 else ""}',

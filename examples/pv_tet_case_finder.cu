@@ -1430,10 +1430,35 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         if (lam_compat(tf[f][0], tf[f][1]) && lam_compat(tf[f][1], tf[f][2]))
             { has_D22 = true; break; }
 
-    bool has_D12 = false;  // curve on face (P[k] ≡ 0 for some face k)
-    for (int k = 0; k < 4; k++)
-        if (P[k][0]==0.0 && P[k][1]==0.0 && P[k][2]==0.0 && P[k][3]==0.0)
-            { has_D12 = true; break; }
+    bool has_D12 = false;  // curve on face (P[k] ≡ 0 AND curve passes through face triangle)
+    for (int k = 0; k < 4; k++) {
+        if (!(P[k][0]==0.0 && P[k][1]==0.0 && P[k][2]==0.0 && P[k][3]==0.0))
+            continue;
+        // P[k] ≡ 0: curve lies on face k's plane (μ_k = 0 for all λ).
+        // Only tag D12 if the curve actually enters the face triangle,
+        // i.e., sign(P[j](λ)) = sign(Q(λ)) for all j ≠ k at some λ.
+        // Quick check: at λ → +∞, sign = sign(leading coeff).
+        // If all P[j] leading coeffs agree with Q's, curve is inside at large λ.
+        __int128 q_lc = 0, p_lc[3] = {};
+        { int oi = 0;
+          for (int c = 3; c >= 0; c--) if ((__int128)llround(Q[c]) != 0) { q_lc = (__int128)llround(Q[c]); break; }
+          for (int j = 0; j < 4; j++) {
+              if (j == k) continue;
+              for (int c = 3; c >= 0; c--) if ((__int128)llround(P[j][c]) != 0) { p_lc[oi] = (__int128)llround(P[j][c]); break; }
+              oi++;
+          }
+        }
+        if (q_lc != 0) {
+            bool ok = true;
+            for (int j = 0; j < 3; j++)
+                if (p_lc[j] * q_lc < 0) { ok = false; break; }
+            if (ok) { has_D12 = true; break; }
+        }
+        // Also check λ → -∞: sign may differ for odd-degree leading terms.
+        // Negate leading coeffs of odd-degree polynomials.
+        // Actually, just check if n_punctures > 0 (curve enters tet).
+        if (n > 0) { has_D12 = true; break; }
+    }
 
     bool has_D33 = lam_compat(0,1) && lam_compat(1,2) && lam_compat(2,3);
 
