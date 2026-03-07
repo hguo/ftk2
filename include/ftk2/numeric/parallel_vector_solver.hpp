@@ -1494,18 +1494,19 @@ inline int signs_at_roots_i128(const __int128* f_in, int df_max,
             // signs[smaller_root] and signs[larger_root]:
             // If the shared root is the smaller one: signs = {0, sign(g_lc)}
             // If the shared root is the larger one: signs = {-sign(g_lc), 0}
-            // Determine via f'(t): if f'(t) and lc(f) have same sign → t is the smaller root
+            // For quadratic f with positive lc: f'(α₀) < 0 (descending), f'(α₁) > 0 (ascending)
+            // So: f'(t)·lc(f) < 0 → t is the SMALLER root; f'(t)·lc(f) > 0 → t is the LARGER root
             __int128 fp[4] = {};
             poly_derivative_i128(f, df, fp);
             int sign_fpt = sign_poly_at_rational_i128(fp, df-1, -g[0], g[1]);
             if (sign_fpt * sign_lc_f < 0) {
-                // f decreasing through 0 → t is the LARGER root
-                signs[0] = -sign_g_lc;
-                signs[1] = 0;
-            } else {
-                // f increasing through 0 → t is the SMALLER root
+                // f descending at t → t is the SMALLER root
                 signs[0] = 0;
                 signs[1] = sign_g_lc;
+            } else {
+                // f ascending at t → t is the LARGER root
+                signs[0] = -sign_g_lc;
+                signs[1] = 0;
             }
             return 2;
         }
@@ -1546,10 +1547,81 @@ inline int signs_at_roots_i128(const __int128* f_in, int df_max,
     int disc_sign = discriminant_sign_i128(f);
 
     if (disc_sign < 0) {
-        // One real root
+        // One real root α.  Use PRS to avoid Sylvester resultant overflow.
+        // Reduce g mod f → remainder r (degree ≤ 2).
         if (max_signs < 1) return 0;
-        signs[0] = sign_at_unique_root_i128(f, df, g, dg);
-        return 1;
+        __int128 r1[8] = {};
+        int dr1;
+        int scale1 = 1;
+        if (dg >= df) {
+            dr1 = prem_i128(g, dg, f, df, r1);
+            int exp1 = dg - df + 1;
+            int lc_sign1 = (f[df] > 0) ? 1 : -1;
+            scale1 = (exp1 % 2 == 0) ? 1 : lc_sign1;
+        } else {
+            for (int j = 0; j <= dg; j++) r1[j] = g[j];
+            dr1 = dg;
+            content_reduce_i128(r1, dr1);
+        }
+        dr1 = effective_degree_i128(r1, dr1);
+        // sign(g(α)) = sign(r1(α)) × scale1
+        if (dr1 == 0) {
+            signs[0] = ((r1[0] > 0) ? 1 : (r1[0] < 0) ? -1 : 0) * scale1;
+            return 1;
+        }
+        if (dr1 == 1) {
+            // r1 has root at t = -r1[0]/r1[1].
+            // For cubic f with 1 real root: f changes sign only at α.
+            // sign(f(t)) × lc(f): > 0 → t > α, < 0 → t < α.
+            int sft = sign_poly_at_rational_i128(f, df, -r1[0], r1[1]);
+            int sign_lc_f = (f[df] > 0) ? 1 : -1;
+            int r1_lc_sign = (r1[dr1] > 0) ? 1 : -1;
+            if (sft == 0) { signs[0] = 0; return 1; }  // shared root
+            if (sft * sign_lc_f > 0)
+                signs[0] = -r1_lc_sign * scale1;  // t > α → α < t → r1(α) = r1_lc*(α-t), (α-t)<0
+            else
+                signs[0] = r1_lc_sign * scale1;   // t < α → α > t → r1(α) = r1_lc*(α-t), (α-t)>0
+            return 1;
+        }
+        // dr1 == 2: quadratic remainder
+        {
+            __int128 disc_r1 = r1[1]*r1[1] - 4*r1[2]*r1[0];
+            int sign_r1_2 = (r1[2] > 0) ? 1 : -1;
+            if (disc_r1 < 0) {
+                // No real roots → r1 has constant sign
+                signs[0] = sign_r1_2 * scale1;
+                return 1;
+            }
+            if (disc_r1 == 0) {
+                // Double root → r1 = r1[2]*(x-ρ)², sign = sign(r1[2]) unless α = ρ
+                int sft = sign_poly_at_rational_i128(f, df, -r1[1], 2*r1[2]);
+                signs[0] = (sft == 0) ? 0 : sign_r1_2 * scale1;
+                return 1;
+            }
+            // Two roots ρ₁ < ρ₂.  r1 > 0 outside [ρ₁,ρ₂] if r1[2] > 0.
+            // Need: is α in (-∞,ρ₁), (ρ₁,ρ₂), or (ρ₂,∞)?
+            // Evaluate f at roots of r1 via signs_at_roots_i128(r1, 2, f, 3, ...).
+            // For cubic f with 1 real root: f(ρ) × lc(f) > 0 ↔ ρ > α.
+            int f_at_rho[2] = {};
+            signs_at_roots_i128(r1, dr1, f, df, f_at_rho, 2, _depth + 1);
+            int sign_lc_f = (f[df] > 0) ? 1 : -1;
+            // ρ₁ < ρ₂.  Determine position of α:
+            int pos1 = f_at_rho[0] * sign_lc_f;  // > 0 → ρ₁ > α
+            int pos2 = f_at_rho[1] * sign_lc_f;  // > 0 → ρ₂ > α
+            if (f_at_rho[0] == 0 || f_at_rho[1] == 0) {
+                signs[0] = 0;  // shared root
+            } else if (pos1 > 0) {
+                // ρ₁ > α → α < ρ₁ < ρ₂ → outside, left
+                signs[0] = sign_r1_2 * scale1;
+            } else if (pos2 > 0) {
+                // ρ₁ < α < ρ₂ → inside
+                signs[0] = -sign_r1_2 * scale1;
+            } else {
+                // ρ₁ < ρ₂ < α → outside, right
+                signs[0] = sign_r1_2 * scale1;
+            }
+            return 1;
+        }
     }
 
     if (disc_sign == 0) {
@@ -3699,11 +3771,12 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
     // For each root: determine validity (all P_j same sign for j ≠ k)
     struct RootInfo {
         int face;
-        int root_idx;     // index among distinct roots of this face's P_k
+        int root_idx;     // index among distinct roots of this face's P_k (-1 = infinity)
         int q_interval;   // assigned later
         bool valid;
         bool is_edge;
         bool is_vertex;
+        bool is_infinity;  // true if this puncture is at λ=±∞ (degree-reduced face)
         int edge_faces[2];
     };
     RootInfo all_roots[12];
@@ -3800,9 +3873,52 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
             ri_info.valid = true;
             ri_info.is_edge = false;
             ri_info.is_vertex = false;
+            ri_info.is_infinity = false;
             ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
             n_all++;
         }
+    }
+
+    // --- Step 2b: Infinity punctures for degree-reduced faces ---
+    // When degP[k] < 3, the "missing" root is at λ=±∞.
+    // Barycentric coords at ∞: μ_j = P[j][3] / Q[3] for j ≠ k, μ_k = 0.
+    // Valid iff all P[j][3] (j ≠ k) have the same sign and Q[3] ≠ 0.
+    for (int k = 0; k < 4; k++) {
+        if (degP[k] >= 3 || P[k][3] != 0) continue;  // only degree-reduced faces
+        if (Q[3] == 0) continue;  // Q also degree-reduced, skip for now
+
+        // Check validity: all P[j][3] (j ≠ k) must have same sign
+        int first_sign3 = 0;
+        bool valid_inf = true;
+        int n_zero3 = 0;
+        int zero_faces3[3] = {};
+        for (int j = 0; j < 4; j++) {
+            if (j == k) continue;
+            __int128 pj3 = P[j][3];
+            if (pj3 == 0) {
+                zero_faces3[n_zero3++] = j;
+            } else {
+                int s = (pj3 > 0) ? 1 : -1;
+                if (first_sign3 == 0) first_sign3 = s;
+                else if (s != first_sign3) { valid_inf = false; break; }
+            }
+        }
+        // Only add face-INTERIOR infinity punctures (Cw2).
+        // Edge/vertex infinity punctures (Cw1/Cw0) are waypoints — not paired.
+        if (!valid_inf || first_sign3 == 0) continue;
+        if (n_zero3 >= 1) continue;  // edge/vertex at ∞ → Cw1/Cw0 waypoint, skip
+
+        if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
+        RootInfo& ri_info = all_roots[n_all];
+        ri_info.face = k;
+        ri_info.root_idx = -1;  // infinity marker
+        ri_info.q_interval = -1;
+        ri_info.valid = true;
+        ri_info.is_edge = false;
+        ri_info.is_vertex = false;
+        ri_info.is_infinity = true;
+        ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
+        n_all++;
     }
 
     // --- Step 3: Edge detection ---
@@ -3884,6 +4000,24 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
         }
     }
 
+    // --- Step 4b: Cv waypoint exclusion ---
+    // Edge/vertex punctures at λ=0 are Cv1/Cv0 waypoints → not paired.
+    // Check by evaluating g(λ)=λ at the root: if sign is 0, root is at λ=0.
+    {
+        __int128 lambda_poly[2] = {0, 1};
+        for (int r = 0; r < n_all; r++) {
+            if (!all_roots[r].valid) continue;
+            if (!all_roots[r].is_edge && !all_roots[r].is_vertex) continue;
+            if (all_roots[r].is_infinity) continue;
+            if (P[all_roots[r].face][0] != 0) continue;  // quick reject: no root at 0
+            int signs[3] = {};
+            int nr = signs_at_roots_i128(P[all_roots[r].face], degP[all_roots[r].face],
+                                         lambda_poly, 1, signs, 3);
+            if (all_roots[r].root_idx < nr && signs[all_roots[r].root_idx] == 0)
+                all_roots[r].valid = false;  // Cv waypoint
+        }
+    }
+
     // --- Step 5: Collect valid punctures ---
     int valid_indices[12];
     int n_valid = 0;
@@ -3903,7 +4037,13 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
             RootInfo& b = all_roots[valid_indices[j]];
             // Compare root a.root_idx of P[a.face] with root b.root_idx of P[b.face]
             int cmp;
-            if (a.face == b.face) {
+            if (a.is_infinity && b.is_infinity) {
+                cmp = 0;  // both at infinity
+            } else if (a.is_infinity) {
+                cmp = 1;  // infinity > any finite
+            } else if (b.is_infinity) {
+                cmp = -1; // any finite < infinity
+            } else if (a.face == b.face) {
                 // Same face: order by root index (already sorted)
                 cmp = (a.root_idx < b.root_idx) ? -1 : (a.root_idx > b.root_idx) ? 1 : 0;
             } else {
@@ -3938,6 +4078,11 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
 
     for (int vi = 0; vi < n_valid; vi++) {
         RootInfo& ri = all_roots[valid_indices[vi]];
+
+        if (ri.is_infinity) {
+            ri.q_interval = n_qr_roots;  // all Q roots are below λ=∞
+            continue;
+        }
 
         if (n_qr_roots == 0 || degQ_red == 0) {
             ri.q_interval = 0;  // no Q_red roots → single interval
@@ -3989,15 +4134,29 @@ inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
 
     // --- Step 9: Pairing ---
     // Group by Q_red-interval, pair consecutive within each group.
-    // Cross-infinity (Cw): intervals 0 and n_qr_roots are connected through
-    // λ = ±∞, so merge them into a single wrapped group.
+    // Cross-infinity: intervals 0 and n_qr_roots are connected through λ = ±∞
+    // only when the asymptotic point at ∞ is inside the tet.
+    // Condition: Q[3] == 0 (deg drops) or all P[k][3] * Q[3] >= 0.
+    bool merge_infinity = false;
+    if (Q[3] == 0) {
+        merge_infinity = true;
+    } else {
+        merge_infinity = true;
+        for (int k = 0; k < 4; k++) {
+            if ((P[k][3] > 0 && Q[3] < 0) || (P[k][3] < 0 && Q[3] > 0)) {
+                merge_infinity = false;
+                break;
+            }
+        }
+    }
+
     for (int qi = 0; qi <= n_qr_roots; qi++) {
-        if (qi == n_qr_roots && n_qr_roots > 0)
+        if (merge_infinity && qi == n_qr_roots && n_qr_roots > 0)
             continue;  // already handled with qi=0
 
         int group[12];
         int ng = 0;
-        if (qi == 0 && n_qr_roots > 0) {
+        if (merge_infinity && qi == 0 && n_qr_roots > 0) {
             // Wrapped group: interval n_qr_roots (→ +∞) then interval 0 (−∞ →)
             for (int i = 0; i < result.n_punctures; i++)
                 if (result.punctures[i].q_interval == n_qr_roots)
