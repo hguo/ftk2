@@ -234,6 +234,88 @@ static void write_curves(
               << total_segs << " segs\n";
 }
 
+// PV version flag: 1 = ExactPV1 (default), 2 = ExactPV2, 3 = both
+static int g_pv_version = 1;
+
+// ─── ExactPV2 stitching via solve_pv_tet_v2 ──────────────────────────────────
+// Uses pure-integer per-tet solver for topological decisions.
+// Float only for spatial output coordinates (barycentric interpolation).
+static void stitch_v2(
+    const std::vector<int>&    plist,
+    const FeatureComplex&      complex,
+    std::shared_ptr<Mesh>      mesh,
+    const FieldEval&           eval,
+    std::vector<PunctureConnection>& connections)
+{
+    mesh->iterate_simplices(3, [&](const Simplex& s) {
+        // Collect face → puncture map for this tet
+        std::map<std::set<uint64_t>, std::vector<int>> face_puncs;
+        for (int p : plist) {
+            const auto& v = complex.vertices[p];
+            std::set<uint64_t> face(v.simplex.vertices, v.simplex.vertices + 3);
+            // Check if face belongs to this tet
+            bool belongs = true;
+            for (uint64_t fv : face) {
+                bool found = false;
+                for (int i = 0; i < 4; i++) if (s.vertices[i] == fv) { found = true; break; }
+                if (!found) { belongs = false; break; }
+            }
+            if (belongs) face_puncs[face].push_back(p);
+        }
+        if (face_puncs.empty()) return true;
+
+        // Get field values at tet vertices
+        double V_arr[4][3], W_arr[4][3];
+        for (int i = 0; i < 4; i++) {
+            auto c = mesh->get_vertex_coordinates(s.vertices[i]);
+            auto fv = eval(c[0], c[1], c[2]);
+            for (int j = 0; j < 3; j++) V_arr[i][j] = fv[j];
+            for (int j = 0; j < 3; j++) W_arr[i][j] = fv[3+j];
+        }
+
+        __int128 Q_i128[4], P_i128[4][4];
+        compute_tet_QP_i128(V_arr, W_arr, Q_i128, P_i128);
+
+        ExactPV2Result v2 = solve_pv_tet_v2(Q_i128, P_i128);
+
+        // Collect all puncture indices from this tet
+        std::vector<int> tp;
+        for (auto& [face, puncs] : face_puncs)
+            for (int p : puncs) tp.push_back(p);
+
+        if (tp.size() < 2) return true;
+
+        uint64_t tet_id = *std::min_element(s.vertices, s.vertices + 4);
+
+        // If v2 found pairs, use its pairing.  Otherwise fall back to simple λ-sort.
+        if (v2.n_pairs > 0 && (int)tp.size() >= 2) {
+            // Match v2 punctures to actual puncture indices by λ ordering.
+            // Sort tp by λ (float, for matching only — topological decision was already made by v2)
+            std::vector<std::pair<double,int>> lam_idx;
+            for (int p : tp)
+                lam_idx.push_back({(double)complex.vertices[p].scalar, p});
+            std::sort(lam_idx.begin(), lam_idx.end());
+
+            // v2 punctures are already sorted by λ.  Map v2 index → actual puncture.
+            // If counts match, direct mapping works.
+            if (v2.n_punctures == (int)lam_idx.size()) {
+                for (int pi = 0; pi < v2.n_pairs; pi++) {
+                    int a = v2.pairs[pi].a, b = v2.pairs[pi].b;
+                    if (a < (int)lam_idx.size() && b < (int)lam_idx.size())
+                        connections.push_back({lam_idx[a].second, lam_idx[b].second, tet_id});
+                }
+            } else {
+                // Mismatch in counts — fall back to simple pairing
+                for (size_t j = 0; j + 1 < lam_idx.size(); j += 2)
+                    connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
+            }
+        } else if (tp.size() == 2) {
+            connections.push_back({tp[0], tp[1], tet_id});
+        }
+        return true;
+    });
+}
+
 // ─── Run one test case ────────────────────────────────────────────────────────
 static void run_test_case(const TestCase& tc, int N)
 {
@@ -336,59 +418,103 @@ static void run_test_case(const TestCase& tc, int N)
     int n2=0, n_more=0;
     std::map<int,int> tet_hist;
 
-    mesh->iterate_simplices(3, [&](const Simplex& s) {
-        std::vector<std::set<uint64_t>> faces = {
-            {s.vertices[0],s.vertices[1],s.vertices[2]},
-            {s.vertices[0],s.vertices[1],s.vertices[3]},
-            {s.vertices[0],s.vertices[2],s.vertices[3]},
-            {s.vertices[1],s.vertices[2],s.vertices[3]}
-        };
-        std::vector<int> tp;
-        for (auto& f : faces)
-            if (face_to_punc.count(f))
-                for (int p : face_to_punc[f]) tp.push_back(p);
-        if (tp.empty()) return true;
+    auto stitch_v1_lambda = [&]() {
+        mesh->iterate_simplices(3, [&](const Simplex& s) {
+            std::vector<std::set<uint64_t>> faces = {
+                {s.vertices[0],s.vertices[1],s.vertices[2]},
+                {s.vertices[0],s.vertices[1],s.vertices[3]},
+                {s.vertices[0],s.vertices[2],s.vertices[3]},
+                {s.vertices[1],s.vertices[2],s.vertices[3]}
+            };
+            std::vector<int> tp;
+            for (auto& f : faces)
+                if (face_to_punc.count(f))
+                    for (int p : face_to_punc[f]) tp.push_back(p);
+            if (tp.empty()) return true;
 
-        tet_hist[tp.size()]++;
+            tet_hist[tp.size()]++;
 
-        // Use min(vertices) as tet_id for SoS consistency
-        uint64_t tet_id = *std::min_element(s.vertices, s.vertices + 4);
+            uint64_t tet_id = *std::min_element(s.vertices, s.vertices + 4);
 
-        if (tp.size() == 2) {
-            n2++;
-            connections.push_back({tp[0], tp[1], tet_id});
-        } else if (tp.size() > 2) {
-            n_more++;
-            // Get exact integer Q and P polynomials for this tet
-            double V_arr[4][3], W_arr[4][3];
-            for (int i = 0; i < 4; ++i) {
-                auto c = mesh->get_vertex_coordinates(s.vertices[i]);
-                auto fv = tc.eval(c[0], c[1], c[2]);
-                for (int j = 0; j < 3; ++j) V_arr[i][j] = fv[j];
-                for (int j = 0; j < 3; ++j) W_arr[i][j] = fv[3+j];
+            if (tp.size() == 2) {
+                n2++;
+                connections.push_back({tp[0], tp[1], tet_id});
+            } else if (tp.size() > 2) {
+                n_more++;
+                double V_arr[4][3], W_arr[4][3];
+                for (int i = 0; i < 4; ++i) {
+                    auto c = mesh->get_vertex_coordinates(s.vertices[i]);
+                    auto fv = tc.eval(c[0], c[1], c[2]);
+                    for (int j = 0; j < 3; ++j) V_arr[i][j] = fv[j];
+                    for (int j = 0; j < 3; ++j) W_arr[i][j] = fv[3+j];
+                }
+                __int128 Q_i128[4], P_i128[4][4];
+                compute_tet_QP_i128(V_arr, W_arr, Q_i128, P_i128);
+
+                bool q_zero = (Q_i128[0] == 0 && Q_i128[1] == 0 &&
+                               Q_i128[2] == 0 && Q_i128[3] == 0);
+
+                if (!q_zero)
+                    stitch_ambiguous_tet(tp, complex, Q_i128, P_i128, tet_id, connections);
+                else {
+                    std::vector<std::pair<double,int>> lam_idx;
+                    for (int p : tp)
+                        lam_idx.push_back({(double)complex.vertices[p].scalar, p});
+                    std::sort(lam_idx.begin(), lam_idx.end());
+                    for (size_t j = 0; j + 1 < lam_idx.size(); j += 2)
+                        connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
+                }
             }
-            __int128 Q_i128[4], P_i128[4][4];
-            compute_tet_QP_i128(V_arr, W_arr, Q_i128, P_i128);
+            return true;
+        });
+    };
 
-            // Exact Q≡0 check (all integer coefficients zero)
-            bool q_zero = (Q_i128[0] == 0 && Q_i128[1] == 0 &&
-                           Q_i128[2] == 0 && Q_i128[3] == 0);
+    if (g_pv_version == 1 || g_pv_version == 3) {
+        std::cout << "  [PV v1] Stitching...\n";
+        stitch_v1_lambda();
+    }
 
-            if (!q_zero) {
-                // Sturm-based combinatorial stitching
-                stitch_ambiguous_tet(tp, complex, Q_i128, P_i128, tet_id, connections);
-            } else {
-                // Q≡0: no poles at all → single group → pair by λ-sort
-                std::vector<std::pair<double,int>> lam_idx;
-                for (int p : tp)
-                    lam_idx.push_back({(double)complex.vertices[p].scalar, p});
-                std::sort(lam_idx.begin(), lam_idx.end());
-                for (size_t j = 0; j + 1 < lam_idx.size(); j += 2)
-                    connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
+    if (g_pv_version == 2) {
+        std::cout << "  [PV v2] Stitching (pure integer)...\n";
+        stitch_v2(plist, complex, mesh, tc.eval, connections);
+    }
+
+    if (g_pv_version == 3) {
+        // "both" mode: run v2 separately and compare
+        std::vector<PunctureConnection> connections_v2;
+        std::cout << "  [PV v2] Stitching (pure integer) for comparison...\n";
+        stitch_v2(plist, complex, mesh, tc.eval, connections_v2);
+        // Dedup v2 connections
+        {
+            std::set<std::pair<int,int>> seen;
+            std::vector<PunctureConnection> unique;
+            for (auto& c : connections_v2) {
+                auto key = std::make_pair(std::min(c.puncture1_idx, c.puncture2_idx),
+                                          std::max(c.puncture1_idx, c.puncture2_idx));
+                if (seen.insert(key).second)
+                    unique.push_back(c);
             }
+            connections_v2 = std::move(unique);
         }
-        return true;
-    });
+        // Compare
+        std::set<std::pair<int,int>> v1_set, v2_set;
+        for (auto& c : connections)
+            v1_set.insert({std::min(c.puncture1_idx, c.puncture2_idx),
+                           std::max(c.puncture1_idx, c.puncture2_idx)});
+        for (auto& c : connections_v2)
+            v2_set.insert({std::min(c.puncture1_idx, c.puncture2_idx),
+                           std::max(c.puncture1_idx, c.puncture2_idx)});
+        if (v1_set == v2_set)
+            std::cout << "  [MATCH] v1 and v2 produce identical connections (" << v1_set.size() << ")\n";
+        else {
+            std::cout << "  [MISMATCH] v1=" << v1_set.size() << " v2=" << v2_set.size() << " connections\n";
+            // Show differences
+            for (auto& p : v1_set) if (!v2_set.count(p))
+                std::cout << "    v1 only: (" << p.first << "," << p.second << ")\n";
+            for (auto& p : v2_set) if (!v1_set.count(p))
+                std::cout << "    v2 only: (" << p.first << "," << p.second << ")\n";
+        }
+    }
 
     std::cout << "  Tet histogram: ";
     for (auto& [n,c] : tet_hist) std::cout << c << "×" << n << "  ";
@@ -468,8 +594,20 @@ static void run_test_case(const TestCase& tc, int N)
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
-int main()
+int main(int argc, char** argv)
 {
+    // Parse --pv-version flag
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--pv-version" && i + 1 < argc) {
+            std::string val = argv[++i];
+            if (val == "1") g_pv_version = 1;
+            else if (val == "2") g_pv_version = 2;
+            else if (val == "both") g_pv_version = 3;
+            else { std::cerr << "Unknown --pv-version: " << val << "\n"; return 1; }
+        }
+    }
+    std::cout << "PV version: " << (g_pv_version == 1 ? "v1" : g_pv_version == 2 ? "v2" : "both") << "\n";
+
     const int N = 16;
     const double cx = N/2.0, cy = N/2.0;
     const double z0 = N/2.0 + 0.5;   // half-integer to avoid plane coincidence

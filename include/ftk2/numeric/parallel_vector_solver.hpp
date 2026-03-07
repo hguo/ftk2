@@ -916,13 +916,934 @@ FTK_HOST_DEVICE inline int discriminant_sign_i128(const __int128 P[4]) {
 }
 
 // ============================================================================
-// Sturm-Sequence Root Isolation  (Subtask 4)
+// ExactPV2: Pure-Integer Polynomial Primitives
 // ============================================================================
 //
-// Given a cubic P(x) = P[3]x³+P[2]x²+P[1]x+P[0] (ascending-degree order),
-// the Sturm sequence S₀,S₁,S₂,S₃ satisfies Sturm's theorem:
+// These functions implement the float-free PV pipeline described in
+// docs/exactpv2.md.  All topological decisions (validity, ordering, pairing,
+// edge/vertex detection, pass-through) use pure __int128 integer arithmetic.
 //
-//   V(a) − V(b)  =  number of distinct real roots of P in (a, b]
+// Overflow strategy: content-reduce ALL polynomial inputs before every
+// PRS/resultant operation.  With QUANT_BITS_TET=16, raw P_k coefficients
+// are ~2^70.  After content reduction they typically drop to ~2^40-50,
+// making products and Bareiss steps fit comfortably in __int128.
+
+// --- 1.1  Content Reduction ------------------------------------------------
+// Divide all coefficients of poly[0..deg] by their GCD.
+// Does not change roots.  Mandatory before PRS/resultant to avoid overflow.
+inline void content_reduce_i128(__int128* poly, int deg) {
+    if (deg < 0) return;
+    __int128 g = 0;
+    for (int i = 0; i <= deg; i++) {
+        __int128 v = poly[i] < 0 ? -poly[i] : poly[i];
+        if (g == 0) g = v;
+        else { while (v != 0) { __int128 t = g % v; g = v; v = t; } }
+    }
+    if (g > 1) for (int i = 0; i <= deg; i++) poly[i] /= g;
+}
+
+// Return the effective degree of poly[0..max_deg] (strip trailing zeros).
+inline int effective_degree_i128(const __int128* poly, int max_deg) {
+    int d = max_deg;
+    while (d > 0 && poly[d] == 0) d--;
+    return d;
+}
+
+// --- 1.2  Pseudo-Remainder -------------------------------------------------
+// Computes r = prem(f, g) and returns deg(r).  Content-reduces the result.
+// f has degree df, g has degree dg, with dg <= df.
+// r must have space for at least df+1 entries.
+inline int prem_i128(const __int128* f, int df,
+                     const __int128* g, int dg,
+                     __int128* r) {
+    // Copy f into r
+    for (int i = 0; i <= df; i++) r[i] = f[i];
+    for (int i = df + 1; i < 8; i++) r[i] = 0;  // zero pad
+
+    int dr = df;
+    while (dr >= dg && dr >= 0) {
+        if (r[dr] == 0) { dr--; continue; }
+        __int128 rdr = r[dr];
+        __int128 gdq = g[dg];
+        int shift = dr - dg;
+        // r = gdq * r - rdr * g * x^shift
+        for (int i = 0; i <= dr; i++) r[i] *= gdq;
+        for (int i = 0; i <= dg; i++) r[shift + i] -= rdr * g[i];
+        dr--;
+    }
+    if (dr < 0) { dr = 0; r[0] = 0; }
+    while (dr > 0 && r[dr] == 0) dr--;
+
+    content_reduce_i128(r, dr);
+    return dr;
+}
+
+// --- 1.3  Polynomial GCD with Coefficients ---------------------------------
+// Returns degree of h = gcd(f, g) and writes the GCD polynomial to h.
+// h must have space for at least min(df,dg)+1 entries.
+inline int poly_gcd_full_i128(const __int128* f_in, int df,
+                              const __int128* g_in, int dg,
+                              __int128* h) {
+    __int128 p[8] = {}, q[8] = {};
+    for (int i = 0; i <= df; i++) p[i] = f_in[i];
+    for (int i = 0; i <= dg; i++) q[i] = g_in[i];
+
+    df = effective_degree_i128(p, df);
+    dg = effective_degree_i128(q, dg);
+
+    content_reduce_i128(p, df);
+    content_reduce_i128(q, dg);
+
+    if (df == 0 && p[0] == 0) {
+        for (int i = 0; i <= dg; i++) h[i] = q[i];
+        return dg;
+    }
+    if (dg == 0 && q[0] == 0) {
+        for (int i = 0; i <= df; i++) h[i] = p[i];
+        return df;
+    }
+
+    int dp = df, dq = dg;
+    while (!(dq == 0 && q[0] == 0)) {
+        if (dp < dq) {
+            for (int i = 0; i < 8; i++) { __int128 t = p[i]; p[i] = q[i]; q[i] = t; }
+            int t = dp; dp = dq; dq = t;
+        }
+        __int128 r[8] = {};
+        int dr = prem_i128(p, dp, q, dq, r);
+
+        dp = dq;
+        for (int i = 0; i < 8; i++) p[i] = q[i];
+        dq = dr;
+        for (int i = 0; i < 8; i++) q[i] = r[i];
+    }
+
+    // Make leading coefficient positive for canonical form
+    if (dp > 0 && p[dp] < 0)
+        for (int i = 0; i <= dp; i++) p[i] = -p[i];
+
+    for (int i = 0; i <= dp; i++) h[i] = p[i];
+    return dp;
+}
+
+// --- 1.4  Exact Polynomial Division ----------------------------------------
+// Returns degree of q = f/g.  Assumes g divides f exactly.
+// q must have space for df-dg+1 entries.
+inline int poly_exact_div_i128(const __int128* f, int df,
+                               const __int128* g, int dg,
+                               __int128* q) {
+    __int128 rem[8] = {};
+    for (int i = 0; i <= df; i++) rem[i] = f[i];
+
+    int dq = df - dg;
+    for (int i = 0; i <= dq; i++) q[i] = 0;
+
+    for (int i = dq; i >= 0; i--) {
+        // q[i] = rem[i + dg] / g[dg]
+        q[i] = rem[i + dg] / g[dg];  // exact division assumed
+        for (int j = 0; j <= dg; j++)
+            rem[i + j] -= q[i] * g[j];
+    }
+    return dq;
+}
+
+// --- 1.5  Resultant Sign via Bareiss ---------------------------------------
+// Returns +1, -1, or 0 for sign(Res(f, g)).
+// Content-reduces inputs first to keep intermediate products in __int128.
+inline int resultant_sign_i128(const __int128* f_in, int df,
+                               const __int128* g_in, int dg) {
+    // Handle degenerate degrees
+    if (df <= 0 || dg <= 0) {
+        if (df == 0 && dg == 0) return 1;  // Res of two constants = 1
+        if (df == 0) {
+            // Res(const f, g) = f^dg
+            __int128 v = f_in[0];
+            if (v == 0) return 0;
+            // f^dg: sign depends on parity
+            int s = (v > 0) ? 1 : -1;
+            if (dg % 2 == 0) return 1;
+            return s;
+        }
+        if (dg == 0) {
+            __int128 v = g_in[0];
+            if (v == 0) return 0;
+            int s = (v > 0) ? 1 : -1;
+            if (df % 2 == 0) return 1;
+            return s;
+        }
+        return 0;
+    }
+
+    // Content-reduce copies
+    __int128 fc[8] = {}, gc[8] = {};
+    for (int i = 0; i <= df; i++) fc[i] = f_in[i];
+    for (int i = 0; i <= dg; i++) gc[i] = g_in[i];
+    content_reduce_i128(fc, df);
+    content_reduce_i128(gc, dg);
+
+    int N = df + dg;
+    if (N > 7) return 0;  // overflow guard: too large for our fixed arrays
+
+    // Build Sylvester matrix: dg rows of f-coefficients, df rows of g-coefficients
+    __int128 M[7][7] = {};
+    for (int i = 0; i < dg; i++)
+        for (int j = 0; j <= df; j++)
+            M[i][i + df - j] = fc[j];
+    for (int i = 0; i < df; i++)
+        for (int j = 0; j <= dg; j++)
+            M[dg + i][i + dg - j] = gc[j];
+
+    // Bareiss fraction-free elimination with overflow-safe products.
+    // Standard Bareiss: M[r][j] = (M[c][c]*M[r][j] - M[r][c]*M[c][j]) / prev
+    // The numerator can overflow __int128 for 6×6 matrices with ~16-bit entries.
+    // Fix: factor out gcd(M[c][c], M[r][c]) before multiplying.
+    __int128 prev_pivot = 1;
+    int sign_swaps = 0;
+    auto abs128 = [](__int128 x) -> __int128 { return x < 0 ? -x : x; };
+    auto gcd128 = [&](__int128 a, __int128 b) -> __int128 {
+        a = abs128(a); b = abs128(b);
+        while (b) { __int128 t = b; b = a % b; a = t; }
+        return a;
+    };
+    for (int col = 0; col < N; col++) {
+        // Partial pivoting
+        int pivot = -1;
+        for (int row = col; row < N; row++)
+            if (M[row][col] != 0) { pivot = row; break; }
+        if (pivot < 0) return 0;  // zero determinant
+        if (pivot != col) {
+            for (int j = 0; j < N; j++) {
+                __int128 t = M[col][j]; M[col][j] = M[pivot][j]; M[pivot][j] = t;
+            }
+            sign_swaps++;
+        }
+        for (int row = col + 1; row < N; row++) {
+            // Compute (a*b - c*d) / prev for each j, where a=M[c][c], c=M[r][c],
+            // b=M[r][j], d=M[c][j].
+            // Factor out gcd(|a|,|c|) to reduce product sizes and prevent overflow.
+            __int128 a = M[col][col], c = M[row][col];
+            __int128 g1 = gcd128(a, c);
+            if (g1 == 0) g1 = 1;
+            __int128 a1 = a / g1, c1 = c / g1;
+            for (int j = col + 1; j < N; j++) {
+                // a*b - c*d = g1*(a1*b - c1*d).
+                // Also factor gcd(|b|,|d|) to further reduce.
+                __int128 b = M[row][j], d = M[col][j];
+                __int128 g2 = gcd128(b, d);
+                if (g2 == 0) g2 = 1;
+                __int128 b2 = b / g2, d2 = d / g2;
+                // a*b - c*d = g1*g2*(a1*b2 - c1*d2)
+                __int128 inner = a1 * b2 - c1 * d2;
+                __int128 outer = g1 * g2;
+                // Divide by prev_pivot: result = outer * inner / prev_pivot
+                __int128 p = prev_pivot;
+                __int128 gp = gcd128(outer, p);
+                M[row][j] = (outer / gp) * (inner / (p / gp));
+            }
+        }
+        for (int row = col + 1; row < N; row++)
+            M[row][col] = 0;
+        prev_pivot = M[col][col];
+    }
+
+    __int128 det = M[N-1][N-1];
+    if (det == 0) return 0;
+    int s = (det > 0) ? 1 : -1;
+    if (sign_swaps % 2) s = -s;
+    return s;
+}
+
+// --- 1.6  Sign at Unique Root (one-root case) ------------------------------
+// Returns sign(g(α)) where f has exactly one real root α (disc < 0).
+// Formula: sign(g(α)) = sign(Res(f, g)) × sign(lc(f)^deg(g))
+inline int sign_at_unique_root_i128(const __int128* f, int df,
+                                    const __int128* g, int dg) {
+    // Handle trivial g
+    if (dg == 0) return (g[0] > 0) ? 1 : (g[0] < 0) ? -1 : 0;
+
+    int res_sign = resultant_sign_i128(f, df, g, dg);
+    if (res_sign == 0) return 0;
+
+    // sign(lc(f)^dg): positive if dg even or lc(f) > 0, negative if dg odd and lc(f) < 0
+    __int128 lc_f = f[df];
+    int lc_sign = (lc_f > 0) ? 1 : -1;
+    int lc_power_sign = (dg % 2 == 0) ? 1 : lc_sign;
+
+    return res_sign * lc_power_sign;
+}
+
+// --- Minimal 256-bit signed integer for overflow-safe polynomial sign eval --
+// Represents a 256-bit signed integer as (hi:lo) in two's complement.
+struct int256_t {
+    __int128 hi;            // signed high 128 bits
+    unsigned __int128 lo;   // unsigned low 128 bits
+
+    int256_t() : hi(0), lo(0) {}
+    explicit int256_t(__int128 v)
+        : hi(v >= 0 ? (__int128)0 : (__int128)-1),
+          lo((unsigned __int128)v) {}
+
+    int sign() const {
+        if (hi > 0) return 1;
+        if (hi < 0) return -1;
+        return (lo > 0) ? 1 : 0;
+    }
+
+    int256_t operator+(const int256_t& r) const {
+        int256_t s;
+        s.lo = lo + r.lo;
+        s.hi = hi + r.hi + (__int128)(s.lo < lo);
+        return s;
+    }
+
+    int256_t operator-() const {
+        int256_t r;
+        r.lo = ~lo + 1;
+        r.hi = ~hi + (__int128)(r.lo == 0);
+        return r;
+    }
+};
+
+// Unsigned 128×128 → 256 multiply.
+inline void umul256(unsigned __int128 ua, unsigned __int128 ub,
+                    unsigned __int128& res_hi, unsigned __int128& res_lo) {
+    uint64_t a0 = (uint64_t)ua, a1 = (uint64_t)(ua >> 64);
+    uint64_t b0 = (uint64_t)ub, b1 = (uint64_t)(ub >> 64);
+
+    unsigned __int128 p00 = (unsigned __int128)a0 * b0;
+    unsigned __int128 p01 = (unsigned __int128)a0 * b1;
+    unsigned __int128 p10 = (unsigned __int128)a1 * b0;
+    unsigned __int128 p11 = (unsigned __int128)a1 * b1;
+
+    // Accumulate into 4 × 64-bit chunks via a 128-bit accumulator
+    uint64_t r0 = (uint64_t)p00;
+    unsigned __int128 acc = (p00 >> 64);
+    acc += (uint64_t)p01;
+    acc += (uint64_t)p10;
+    uint64_t r1 = (uint64_t)acc;
+    acc = (acc >> 64);
+    acc += (p01 >> 64);
+    acc += (p10 >> 64);
+    acc += (uint64_t)p11;
+    uint64_t r2 = (uint64_t)acc;
+    acc = (acc >> 64) + (p11 >> 64);
+    uint64_t r3 = (uint64_t)acc;
+
+    res_lo = (unsigned __int128)r0 | ((unsigned __int128)r1 << 64);
+    res_hi = (unsigned __int128)r2 | ((unsigned __int128)r3 << 64);
+}
+
+// Signed 128×128 → 256-bit result.
+inline int256_t mul256(__int128 a, __int128 b) {
+    bool neg = (a < 0) != (b < 0);
+    unsigned __int128 ua = a < 0 ? (unsigned __int128)(-(a + 1)) + 1
+                                 : (unsigned __int128)a;
+    unsigned __int128 ub = b < 0 ? (unsigned __int128)(-(b + 1)) + 1
+                                 : (unsigned __int128)b;
+
+    int256_t res;
+    unsigned __int128 rhi;
+    umul256(ua, ub, rhi, res.lo);
+    res.hi = (__int128)rhi;
+    if (neg) res = -res;
+    return res;
+}
+
+// Multiply int256_t × __int128 → int256_t  (assumes result fits in 256 bits).
+inline int256_t mul256_128(int256_t a, __int128 b) {
+    bool neg = false;
+    if (a.sign() < 0) { a = -a; neg = true; }
+    else if (a.sign() == 0) return int256_t();
+    unsigned __int128 ub;
+    if (b < 0) { ub = (unsigned __int128)(-(b + 1)) + 1; neg = !neg; }
+    else { ub = (unsigned __int128)b; }
+
+    // a.lo * ub → 256-bit unsigned
+    unsigned __int128 lo_hi, lo_lo;
+    umul256(a.lo, ub, lo_hi, lo_lo);
+
+    // a.hi * ub → contributes to high part only (shifted by 128)
+    unsigned __int128 hi_prod = (unsigned __int128)a.hi * ub;
+
+    int256_t res;
+    res.lo = lo_lo;
+    res.hi = (__int128)(lo_hi + hi_prod);
+    if (neg) res = -res;
+    return res;
+}
+
+// --- Helper: sign of f(p/q) via integer Horner ----------------------------
+// Computes sign(f(p/q)) exactly.  Uses 256-bit arithmetic to avoid overflow.
+inline int sign_poly_at_rational_i128(const __int128* f, int df,
+                                      __int128 p, __int128 q) {
+    if (df <= 0) return (f[0] > 0) ? 1 : (f[0] < 0) ? -1 : 0;
+    if (q == 0) {
+        // f(p/0) → sign of leading term × sign(p^df)
+        int lc_s = (f[df] > 0) ? 1 : (f[df] < 0) ? -1 : 0;
+        int p_s  = (p > 0) ? 1 : (p < 0) ? -1 : 0;
+        return lc_s * ((df % 2 == 0) ? 1 : p_s);
+    }
+    // Reverse Horner in 256-bit: val = f[0]*q^df + f[1]*p*q^(df-1) + ... + f[df]*p^df
+    int256_t val(f[0]);
+    int256_t p_pow(p);
+    for (int i = 1; i <= df; i++) {
+        val = mul256_128(val, q) + mul256_128(p_pow, f[i]);
+        if (i < df) p_pow = mul256_128(p_pow, p);
+    }
+    int val_sign = val.sign();
+    if (val_sign == 0) return 0;
+    int q_sign = (q > 0) ? 1 : -1;
+    int qdf_sign = (df % 2 == 0) ? 1 : q_sign;
+    return val_sign * qdf_sign;
+}
+
+// --- 1.7a  Derivative of integer polynomial --------------------------------
+inline int poly_derivative_i128(const __int128* f, int df, __int128* fp) {
+    if (df <= 0) { fp[0] = 0; return 0; }
+    for (int i = 0; i < df; i++) fp[i] = (__int128)(i + 1) * f[i + 1];
+    return df - 1;
+}
+
+// --- 1.7b  Square-free factorization --------------------------------------
+// Returns degree of sqfree(f) = f / gcd(f, f'), writes result to sf.
+// The square-free part has the same roots as f but all with multiplicity 1.
+inline int poly_sqfree_i128(const __int128* f, int df, __int128* sf) {
+    if (df <= 1) {
+        for (int i = 0; i <= df; i++) sf[i] = f[i];
+        return df;
+    }
+    __int128 fp[8] = {};
+    int dfp = poly_derivative_i128(f, df, fp);
+
+    __int128 g[8] = {};
+    int dg = poly_gcd_full_i128(f, df, fp, dfp, g);
+
+    if (dg == 0) {
+        // gcd is constant → f is already square-free
+        for (int i = 0; i <= df; i++) sf[i] = f[i];
+        content_reduce_i128(sf, df);
+        return df;
+    }
+
+    // sf = f / g
+    int dsf = poly_exact_div_i128(f, df, g, dg, sf);
+    content_reduce_i128(sf, dsf);
+    return dsf;
+}
+
+// --- 1.7c  Number of roots of cubic f below rational point t = p/q ---------
+// Given cubic f (with 3 real roots, disc > 0) and rational t = p/q,
+// returns the number of roots of f that are strictly below t.
+// Uses sign(f(t)), sign(f'(t)), sign(f''(t)) with rigorous case analysis.
+// Returns n_below in {0,1,2,3}, or -1 if f(t)=0 (shared root).
+//
+// Proof of correctness:
+// For cubic f with lc > 0 (normalize by sign_lc), roots α₀ < α₁ < α₂:
+//   f' has roots β₁ ∈ (α₀,α₁), β₂ ∈ (α₁,α₂)  (local max, min)
+//   f'' has root γ ∈ (β₁,β₂)  (inflection point)
+//   f' > 0 on (-∞,β₁) ∪ (β₂,+∞), f' < 0 on (β₁,β₂)
+//   f'' < 0 on (-∞,γ), f'' > 0 on (γ,+∞)
+//
+// Case table (normalized lc > 0):
+//   f>0, f'>0, f''≤0: t ∈ (α₀,β₁)         → n=1
+//   f>0, f'>0, f''>0: t ∈ (α₂,+∞)         → n=3
+//   f>0, f'≤0:        t ∈ [β₁,α₁)         → n=1
+//   f<0, f'>0, f''≤0: t ∈ (-∞,α₀)         → n=0
+//   f<0, f'>0, f''>0: t ∈ (β₂,α₂)         → n=2
+//   f<0, f'≤0:        t ∈ (α₁,β₂]         → n=2
+inline int count_roots_below_rational(const __int128* f, int df,
+                                      __int128 p, __int128 q) {
+    int sign_ft = sign_poly_at_rational_i128(f, df, p, q);
+    if (sign_ft == 0) return -1;  // shared root
+
+    __int128 fp[4] = {};
+    int dfp = poly_derivative_i128(f, df, fp);
+    int sign_fpt = sign_poly_at_rational_i128(fp, dfp, p, q);
+
+    int sign_lc = (f[df] > 0) ? 1 : -1;
+    int eft = sign_ft * sign_lc;    // normalized f(t)
+    int efpt = sign_fpt * sign_lc;  // normalized f'(t)
+
+    if (eft > 0) {
+        // f(t) > 0 (normalized): t ∈ (α₀,α₁) or (α₂,+∞), so n = 1 or 3
+        if (efpt > 0) {
+            // Ascending and positive: (α₀,β₁) [n=1] or (α₂,+∞) [n=3]
+            __int128 fpp[4] = {};
+            int dfpp = poly_derivative_i128(fp, dfp, fpp);
+            int efppt = sign_poly_at_rational_i128(fpp, dfpp, p, q) * sign_lc;
+            return (efppt <= 0) ? 1 : 3;
+        }
+        return 1;  // f' ≤ 0: must be in [β₁,α₁)
+    } else {
+        // f(t) < 0 (normalized): t ∈ (-∞,α₀) or (α₁,α₂), so n = 0 or 2
+        if (efpt > 0) {
+            // Ascending and negative: (-∞,α₀) [n=0] or (β₂,α₂) [n=2]
+            __int128 fpp[4] = {};
+            int dfpp = poly_derivative_i128(fp, dfp, fpp);
+            int efppt = sign_poly_at_rational_i128(fpp, dfpp, p, q) * sign_lc;
+            return (efppt <= 0) ? 0 : 2;
+        }
+        return 2;  // f' ≤ 0: must be in (α₁,β₂]
+    }
+}
+
+// --- 1.7  Signs at Roots of a Polynomial -----------------------------------
+// Determines sign(g(α_i)) for each distinct real root α_i of f.
+//
+// Handles all degree degeneracies:
+//   - f effective degree 0: no roots, nothing to do
+//   - f effective degree 1: one root (linear), evaluate g directly
+//   - f effective degree 2: two roots (quadratic)
+//   - f effective degree 3, disc < 0: one real root
+//   - f effective degree 3, disc > 0: three real roots
+//   - f effective degree 3, disc = 0: double/triple root → use square-free part
+//
+// signs[] must have space for n_roots entries.
+// Returns actual number of distinct roots filled into signs[].
+
+inline int signs_at_roots_i128(const __int128* f_in, int df_max,
+                               const __int128* g_in, int dg_max,
+                               int signs[], int max_signs,
+                               int _depth = 0) {
+    if (_depth > 20) return 0;  // recursion guard
+
+    // Determine effective degrees
+    __int128 f[8] = {}, g[8] = {};
+    for (int i = 0; i <= df_max && i < 8; i++) f[i] = f_in[i];
+    for (int i = 0; i <= dg_max && i < 8; i++) g[i] = g_in[i];
+    int df = effective_degree_i128(f, df_max < 7 ? df_max : 7);
+    int dg = effective_degree_i128(g, dg_max < 7 ? dg_max : 7);
+
+    content_reduce_i128(f, df);
+    content_reduce_i128(g, dg);
+
+    if (df == 0) return 0;  // no roots
+
+    // --- Linear f: one root at t = -f[0]/f[1] ---
+    if (df == 1) {
+        if (max_signs < 1) return 0;
+        signs[0] = sign_poly_at_rational_i128(g, dg, -f[0], f[1]);
+        return 1;
+    }
+
+    // --- Quadratic f: disc = f[1]^2 - 4*f[2]*f[0] ---
+    if (df == 2) {
+        __int128 disc = f[1]*f[1] - 4*f[2]*f[0];
+        if (disc < 0) return 0;  // no real roots
+        if (disc == 0) {
+            // Double root at t = -f[1]/(2*f[2])
+            if (max_signs < 1) return 0;
+            signs[0] = sign_poly_at_rational_i128(g, dg, -f[1], 2*f[2]);
+            return 1;
+        }
+        // Two distinct roots.  We need sign(g) at each.
+        // Reduce g mod f to get remainder r of degree ≤ 1.
+        if (dg >= df) {
+            __int128 r[8] = {};
+            int dr = prem_i128(g, dg, f, df, r);
+            // sign(g(α_i)) = sign(r(α_i)) × sign(lc(f)^(dg-df+1))
+            // But prem already handled the scaling.  Actually:
+            // prem(g, f) = lc(f)^(dg-df+1) * g  mod f
+            // At roots of f: prem(g,f)(α) = lc(f)^(dg-df+1) * g(α)
+            int exp = dg - df + 1;
+            int lc_f_sign = (f[df] > 0) ? 1 : -1;
+            int scale_sign = (exp % 2 == 0) ? 1 : lc_f_sign;
+
+            // Now determine sign(r(α_i)) at the two roots of f
+            int sub_signs[2];
+            int n = signs_at_roots_i128(f, df, r, dr, sub_signs, 2, _depth + 1);
+            for (int i = 0; i < n && i < max_signs; i++)
+                signs[i] = sub_signs[i] * scale_sign;
+            return n;
+        }
+        // dg < df: g is already lower degree than f, evaluate directly
+        // For quadratic f with two roots: need to determine interleaving
+        // of g's roots with f's roots.  Since dg < 2, g is linear or constant.
+        if (dg == 0) {
+            // g is constant
+            int gs = (g[0] > 0) ? 1 : (g[0] < 0) ? -1 : 0;
+            signs[0] = gs; signs[1] = gs;
+            return 2;
+        }
+        // dg == 1: g is linear with root at t = -g[0]/g[1]
+        // Need to know if t is between the two roots of f or outside.
+        // sign(f(t)) tells us:
+        //   f(t) > 0 and lc(f) > 0: t outside roots → g has same sign at both roots
+        //   f(t) < 0 and lc(f) > 0: t between roots → g changes sign
+        int sign_ft = sign_poly_at_rational_i128(f, df, -g[0], g[1]);
+        int sign_lc_f = (f[df] > 0) ? 1 : -1;
+        int sign_g_lc = (g[dg] > 0) ? 1 : -1;
+
+        if (sign_ft == 0) {
+            // g's root is also a root of f → one sign is 0
+            // Determine which root of f it matches
+            // Since f has 2 roots and g's root equals one of them,
+            // sign at the other root = sign(g) at a non-zero point
+            // For the root that matches: signs = 0
+            // For the other: sign = sign(g(other_root))
+            // f(t) = 0 means t is a root of f.  g(t) = 0 too.
+            // At the other root: sign(g) = -sign(g_lc) if other root < t, else sign(g_lc)
+            // Actually we just know f(t) = 0.  We need f'(t) to determine which root.
+            signs[0] = 0;
+            signs[1] = 0;
+            // More precisely: one root has g=0, the other doesn't.
+            // The non-zero sign = sign(g_lc) if that root is to the right of g's root,
+            //                    -sign(g_lc) if to the left.
+            // Since the two roots of f straddle g's root when f(t)=0:
+            // Actually f(t)=0 means g's root coincides with one of f's roots.
+            // signs[smaller_root] and signs[larger_root]:
+            // If the shared root is the smaller one: signs = {0, sign(g_lc)}
+            // If the shared root is the larger one: signs = {-sign(g_lc), 0}
+            // Determine via f'(t): if f'(t) and lc(f) have same sign → t is the smaller root
+            __int128 fp[4] = {};
+            poly_derivative_i128(f, df, fp);
+            int sign_fpt = sign_poly_at_rational_i128(fp, df-1, -g[0], g[1]);
+            if (sign_fpt * sign_lc_f < 0) {
+                // f decreasing through 0 → t is the LARGER root
+                signs[0] = -sign_g_lc;
+                signs[1] = 0;
+            } else {
+                // f increasing through 0 → t is the SMALLER root
+                signs[0] = 0;
+                signs[1] = sign_g_lc;
+            }
+            return 2;
+        }
+
+        if (sign_ft * sign_lc_f > 0) {
+            // t is outside the roots of f → g has same sign at both roots
+            // g(α₀) = g(α₁) = sign(lc(g)) when both roots > t, or -sign when both < t
+            // If both roots of f are > t: g(α) = sign(g_lc) * sign(1) = sign(g_lc) for both
+            // If both roots of f are < t: g(α) = -sign(g_lc) for both
+            // Determine: f's roots vs t.  Since f(t) > 0 if lc > 0 → t outside roots.
+            // Which side? Check sign of f at ±∞ relative to t:
+            // For quadratic with lc > 0, f > 0 outside [α₀, α₁].
+            // If all roots > t: happens when t < α₀.  Then g(α) > 0 if g_lc > 0.
+            // sign(f'(t)) and lc(f): if t < both roots and lc > 0, f'(t) < 0
+            __int128 fp[4] = {};
+            poly_derivative_i128(f, df, fp);
+            int sign_fpt = sign_poly_at_rational_i128(fp, df-1, -g[0], g[1]);
+            if (sign_fpt * sign_lc_f < 0) {
+                // f'(t) < 0 when lc > 0 → t < both roots → g > 0 at roots if g_lc > 0
+                signs[0] = sign_g_lc;
+                signs[1] = sign_g_lc;
+            } else {
+                signs[0] = -sign_g_lc;
+                signs[1] = -sign_g_lc;
+            }
+            return 2;
+        } else {
+            // t is between the roots → g changes sign
+            // g(smaller_root) = -sign(g_lc), g(larger_root) = sign(g_lc)
+            signs[0] = -sign_g_lc;
+            signs[1] = sign_g_lc;
+            return 2;
+        }
+    }
+
+    // --- Cubic f ---
+    // Check discriminant
+    int disc_sign = discriminant_sign_i128(f);
+
+    if (disc_sign < 0) {
+        // One real root
+        if (max_signs < 1) return 0;
+        signs[0] = sign_at_unique_root_i128(f, df, g, dg);
+        return 1;
+    }
+
+    if (disc_sign == 0) {
+        // Double or triple root — use square-free part
+        __int128 sf[8] = {};
+        int dsf = poly_sqfree_i128(f, df, sf);
+        // Recurse on square-free part (has the distinct roots only)
+        return signs_at_roots_i128(sf, dsf, g, dg, signs, max_signs, _depth + 1);
+    }
+
+    // disc_sign > 0: three distinct real roots
+    if (max_signs < 3) return 0;
+
+    // Reduce g mod f to get remainder r (degree ≤ 2)
+    __int128 r[8] = {};
+    int dr;
+    int scale_sign = 1;
+
+    if (dg >= df) {
+        dr = prem_i128(g, dg, f, df, r);
+        int exp = dg - df + 1;
+        int lc_f_sign = (f[df] > 0) ? 1 : -1;
+        scale_sign = (exp % 2 == 0) ? 1 : lc_f_sign;
+    } else {
+        for (int i = 0; i <= dg; i++) r[i] = g[i];
+        dr = dg;
+        content_reduce_i128(r, dr);
+    }
+
+    // Now determine sign(r(α_i)) at the three roots of f
+
+    // Case A: deg(r) = 0 (constant)
+    if (dr == 0) {
+        int rs = (r[0] > 0) ? 1 : (r[0] < 0) ? -1 : 0;
+        signs[0] = signs[1] = signs[2] = rs * scale_sign;
+        return 3;
+    }
+
+    // Case B: deg(r) = 1 (linear, root at t = -r[0]/r[1])
+    if (dr == 1) {
+        int n_below = count_roots_below_rational(f, df, -r[0], r[1]);
+        int sign_r_lc = (r[1] > 0) ? 1 : -1;
+        if (n_below < 0) {
+            // Shared root: one of the α_i equals the root of r
+            // sign(r(α_i)) = 0 at that root, ±sign(r_lc) at others
+            // Since we don't know which one, use resultant to find it
+            // Actually n_below = -1 means f(t) = 0, so t is one of the roots.
+            // Determine which by counting: use f'(t) and f''(t) at t
+            __int128 fp[4] = {};
+            poly_derivative_i128(f, df, fp);
+            int sign_fpt = sign_poly_at_rational_i128(fp, df-1, -r[0], r[1]);
+            __int128 fpp[4] = {};
+            poly_derivative_i128(fp, df-1, fpp);
+            int sign_fppt = sign_poly_at_rational_i128(fpp, df-2, -r[0], r[1]);
+            int sign_lc = (f[df] > 0) ? 1 : -1;
+            // Determine which root is at t:
+            // f'(t)=0 → t is at a critical point (not a root if disc > 0 and 3 distinct roots...
+            // actually f'(t) can be 0 at a root if that root is also a critical point, but disc > 0 means all simple)
+            // For 3 simple roots, f'(t) ≠ 0 at any root.
+            if (sign_fpt == 0) {
+                // Degenerate — shouldn't happen with disc > 0. Fall back.
+                signs[0] = signs[1] = signs[2] = 0;
+                return 3;
+            }
+            // f'(t) * lc > 0 → f increasing at t → t is α₀ or α₂
+            // f''(t) * lc > 0 → convex → right side → t = α₂
+            // f''(t) * lc < 0 → concave → left side → t = α₀
+            // f'(t) * lc < 0 → f decreasing → t = α₁
+            int eft = sign_fpt * sign_lc;
+            int efppt = sign_fppt * sign_lc;
+            int which;  // 0, 1, or 2
+            if (eft < 0) which = 1;
+            else if (efppt > 0) which = 2;
+            else which = 0;
+
+            for (int i = 0; i < 3; i++) {
+                if (i == which) signs[i] = 0;
+                else if (i < which) signs[i] = -sign_r_lc * scale_sign;
+                else signs[i] = sign_r_lc * scale_sign;
+            }
+            return 3;
+        }
+
+        // n_below roots have r < 0 (root of r is above them), rest have r > 0
+        // r(x) = r[1]*(x - t), so r(α) > 0 when α > t if r[1] > 0
+        for (int i = 0; i < 3; i++) {
+            if (i < n_below) signs[i] = -sign_r_lc * scale_sign;
+            else             signs[i] =  sign_r_lc * scale_sign;
+        }
+        return 3;
+    }
+
+    // Case C: deg(r) = 2 (quadratic)
+    {
+        __int128 disc_r = r[1]*r[1] - 4*r[2]*r[0];
+        int sign_r2 = (r[2] > 0) ? 1 : -1;
+
+        if (disc_r < 0) {
+            // r has no real roots → constant sign = sign(r[2])
+            signs[0] = signs[1] = signs[2] = sign_r2 * scale_sign;
+            return 3;
+        }
+
+        if (disc_r == 0) {
+            // r has double root ρ = -r[1]/(2*r[2])
+            // r(x) = r[2]*(x - ρ)², so sign(r(α_i)) = sign(r[2]) unless α_i = ρ
+            int n_below = count_roots_below_rational(f, df, -r[1], 2*r[2]);
+            // Check if any f-root equals ρ: evaluate f at ρ = -r[1]/(2*r[2])
+            int ft_sign = sign_poly_at_rational_i128(f, df, -r[1], 2*r[2]);
+            if (ft_sign == 0) {
+                // ρ is a root of f too
+                for (int i = 0; i < 3; i++) signs[i] = sign_r2 * scale_sign;
+                if (n_below >= 0 && n_below < 3) signs[n_below] = 0;
+            } else {
+                for (int i = 0; i < 3; i++) signs[i] = sign_r2 * scale_sign;
+            }
+            return 3;
+        }
+
+        // disc_r > 0: r has 2 distinct roots ρ₁ < ρ₂
+        // sign(r(α_i)) = sign(r[2]) outside [ρ₁,ρ₂], -sign(r[2]) inside
+        // Need: how many f-roots are below ρ₁, between ρ₁ and ρ₂, above ρ₂
+
+        // Get sign(f(ρ_j)), sign(f'(ρ_j)), sign(f''(ρ_j)) at roots of r
+        int f_at_rho[2] = {};
+        int nrr = signs_at_roots_i128(r, dr, f, df, f_at_rho, 2, _depth + 1);
+
+        __int128 fp[4] = {};
+        int dfp = poly_derivative_i128(f, df, fp);
+        int fp_at_rho[2] = {};
+        signs_at_roots_i128(r, dr, fp, dfp, fp_at_rho, 2, _depth + 1);
+
+        __int128 fpp[4] = {};
+        int dfpp = poly_derivative_i128(fp, dfp, fpp);
+        int fpp_at_rho[2] = {};
+        signs_at_roots_i128(r, dr, fpp, effective_degree_i128(fpp, df-2), fpp_at_rho, 2, _depth + 1);
+
+        int sign_lc = (f[df] > 0) ? 1 : -1;
+
+        // For each ρ_j, determine nb_j = # of f-roots strictly below ρ_j
+        // using the same case table as count_roots_below_rational:
+        //   f>0, f'>0, f''≤0 → n=1    f>0, f'>0, f''>0 → n=3
+        //   f>0, f'≤0        → n=1
+        //   f<0, f'>0, f''≤0 → n=0    f<0, f'>0, f''>0 → n=2
+        //   f<0, f'≤0        → n=2
+        //   f=0              → shared root (nb = which root index)
+        int nb1 = 0, nb2 = 0;
+        for (int j = 0; j < 2; j++) {
+            int sf = (nrr > j) ? f_at_rho[j] : 0;
+            int sfp = fp_at_rho[j];
+            int sfpp = fpp_at_rho[j];
+            int eft = sf * sign_lc;
+            int efpt = sfp * sign_lc;
+            int efppt = sfpp * sign_lc;
+
+            int nb;
+            if (sf == 0) {
+                // ρ_j coincides with an f-root; determine which one via f', f''
+                // f'(α_i)·lc > 0 at α₀ and α₂ (ascending), < 0 at α₁ (descending)
+                // f''(α_i)·lc < 0 at α₀ (concave), > 0 at α₂ (convex)
+                if (efpt < 0) nb = 1;       // α₁
+                else if (efppt > 0) nb = 2; // α₂
+                else nb = 0;                // α₀
+            } else if (eft > 0) {
+                if (efpt > 0) nb = (efppt <= 0) ? 1 : 3;
+                else nb = 1;
+            } else {
+                if (efpt > 0) nb = (efppt <= 0) ? 0 : 2;
+                else nb = 2;
+            }
+            if (j == 0) nb1 = nb; else nb2 = nb;
+        }
+
+        // Assign signs: roots inside [ρ₁,ρ₂] get -sign(r2), outside get sign(r2)
+        for (int i = 0; i < 3; i++) {
+            if (i >= nb1 && i < nb2)
+                signs[i] = -sign_r2 * scale_sign;
+            else
+                signs[i] = sign_r2 * scale_sign;
+        }
+        // Handle shared roots: if f(ρ_j) = 0, then r(α_i) = r(ρ_j) = 0 at that root
+        if (f_at_rho[0] == 0 && nb1 < 3) signs[nb1] = 0;
+        if (nrr >= 2 && f_at_rho[1] == 0 && nb2 < 3) signs[nb2] = 0;
+
+        return 3;
+    }
+}
+
+// --- 1.8  Root Comparison ---------------------------------------------------
+// Compare the i-th root of f with the j-th root of g.
+// Returns -1 if α_i < β_j, +1 if α_i > β_j, 0 if equal.
+// f_nroots and g_nroots are the number of DISTINCT real roots (1, 2, or 3).
+// Root indices are 0-based in increasing order.
+inline int compare_roots_i128(const __int128* f, int df, int f_nroots, int f_root_idx,
+                              const __int128* g, int dg, int g_nroots, int g_root_idx) {
+    // Strategy: determine count_below = # of g-roots strictly below α_{f_root_idx}
+    // by evaluating g, g', g'' at α_{f_root_idx} via signs_at_roots_i128,
+    // then applying the rigorous case table (same as count_roots_below_rational).
+    // Then compare count_below with g_root_idx.
+
+    df = effective_degree_i128(f, df);
+    dg = effective_degree_i128(g, dg);
+
+    if (df == 0 || dg == 0) return 0;  // degenerate
+
+    // Get sign(g(α_i)) at roots of f
+    int g_at_f[3] = {};
+    int n_f = signs_at_roots_i128(f, df, g, dg, g_at_f, 3);
+    if (f_root_idx >= n_f) return 0;
+
+    int sg = g_at_f[f_root_idx];
+
+    // Shared root: α_i = some β_j
+    if (sg == 0) {
+        int f_at_g[3] = {};
+        int n_g = signs_at_roots_i128(g, dg, f, df, f_at_g, 3);
+        for (int j = 0; j < n_g; j++) {
+            if (f_at_g[j] == 0) {
+                if (j == g_root_idx) return 0;
+                return (j < g_root_idx) ? -1 : 1;
+            }
+        }
+        return 0;
+    }
+
+    int lc_g_sign = (g[dg] > 0) ? 1 : -1;
+
+    // g_nroots == 1: simple sign check
+    if (g_nroots == 1) {
+        int count_below = (sg * lc_g_sign > 0) ? 1 : 0;
+        return (count_below > g_root_idx) ? 1 : -1;
+    }
+
+    // g_nroots >= 2: need g' (and possibly g'') at α_i for disambiguation
+    __int128 gp[4] = {};
+    int dgp = poly_derivative_i128(g, dg, gp);
+    int gp_at_f[3] = {};
+    signs_at_roots_i128(f, df, gp, dgp, gp_at_f, 3);
+    int sgp = (f_root_idx < 3) ? gp_at_f[f_root_idx] : 0;
+
+    int egt = sg * lc_g_sign;   // normalized g(α_i)
+    int egpt = sgp * lc_g_sign; // normalized g'(α_i)
+
+    int count_below = 0;
+
+    if (g_nroots == 2) {
+        // Quadratic-like: 2 roots β₀ < β₁
+        // g > 0 outside [β₀,β₁], g < 0 inside (for lc > 0)
+        if (egt > 0) {
+            // Outside the roots
+            count_below = (egpt > 0) ? 2 : 0;  // ascending → past β₁; descending → before β₀
+        } else {
+            count_below = 1;  // between roots
+        }
+    } else if (g_nroots == 3) {
+        // Same case table as count_roots_below_rational
+        if (egt > 0) {
+            if (egpt > 0) {
+                __int128 gpp[4] = {};
+                int dgpp = poly_derivative_i128(gp, dgp, gpp);
+                int gpp_at_f[3] = {};
+                signs_at_roots_i128(f, df, gpp, effective_degree_i128(gpp, dg-2),
+                                    gpp_at_f, 3);
+                int egppt = gpp_at_f[f_root_idx] * lc_g_sign;
+                count_below = (egppt <= 0) ? 1 : 3;
+            } else {
+                count_below = 1;
+            }
+        } else {
+            if (egpt > 0) {
+                __int128 gpp[4] = {};
+                int dgpp = poly_derivative_i128(gp, dgp, gpp);
+                int gpp_at_f[3] = {};
+                signs_at_roots_i128(f, df, gpp, effective_degree_i128(gpp, dg-2),
+                                    gpp_at_f, 3);
+                int egppt = gpp_at_f[f_root_idx] * lc_g_sign;
+                count_below = (egppt <= 0) ? 0 : 2;
+            } else {
+                count_below = 2;
+            }
+        }
+    }
+
+    if (count_below > g_root_idx) return 1;
+    if (count_below < g_root_idx) return -1;
+    // count_below == g_root_idx: α_i could equal β_{g_root_idx} or be just below
+    // Since we already checked sg != 0 (no shared root), α_i ≠ β_{g_root_idx},
+    // so count_below == g_root_idx means α_i < β_{g_root_idx}
+    return -1;
+}
+
+// ============================================================================
+// Sturm-Sequence Root Isolation  (Subtask 4)
+// ============================================================================
 //
 // where V(x) = # sign changes in (S₀(x), S₁(x), S₂(x), S₃(x)), zeros skipped.
 //
@@ -2701,6 +3622,404 @@ bool solve_pv_tetrahedron(const T V[4][3], const T W[4][3],
     if (segment.lambda_max > 100) segment.lambda_max = 100;
 
     return true;
+}
+
+// ============================================================================
+// ExactPV2: Per-Tet Solver — Pure Integer Topological Decisions
+// ============================================================================
+//
+// All topological decisions (validity, ordering, pairing, edge/vertex
+// detection, pass-through) are made using pure __int128 integer arithmetic.
+// No floats are used for any topological decision.  Floats are used ONLY
+// for spatial output coordinates (barycentric interpolation for visualization).
+
+struct ExactPV2Result {
+    static constexpr int MAX_PUNCTURES = 12;  // T10 is proven maximum; +2 margin
+    static constexpr int MAX_PAIRS = 6;
+
+    int n_punctures = 0;
+    struct Puncture {
+        int face;        // which face (0-3)
+        int root_idx;    // which root of P_face (0=smallest, 1, 2)
+        int q_interval;  // Q_red-interval index
+        bool is_edge;
+        bool is_vertex;
+        int edge_faces[2];  // for edge: which two faces share the puncture
+    } punctures[MAX_PUNCTURES];
+
+    int n_pairs = 0;
+    struct Pair { int a, b; } pairs[MAX_PAIRS];
+
+    bool has_passthrough = false;
+    int passthrough_deg = 0;   // degree of gcd(P_0, P_1, P_2, P_3)
+};
+
+inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
+                                       const __int128 P_raw[4][4]) {
+    ExactPV2Result result;
+
+    // --- Step 0: Copy and determine effective degrees ---
+    __int128 P[4][4], Q[4];
+    for (int k = 0; k < 4; k++) {
+        for (int i = 0; i < 4; i++) P[k][i] = P_raw[k][i];
+    }
+    for (int i = 0; i < 4; i++) Q[i] = Q_raw[i];
+
+    int degP[4], degQ;
+    for (int k = 0; k < 4; k++)
+        degP[k] = effective_degree_i128(P[k], 3);
+    degQ = effective_degree_i128(Q, 3);
+
+    // --- Step 1: Pass-through factoring ---
+    // h = gcd(P_0, P_1, P_2, P_3)
+    __int128 h[4] = {};
+    int dh = poly_gcd_full_i128(P[0], degP[0], P[1], degP[1], h);
+    for (int k = 2; k < 4; k++) {
+        __int128 h2[4] = {};
+        int dh2 = poly_gcd_full_i128(h, dh, P[k], degP[k], h2);
+        dh = dh2;
+        for (int i = 0; i < 4; i++) h[i] = h2[i];
+    }
+
+    // Q_red = Q / h if deg(h) >= 1
+    __int128 Q_red[4] = {};
+    int degQ_red = degQ;
+    if (dh >= 1) {
+        result.has_passthrough = true;
+        result.passthrough_deg = dh;
+        __int128 q_div[4] = {};
+        degQ_red = poly_exact_div_i128(Q, degQ, h, dh, q_div);
+        for (int i = 0; i <= degQ_red; i++) Q_red[i] = q_div[i];
+    } else {
+        for (int i = 0; i <= degQ; i++) Q_red[i] = Q[i];
+    }
+
+    // --- Step 2: For each face, determine root count and validity ---
+    // n_distinct_roots[k] = number of distinct real roots of P_k
+    // For each root: determine validity (all P_j same sign for j ≠ k)
+    struct RootInfo {
+        int face;
+        int root_idx;     // index among distinct roots of this face's P_k
+        int q_interval;   // assigned later
+        bool valid;
+        bool is_edge;
+        bool is_vertex;
+        int edge_faces[2];
+    };
+    RootInfo all_roots[12];
+    int n_all = 0;
+
+    int n_distinct[4] = {};
+
+    for (int k = 0; k < 4; k++) {
+        if (degP[k] == 0) continue;  // constant P_k, no roots
+
+        // Determine number of distinct roots
+        int disc = discriminant_sign_i128(P[k]);
+        if (degP[k] == 1) {
+            n_distinct[k] = 1;
+        } else if (degP[k] == 2) {
+            __int128 d2 = P[k][1]*P[k][1] - 4*P[k][2]*P[k][0];
+            if (d2 > 0) n_distinct[k] = 2;
+            else if (d2 == 0) n_distinct[k] = 1;
+            else n_distinct[k] = 0;  // no real roots
+        } else {
+            // cubic
+            if (disc > 0) n_distinct[k] = 3;
+            else if (disc < 0) n_distinct[k] = 1;
+            else {
+                // disc = 0: compute square-free part
+                __int128 sf[8] = {};
+                int dsf = poly_sqfree_i128(P[k], degP[k], sf);
+                n_distinct[k] = dsf;  // degree of square-free part = number of distinct roots
+            }
+        }
+
+        // For each distinct root of P_k: check validity
+        for (int ri = 0; ri < n_distinct[k]; ri++) {
+            // Validity: all P_j(α_ri) must have the same sign for j ≠ k
+            int pj_signs[3];
+            (void)pj_signs;
+            bool valid = true;
+            int first_sign = 0;
+
+            for (int j = 0; j < 4; j++) {
+                if (j == k) continue;
+                // Get sign(P_j(α_ri)) where α_ri is the ri-th root of P_k
+                int signs_j[3] = {};
+                int nrj = signs_at_roots_i128(P[k], degP[k], P[j], degP[j], signs_j, 3);
+
+                int s = (ri < nrj) ? signs_j[ri] : 0;
+                if (s == 0) { valid = false; break; }  // degenerate (on edge/face)
+                                                         // Will be handled by edge detection
+
+                if (first_sign == 0) first_sign = s;
+                else if (s != first_sign) { valid = false; break; }
+            }
+
+            // Also check: sign(P_j) must match sign(Q) at the root (for interior point)
+            // Actually: mu_j = P_j/Q >= 0 means P_j and Q have same sign.
+            // Since all P_j same sign and Q = P_0+P_1+P_2+P_3 = sum of three P_j (since P_k=0),
+            // Q has the same sign as P_j automatically. So validity = all P_j same sign.
+
+            // Allow edge/vertex punctures through (sign = 0 for some P_j)
+            // Re-check with edge detection awareness:
+            if (!valid) {
+                // Check if this is an edge or vertex puncture
+                int n_zero = 0;
+                int zero_faces[3] = {};
+                int pj_s[3] = {};
+                int pj_idx = 0;
+                bool redo_valid = true;
+                int redo_first = 0;
+                for (int j = 0; j < 4; j++) {
+                    if (j == k) continue;
+                    int signs_j[3] = {};
+                    int nrj = signs_at_roots_i128(P[k], degP[k], P[j], degP[j], signs_j, 3);
+                    int s = (ri < nrj) ? signs_j[ri] : 0;
+                    if (s == 0) {
+                        zero_faces[n_zero++] = j;
+                    } else {
+                        if (redo_first == 0) redo_first = s;
+                        else if (s != redo_first) redo_valid = false;
+                    }
+                    pj_idx++;
+                }
+                // Edge: exactly 1 zero, remaining 2 same sign → valid
+                // Vertex: 2 zeros → valid (only non-k, non-zero face has some sign)
+                if (n_zero >= 1 && redo_valid) valid = true;
+            }
+
+            if (!valid) continue;
+
+            if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
+            RootInfo& ri_info = all_roots[n_all];
+            ri_info.face = k;
+            ri_info.root_idx = ri;
+            ri_info.q_interval = -1;
+            ri_info.valid = true;
+            ri_info.is_edge = false;
+            ri_info.is_vertex = false;
+            ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
+            n_all++;
+        }
+    }
+
+    // --- Step 3: Edge detection ---
+    // For each pair (i,j) with i<j: if Res(P_i, P_j) == 0 → shared root
+    for (int i = 0; i < 4; i++) {
+        for (int j = i + 1; j < 4; j++) {
+            if (degP[i] == 0 || degP[j] == 0) continue;
+            int res = resultant_sign_i128(P[i], degP[i], P[j], degP[j]);
+            if (res == 0) {
+                // Shared root on edge opposite vertices i and j
+                // Mark the corresponding punctures
+                // Ownership: assigned to face with smaller opposite-vertex index
+                // Face k is opposite vertex k.  Edge shared by faces i and j
+                // means the puncture is on the edge between the OTHER two vertices.
+                int owner = (i < j) ? i : j;  // smaller face index
+                for (int r = 0; r < n_all; r++) {
+                    if (all_roots[r].face == i || all_roots[r].face == j) {
+                        // Check if this root is the shared one
+                        // A root of P_i that makes P_j = 0 → shared
+                        if (all_roots[r].face == i) {
+                            int signs_j[3] = {};
+                            signs_at_roots_i128(P[i], degP[i], P[j], degP[j], signs_j, 3);
+                            if (all_roots[r].root_idx < 3 && signs_j[all_roots[r].root_idx] == 0) {
+                                all_roots[r].is_edge = true;
+                                all_roots[r].edge_faces[0] = i;
+                                all_roots[r].edge_faces[1] = j;
+                                // If not the owner face, mark for removal
+                                if (all_roots[r].face != owner) all_roots[r].valid = false;
+                            }
+                        } else {
+                            int signs_i[3] = {};
+                            signs_at_roots_i128(P[j], degP[j], P[i], degP[i], signs_i, 3);
+                            if (all_roots[r].root_idx < 3 && signs_i[all_roots[r].root_idx] == 0) {
+                                all_roots[r].is_edge = true;
+                                all_roots[r].edge_faces[0] = i;
+                                all_roots[r].edge_faces[1] = j;
+                                if (all_roots[r].face != owner) all_roots[r].valid = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Step 4: Vertex detection ---
+    for (int i = 0; i < 4; i++) {
+        for (int j = i+1; j < 4; j++) {
+            for (int l = j+1; l < 4; l++) {
+                if (degP[i] == 0 || degP[j] == 0 || degP[l] == 0) continue;
+                int r_ij = resultant_sign_i128(P[i], degP[i], P[j], degP[j]);
+                if (r_ij != 0) continue;
+                int r_jl = resultant_sign_i128(P[j], degP[j], P[l], degP[l]);
+                if (r_jl != 0) continue;
+                int r_il = resultant_sign_i128(P[i], degP[i], P[l], degP[l]);
+                if (r_il != 0) continue;
+                // All three share a root → vertex puncture
+                // Owner = face with smallest index among {i,j,l}
+                for (int r = 0; r < n_all; r++) {
+                    if (all_roots[r].face == i || all_roots[r].face == j || all_roots[r].face == l) {
+                        // Check if this root is the shared one (P of other two faces = 0)
+                        bool is_shared = true;
+                        int f = all_roots[r].face;
+                        for (int other : {i, j, l}) {
+                            if (other == f) continue;
+                            int signs_o[3] = {};
+                            signs_at_roots_i128(P[f], degP[f], P[other], degP[other], signs_o, 3);
+                            if (all_roots[r].root_idx < 3 && signs_o[all_roots[r].root_idx] != 0)
+                                is_shared = false;
+                        }
+                        if (is_shared) {
+                            all_roots[r].is_vertex = true;
+                            all_roots[r].is_edge = false;
+                            if (all_roots[r].face != i) all_roots[r].valid = false;  // owner = smallest
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Step 5: Collect valid punctures ---
+    int valid_indices[12];
+    int n_valid = 0;
+    for (int r = 0; r < n_all; r++) {
+        if (all_roots[r].valid && n_valid < ExactPV2Result::MAX_PUNCTURES) {
+            valid_indices[n_valid++] = r;
+        }
+    }
+
+    if (n_valid == 0) return result;
+
+    // --- Step 6: Sort valid punctures by λ ---
+    // Bubble sort using compare_roots_i128 (n_valid is small, ≤ 12)
+    for (int i = 0; i < n_valid - 1; i++) {
+        for (int j = i + 1; j < n_valid; j++) {
+            RootInfo& a = all_roots[valid_indices[i]];
+            RootInfo& b = all_roots[valid_indices[j]];
+            // Compare root a.root_idx of P[a.face] with root b.root_idx of P[b.face]
+            int cmp;
+            if (a.face == b.face) {
+                // Same face: order by root index (already sorted)
+                cmp = (a.root_idx < b.root_idx) ? -1 : (a.root_idx > b.root_idx) ? 1 : 0;
+            } else {
+                cmp = compare_roots_i128(P[a.face], degP[a.face], n_distinct[a.face], a.root_idx,
+                                         P[b.face], degP[b.face], n_distinct[b.face], b.root_idx);
+            }
+            if (cmp > 0) {
+                int t = valid_indices[i]; valid_indices[i] = valid_indices[j]; valid_indices[j] = t;
+            }
+        }
+    }
+
+    // --- Step 7: Q_red-interval assignment ---
+    // For each valid puncture, count Q_red roots below it
+    degQ_red = effective_degree_i128(Q_red, degQ_red);
+    int n_qr_roots = 0;
+    if (degQ_red >= 1) {
+        int disc_qr = discriminant_sign_i128(Q_red);
+        if (degQ_red == 1) n_qr_roots = 1;
+        else if (degQ_red == 2) {
+            __int128 d2 = Q_red[1]*Q_red[1] - 4*Q_red[2]*Q_red[0];
+            n_qr_roots = (d2 > 0) ? 2 : (d2 == 0) ? 1 : 0;
+        } else {
+            if (disc_qr > 0) n_qr_roots = 3;
+            else if (disc_qr < 0) n_qr_roots = 1;
+            else {
+                __int128 sf[8] = {};
+                n_qr_roots = poly_sqfree_i128(Q_red, degQ_red, sf);
+            }
+        }
+    }
+
+    for (int vi = 0; vi < n_valid; vi++) {
+        RootInfo& ri = all_roots[valid_indices[vi]];
+
+        if (n_qr_roots == 0 || degQ_red == 0) {
+            ri.q_interval = 0;  // no Q_red roots → single interval
+            continue;
+        }
+
+        // Count Q_red roots below this puncture's λ
+        // = count of Q_red roots with Q_red(α_ri) having sign changes
+        // Get signs of Q_red at roots of P[face]
+        int qr_signs[3] = {};
+        int nqrs = signs_at_roots_i128(P[ri.face], degP[ri.face],
+                                       Q_red, degQ_red, qr_signs, 3);
+
+        // Count Q_red roots below α_ri using sign of Q_red at α_ri
+        // and interleaving with Q_red's roots
+        int count_below = 0;
+        int lc_qr_sign = (Q_red[degQ_red] > 0) ? 1 : -1;
+        int qr_at_alpha = (ri.root_idx < nqrs) ? qr_signs[ri.root_idx] : lc_qr_sign;
+
+        if (qr_at_alpha != 0) {
+            // sign(Q_red(α)) = lc_qr × (-1)^(n_qr_roots - count_below)
+            // → (-1)^(n_qr_roots - count_below) = qr_at_alpha / lc_qr
+            // → (n_qr_roots - count_below) is even iff qr_at_alpha * lc_qr > 0
+            // Use the interleaving from compare_roots
+            count_below = 0;
+            for (int qi = 0; qi < n_qr_roots; qi++) {
+                int cmp = compare_roots_i128(P[ri.face], degP[ri.face],
+                                             n_distinct[ri.face], ri.root_idx,
+                                             Q_red, degQ_red, n_qr_roots, qi);
+                if (cmp > 0) count_below++;  // Q_red root is below puncture
+            }
+        }
+        ri.q_interval = count_below;
+    }
+
+    // --- Step 8: Fill result ---
+    for (int vi = 0; vi < n_valid; vi++) {
+        RootInfo& ri = all_roots[valid_indices[vi]];
+        ExactPV2Result::Puncture& p = result.punctures[result.n_punctures];
+        p.face = ri.face;
+        p.root_idx = ri.root_idx;
+        p.q_interval = ri.q_interval;
+        p.is_edge = ri.is_edge;
+        p.is_vertex = ri.is_vertex;
+        p.edge_faces[0] = ri.edge_faces[0];
+        p.edge_faces[1] = ri.edge_faces[1];
+        result.n_punctures++;
+    }
+
+    // --- Step 9: Pairing ---
+    // Group by Q_red-interval, pair consecutive within each group.
+    // Cross-infinity (Cw): intervals 0 and n_qr_roots are connected through
+    // λ = ±∞, so merge them into a single wrapped group.
+    for (int qi = 0; qi <= n_qr_roots; qi++) {
+        if (qi == n_qr_roots && n_qr_roots > 0)
+            continue;  // already handled with qi=0
+
+        int group[12];
+        int ng = 0;
+        if (qi == 0 && n_qr_roots > 0) {
+            // Wrapped group: interval n_qr_roots (→ +∞) then interval 0 (−∞ →)
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].q_interval == n_qr_roots)
+                    group[ng++] = i;
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].q_interval == 0)
+                    group[ng++] = i;
+        } else {
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].q_interval == qi)
+                    group[ng++] = i;
+        }
+        for (int i = 0; i + 1 < ng; i += 2) {
+            if (result.n_pairs < ExactPV2Result::MAX_PAIRS) {
+                result.pairs[result.n_pairs].a = group[i];
+                result.pairs[result.n_pairs].b = group[i + 1];
+                result.n_pairs++;
+            }
+        }
+    }
+
+    return result;
 }
 
 template <typename T>

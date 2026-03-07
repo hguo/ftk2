@@ -1872,6 +1872,7 @@ int main(int argc, char** argv)
     int batch_size = 10000000;  // 10M per batch
     const char* seeds_arg = nullptr;
     const char* vw_file = nullptr;
+    int pv_version = 1;  // 1=v1 (default), 2=v2, 3=both
 
     // Parse command-line arguments
     for (int i = 1; i < argc; i++) {
@@ -1891,6 +1892,13 @@ int main(int argc, char** argv)
             max_cases = atoi(argv[++i]);
         else if (strcmp(argv[i], "--batch-size") == 0 && i + 1 < argc)
             batch_size = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--pv-version") == 0 && i + 1 < argc) {
+            const char* v = argv[++i];
+            if (strcmp(v, "1") == 0) pv_version = 1;
+            else if (strcmp(v, "2") == 0) pv_version = 2;
+            else if (strcmp(v, "both") == 0) pv_version = 3;
+            else { fprintf(stderr, "Unknown --pv-version: %s\n", v); return 1; }
+        }
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             fprintf(stderr, "Usage: %s [options]\n", argv[0]);
             fprintf(stderr, "  --min-punctures N   Minimum punctures per tet (default: 2)\n");
@@ -1901,9 +1909,11 @@ int main(int argc, char** argv)
             fprintf(stderr, "  --vw-file FILE      Read V,W pairs from file (24 ints per line)\n");
             fprintf(stderr, "  --max-cases C       Max output cases (default: 100000)\n");
             fprintf(stderr, "  --batch-size B      GPU batch size (default: 10M)\n");
+            fprintf(stderr, "  --pv-version 1|2|both  PV algorithm version (default: 1)\n");
             return 0;
         }
     }
+    fprintf(stderr, "PV version: %s\n", pv_version == 1 ? "v1" : pv_version == 2 ? "v2" : "both");
 
     // ─── VW-file mode: read V,W from file, classify each ──────────────────
     if (vw_file) {
@@ -1978,6 +1988,34 @@ int main(int argc, char** argv)
             fprintf(stderr, "  seed=%lu: %s (%d punctures, %d pairs)\n",
                     (unsigned long)s, cc.category.c_str(),
                     (int)cc.punctures.size(), (int)cc.pairs.size());
+
+            // ExactPV2 comparison
+            if (pv_version == 2 || pv_version == 3) {
+                __int128 Q_i128[4], P_i128[4][4];
+                ftk2::compute_tet_QP_i128(tc.V, tc.W, Q_i128, P_i128);
+                ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+                fprintf(stderr, "    [v2] %d punctures, %d pairs, passthrough=%d (deg %d)\n",
+                        v2.n_punctures, v2.n_pairs, v2.has_passthrough, v2.passthrough_deg);
+
+                if (pv_version == 3) {
+                    // Compare: v1 pairs vs v2 pairs count
+                    int v1_pairs = (int)cc.pairs.size();
+                    if (v1_pairs != v2.n_pairs) {
+                        fprintf(stderr, "    [MISMATCH] v1 pairs=%d, v2 pairs=%d\n",
+                                v1_pairs, v2.n_pairs);
+                        for (int pi = 0; pi < v2.n_punctures; pi++) {
+                            auto& p = v2.punctures[pi];
+                            fprintf(stderr, "      v2 punct[%d]: face=%d root_idx=%d q_int=%d edge=%d\n",
+                                    pi, p.face, p.root_idx, p.q_interval, p.is_edge);
+                        }
+                        for (int pi = 0; pi < v2.n_pairs; pi++) {
+                            fprintf(stderr, "      v2 pair[%d]: %d-%d\n",
+                                    pi, v2.pairs[pi].a, v2.pairs[pi].b);
+                        }
+                    } else
+                        fprintf(stderr, "    [MATCH] %d pairs\n", v1_pairs);
+                }
+            }
         }
         return 0;
     }
