@@ -1944,18 +1944,28 @@ int main(int argc, char** argv)
             line_num++;
             TetCaseGPU tc;
             memset(&tc, 0, sizeof(tc));
-            tc.seed = line_num;
-            int vals[24];
-            int n = sscanf(linebuf, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+            int vals[25];
+            int n = sscanf(linebuf, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
                 &vals[0],&vals[1],&vals[2],&vals[3],&vals[4],&vals[5],
                 &vals[6],&vals[7],&vals[8],&vals[9],&vals[10],&vals[11],
                 &vals[12],&vals[13],&vals[14],&vals[15],&vals[16],&vals[17],
-                &vals[18],&vals[19],&vals[20],&vals[21],&vals[22],&vals[23]);
-            if (n != 24) continue;
+                &vals[18],&vals[19],&vals[20],&vals[21],&vals[22],&vals[23],
+                &vals[24]);
+            int vw_offset = 0;
+            if (n == 25) {
+                // First value is seed, remaining 24 are V,W
+                tc.seed = vals[0];
+                vw_offset = 1;
+            } else if (n == 24) {
+                tc.seed = line_num;
+                vw_offset = 0;
+            } else {
+                continue;
+            }
             for (int i = 0; i < 4; i++)
                 for (int j = 0; j < 3; j++) {
-                    tc.V[i][j] = vals[i*3+j];
-                    tc.W[i][j] = vals[12+i*3+j];
+                    tc.V[i][j] = vals[vw_offset+i*3+j];
+                    tc.W[i][j] = vals[vw_offset+12+i*3+j];
                 }
             // Solve PV on 4 faces
             static const int fv[4][3] = {{1,3,2},{0,2,3},{0,3,1},{0,1,2}};
@@ -1977,7 +1987,12 @@ int main(int argc, char** argv)
             }
             ClassifiedCase cc = classify_case(tc);
             int np = (int)cc.punctures.size();
-            if (np > best_punct) {
+            if (min_punctures == 0) {
+                // Print ALL cases when --min-punctures 0
+                fprintf(stderr, "  line %d: %s (%d punctures)\n",
+                        line_num, cc.category.c_str(), np);
+                print_json(cc);
+            } else if (np > best_punct) {
                 best_punct = np;
                 fprintf(stderr, "  line %d: %s (%d punctures, raw=%d)\n",
                         line_num, cc.category.c_str(), np, cc.gpu.total_punctures);
