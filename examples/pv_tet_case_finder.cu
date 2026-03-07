@@ -1136,6 +1136,23 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         else              tags.push_back("Cw");
     }
 
+    // ─── TN tag: tangency (repeated root of P_k) ────────────────────────
+    // When disc(P_k) = 0 for some face k, P_k has a repeated root.
+    // The PV curve touches face k tangentially (zero net crossings at
+    // the repeated root), reducing the effective T-count.
+    // Exact integer test: discriminant_sign_i128 returns 0 iff disc = 0.
+    {
+        bool has_TN = false;
+        for (int k = 0; k < 4; k++) {
+            int degk = effective_degree_i128(P_i128[k], 3);
+            if (degk >= 2 && discriminant_sign_i128(P_i128[k]) == 0) {
+                has_TN = true;
+                break;
+            }
+        }
+        if (has_TN) tags.push_back("TN");
+    }
+
     // ─── Dmd tags: PV m-manifold on d-cell ───────────────────────────────
     // D00: point on vertex (V∥W at vertex)
     // D01: point on edge (puncture lands on tet edge)
