@@ -816,6 +816,75 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
         cc.punctures = std::move(deduped);
     }
 
+    // ─── Filter ISR punctures at Q roots ────────────────────────────────
+    // At a Q root α, bary coords μ_j = P[j](α)/Q(α).  Since Q(α)=0:
+    //   - If any P[j](α) ≠ 0 → μ_j → ∞ → point NOT in tet → spurious.
+    //   - Only if ALL P[j](α) = 0 (SR for all faces) can the point be in the tet
+    //     (via L'Hôpital limits).
+    // We detect this exactly: for each face k, if gcd(Q, P[k]) has degree ≥ 1,
+    // check whether ALL other P[j] also share that root.  If not, filter out
+    // the puncture.
+    //
+    // Exact check: h = gcd(Q, P[k]) has the shared roots.  For each j ≠ k,
+    // resultant(h, P[j]) = 0 iff P[j] shares at least one root with h.
+    // If resultant(h, P[j]) ≠ 0, then P[j] is nonzero at ALL roots of h,
+    // so μ_j → ∞ at those roots → puncture invalid.
+    {
+        __int128 Qi[4], Pi[4][4];
+        for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
+        for (int a = 0; a < 4; a++)
+            for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
+
+        // For each face, compute h = gcd(Q, P[k])
+        bool face_has_isr[4] = {};
+        bool face_isr_valid[4] = {};  // true if all other P[j] also vanish at h's roots
+        for (int k = 0; k < 4; k++) {
+            __int128 h[4] = {};
+            int dh = ftk2::poly_gcd_full_i128(Qi, 3, Pi[k], 3, h);
+            if (dh < 1) continue;
+            face_has_isr[k] = true;
+
+            // Check if all other P[j] vanish at h's roots
+            bool all_vanish = true;
+            for (int j = 0; j < 4; j++) {
+                if (j == k) continue;
+                int edj = 3;
+                while (edj > 0 && Pi[j][edj] == 0) edj--;
+                int rs = ftk2::resultant_sign_i128(h, dh, Pi[j], edj);
+                if (rs != 0) { all_vanish = false; break; }
+            }
+            face_isr_valid[k] = all_vanish;
+        }
+
+        // Filter: remove punctures on face k at Q roots if ISR is invalid
+        // (i.e., not all P[j] vanish at the shared root)
+        std::vector<ClassifiedCase::PunctureInfo> filtered;
+        for (auto& pi : cc.punctures) {
+            if (face_has_isr[pi.face] && !face_isr_valid[pi.face]) {
+                // Check if this puncture's λ is at a Q root
+                bool at_q_root = false;
+                // Exact: check if P[face](λ) ≈ 0 AND Q(λ) ≈ 0
+                // For integer inputs, the shared roots are algebraic;
+                // float λ will be very close.  Use bary=[0,0,0] as indicator.
+                double bsum = std::abs(pi.bary[0]) + std::abs(pi.bary[1]) + std::abs(pi.bary[2]);
+                if (bsum < 1e-10) at_q_root = true;
+                // Also check proximity to Q roots
+                for (int qi = 0; qi < cc.n_Q_roots; qi++) {
+                    double dist = std::abs(pi.lambda - cc.Q_roots[qi]);
+                    if (dist < 1e-6 * std::max(1.0, std::abs(pi.lambda)))
+                        at_q_root = true;
+                }
+                if (at_q_root) continue;  // skip this puncture
+            }
+            filtered.push_back(pi);
+        }
+        if (filtered.size() != cc.punctures.size()) {
+            fprintf(stderr, "  ISR filter: removed %d spurious punctures at Q roots\n",
+                    (int)(cc.punctures.size() - filtered.size()));
+            cc.punctures = std::move(filtered);
+        }
+    }
+
     // Sort punctures by lambda for interval assignment
     std::sort(cc.punctures.begin(), cc.punctures.end(),
         [](const ClassifiedCase::PunctureInfo& a, const ClassifiedCase::PunctureInfo& b) {
@@ -899,16 +968,13 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             cc.intervals[interval_idx].n_pv++;
         }
 
-        // Shared root: exact resultant + relevance check
-        // SR is relevant only if it sits between intervals with punctures
+        // Shared root: purely algebraic (resultant = 0)
         {
             __int128 Qi[4], Pi[4][4];
             for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
             for (int a = 0; a < 4; a++)
                 for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
-            bool has_sr_algebraic = has_shared_root_resultant(Qi, Pi);
-            cc.has_shared_root = has_sr_algebraic &&
-                is_shared_root_relevant(Qi, Pi, cc.Q_roots, cc.n_Q_roots, cc.intervals);
+            cc.has_shared_root = has_shared_root_resultant(Qi, Pi);
         }
 
     } else if (degQ > 0 && cc.n_Q_roots > 1) {
@@ -988,15 +1054,13 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
             }
         }
 
-        // Shared root: exact resultant check + inside-tet filter
+        // Shared root: purely algebraic (resultant = 0)
         {
             __int128 Qi[4], Pi[4][4];
             for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
             for (int a = 0; a < 4; a++)
                 for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
-            bool has_sr_algebraic = has_shared_root_resultant(Qi, Pi);
-            cc.has_shared_root = has_sr_algebraic &&
-                is_shared_root_relevant(Qi, Pi, cc.Q_roots, cc.n_Q_roots, cc.intervals);
+            cc.has_shared_root = has_shared_root_resultant(Qi, Pi);
         }
     } else {
         // degQ == 0 or no Q roots: all punctures in single interval
@@ -1053,14 +1117,43 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     std::vector<std::string> tags;
 
     // Shared-root classification: SR (isolated, gcd=1) vs ISR (non-isolated, gcd≥2)
+    // Only tag SR/ISR if the shared root is in/on the tet:
+    //   At a shared root α (Q(α)=P[k](α)=0), bary coords μ_j = P[j](α)/Q(α).
+    //   If any P[j](α) ≠ 0, then μ_j → ∞ → point outside tet → skip tag.
+    //   Tag only if ALL P[j](α) = 0 for every shared root.
     if (cc.has_shared_root) {
-        // Check gcd degree for each face to distinguish ISR from SR
+        __int128 Qi[4], Pi[4][4];
+        for (int j = 0; j < 4; j++) Qi[j] = (__int128)llround(Q[j]);
+        for (int a = 0; a < 4; a++)
+            for (int j = 0; j < 4; j++) Pi[a][j] = (__int128)llround(P[a][j]);
+
+        bool any_in_tet = false;
         cc.has_non_isolated_sr = false;
         for (int k = 0; k < 4; k++) {
-            int gd = poly_gcd_degree_i128(Q, 3, P[k], 3);
-            if (gd >= 2) { cc.has_non_isolated_sr = true; break; }
+            __int128 h[4] = {};
+            int dh = ftk2::poly_gcd_full_i128(Qi, 3, Pi[k], 3, h);
+            if (dh < 1) continue;
+
+            // Check if all other P[j] also vanish at h's roots
+            bool all_vanish = true;
+            for (int j = 0; j < 4; j++) {
+                if (j == k) continue;
+                int edj = 3;
+                while (edj > 0 && Pi[j][edj] == 0) edj--;
+                int rs = ftk2::resultant_sign_i128(h, dh, Pi[j], edj);
+                if (rs != 0) { all_vanish = false; break; }
+            }
+            if (all_vanish) {
+                any_in_tet = true;
+                if (dh >= 2) cc.has_non_isolated_sr = true;
+            }
         }
-        tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
+        if (any_in_tet) {
+            tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
+        } else {
+            // SR exists algebraically but point is outside tet — don't tag
+            cc.has_shared_root = false;
+        }
     }
 
     // Critical-point degeneracies: Cv{d} / Cw{d}
