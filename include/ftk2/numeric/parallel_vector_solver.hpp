@@ -3929,6 +3929,7 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                 // means the puncture is on the edge between the OTHER two vertices.
                 int owner = (i < j) ? i : j;  // smaller face index
                 for (int r = 0; r < n_all; r++) {
+                    if (all_roots[r].is_infinity) continue;  // skip infinity roots (root_idx=-1)
                     if (all_roots[r].face == i || all_roots[r].face == j) {
                         // Check if this root is the shared one
                         // A root of P_i that makes P_j = 0 → shared
@@ -3972,6 +3973,7 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                 // All three share a root → vertex puncture
                 // Owner = face with smallest index among {i,j,l}
                 for (int r = 0; r < n_all; r++) {
+                    if (all_roots[r].is_infinity) continue;  // skip infinity roots (root_idx=-1)
                     if (all_roots[r].face == i || all_roots[r].face == j || all_roots[r].face == l) {
                         // Check if this root is the shared one (P of other two faces = 0)
                         bool is_shared = true;
@@ -4011,6 +4013,97 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                                          lambda_poly, 1, signs, 3);
             if (all_roots[r].root_idx < nr && signs[all_roots[r].root_idx] == 0)
                 all_roots[r].valid = false;  // Cv waypoint
+        }
+    }
+
+    // --- Step 4c: Edge/vertex pass-through exclusion ---
+    // An edge puncture where P[k1](λ)=P[k2](λ)=0 is a pass-through if
+    // the derivatives P'[k1] and P'[k2] have opposite signs at λ.  This
+    // means the violated bary coord swaps (μ_{k1} goes +→- while μ_{k2}
+    // goes -→+) and the curve stays outside the tet on both sides.
+    //
+    // Exact test: g = gcd(P[k1], P[k2]), then sign of P'[k1]·P'[k2] at
+    // roots of g via resultant.  If negative → pass-through.
+    //
+    // For vertex punctures (3 P's zero), pass-through if any pair of
+    // derivatives has opposite sign.
+    {
+        // Precompute P'[k] = derivative of P[k] (degree ≤ 2)
+        __int128 dP[4][3];
+        for (int k = 0; k < 4; k++) {
+            dP[k][0] = P[k][1];
+            dP[k][1] = 2 * P[k][2];
+            dP[k][2] = 3 * P[k][3];
+        }
+
+        for (int r = 0; r < n_all; r++) {
+            if (!all_roots[r].valid) continue;
+            if (all_roots[r].is_infinity) continue;
+
+            if (all_roots[r].is_edge) {
+                int k1 = all_roots[r].edge_faces[0];
+                int k2 = all_roots[r].edge_faces[1];
+                // g = gcd(P[k1], P[k2])
+                __int128 g[4];
+                int dg = poly_gcd_full_i128(P[k1], degP[k1], P[k2], degP[k2], g);
+                if (dg < 1) continue;
+                // Product P'[k1] · P'[k2] (degree ≤ 4)
+                __int128 prod[5] = {};
+                for (int i = 0; i <= 2; i++)
+                    for (int j = 0; j <= 2; j++)
+                        prod[i + j] += dP[k1][i] * dP[k2][j];
+                int dp = 4;
+                while (dp > 0 && prod[dp] == 0) dp--;
+                int sign = resultant_sign_i128(g, dg, prod, dp);
+                if (sign < 0)
+                    all_roots[r].valid = false;  // pass-through waypoint
+            } else if (all_roots[r].is_vertex) {
+                // 3 faces share a root.  Find them from all_roots[r].
+                // The owner face is all_roots[r].face (smallest index).
+                // The other two faces are the ones from the edge_faces or
+                // from the vertex triple.  Find them by checking which
+                // pairs of faces have shared roots at this root index.
+                int f = all_roots[r].face;
+                // The three zero-P faces for a vertex at face f:
+                // face f has P[f]=0, and two other faces also have P=0.
+                // We need to find which faces those are.
+                int other_faces[2];
+                int nof = 0;
+                for (int j = 0; j < 4; j++) {
+                    if (j == f || nof >= 2) continue;
+                    if (degP[j] == 0) continue;
+                    int signs_j[3] = {};
+                    int nrj = signs_at_roots_i128(P[f], degP[f], P[j], degP[j], signs_j, 3);
+                    if (all_roots[r].root_idx < nrj && signs_j[all_roots[r].root_idx] == 0)
+                        other_faces[nof++] = j;
+                }
+                if (nof == 2) {
+                    int k1 = other_faces[0], k2 = other_faces[1];
+                    // g = gcd of all three P's
+                    __int128 g12[4];
+                    int dg12 = poly_gcd_full_i128(P[k1], degP[k1], P[k2], degP[k2], g12);
+                    __int128 g[4];
+                    int dg = poly_gcd_full_i128(P[f], degP[f], g12, dg12, g);
+                    if (dg < 1) continue;
+                    // Check P'[f]·P'[k1] and P'[f]·P'[k2]
+                    __int128 prod1[5] = {};
+                    for (int i = 0; i <= 2; i++)
+                        for (int j = 0; j <= 2; j++)
+                            prod1[i + j] += dP[f][i] * dP[k1][j];
+                    int dp1 = 4;
+                    while (dp1 > 0 && prod1[dp1] == 0) dp1--;
+                    __int128 prod2[5] = {};
+                    for (int i = 0; i <= 2; i++)
+                        for (int j = 0; j <= 2; j++)
+                            prod2[i + j] += dP[f][i] * dP[k2][j];
+                    int dp2 = 4;
+                    while (dp2 > 0 && prod2[dp2] == 0) dp2--;
+                    int sign1 = resultant_sign_i128(g, dg, prod1, dp1);
+                    int sign2 = resultant_sign_i128(g, dg, prod2, dp2);
+                    if (sign1 < 0 || sign2 < 0)
+                        all_roots[r].valid = false;  // pass-through waypoint
+                }
+            }
         }
     }
 

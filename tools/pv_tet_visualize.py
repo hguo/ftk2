@@ -820,7 +820,8 @@ def draw_lambda_ring(ax, case_data, segments):
     # ── Mark D00/D01 points on ring ──
     # D00: vertex where V∥W (detected from field data)
     # D01: puncture on tet edge (one bary coord ≈ 0, deduplicated)
-    if 'D00' in category or 'D01' in category:
+    # Always mark edge/vertex punctures on ring (regardless of category tag)
+    if True:
         d_markers = []  # (lam, label) deduplicated
         # D00: check vertices for V×W = 0
         V = np.array(case_data['V'])

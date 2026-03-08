@@ -235,6 +235,9 @@ struct ClassifiedCase {
         double bary[3];
         bool is_edge;          // on a tet edge (1 face-bary ≈ 0)
         bool is_vertex;        // on a tet vertex (2 face-bary ≈ 0)
+        bool is_passthrough;   // edge pass-through: curve stays outside tet on both sides
+        bool is_D00;           // isolated PV point at vertex (0-manifold), excluded from T-count
+        bool is_D01;           // isolated PV point on edge (0-manifold), excluded from T-count
         int tet_edge[2];       // shared tet edge vertices (if is_edge)
         int tet_vertex;        // shared tet vertex (if is_vertex)
         int interval_idx;      // Q-interval this puncture belongs to (-1 if unassigned)
@@ -718,6 +721,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
                 pi.bary[j] = r.barycentric[j];
             pi.is_edge = false;
             pi.is_vertex = false;
+            pi.is_passthrough = false;
             pi.tet_edge[0] = pi.tet_edge[1] = -1;
             pi.tet_vertex = -1;
             pi.interval_idx = -1;
@@ -781,6 +785,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
                     // bary k is zero iff P[fv[i][k]][3] == 0 (exact integer)
                     pi.is_edge = false;
                     pi.is_vertex = false;
+                    pi.is_passthrough = false;
                     pi.tet_edge[0] = pi.tet_edge[1] = -1;
                     pi.tet_vertex = -1;
                     int nz = 0, nnz = 0;
@@ -835,6 +840,7 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
                     // Exact edge/vertex detection: bary k = 0 iff P[fv[i][k]][0] == 0
                     pi.is_edge = false;
                     pi.is_vertex = false;
+                    pi.is_passthrough = false;
                     pi.tet_edge[0] = pi.tet_edge[1] = -1;
                     pi.tet_vertex = -1;
                     int nz = 0, nnz = 0;
@@ -1152,11 +1158,94 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     // smoothly at the field-zero critical point.  These are excluded from
     // T-count, interval occupancy, and pairing.
     //
-    // Edge/vertex punctures at generic λ (D01/D00) are genuine curve
-    // endpoints — the curve enters/exits a face at the shared edge/vertex.
-    // These ARE counted and paired normally.
+    // Edge/vertex punctures at generic λ (D01/D00) may be genuine curve
+    // endpoints or pass-through waypoints.
+    //
+    // At an edge puncture, two P[k] are simultaneously zero.  If their
+    // derivatives P'[k1] · P'[k2] < 0 at that λ, the violated bary coord
+    // swaps without the curve entering the tet — a "pass-through".
+    //
+    // At a vertex puncture, three P[k] are simultaneously zero.  If the
+    // three derivatives don't all have the same sign (relative to Q), the
+    // curve can't be inside the tet on either side — also a pass-through.
+    //
+    // ALL sign tests use exact __int128 polynomial arithmetic (resultant/GCD).
+    // Pass-throughs are excluded from T-count and pairing.
+    {
+        // Compute __int128 P derivatives: dP[k] = P'[k](λ) = P[k][1] + 2P[k][2]λ + 3P[k][3]λ²
+        __int128 dP_i128[4][3];  // degree-2 polynomials
+        for (int k = 0; k < 4; k++) {
+            dP_i128[k][0] = P_i128[k][1];
+            dP_i128[k][1] = 2 * P_i128[k][2];
+            dP_i128[k][2] = 3 * P_i128[k][3];
+        }
+
+        for (auto& pi : cc.punctures) {
+            if (pi.lambda == 0.0 || std::isinf(pi.lambda))
+                continue;
+            if (pi.is_edge) {
+                // Edge: tet_edge=[va,vb] → zero P's are k∉{va,vb}
+                int va = pi.tet_edge[0], vb = pi.tet_edge[1];
+                int k1 = -1, k2 = -1;
+                for (int k = 0; k < 4; k++) {
+                    if (k == va || k == vb) continue;
+                    if (k1 < 0) k1 = k; else k2 = k;
+                }
+                // g = gcd(P[k1], P[k2]): the common root polynomial
+                __int128 g[4];
+                int dg = poly_gcd_full_i128(P_i128[k1], effective_degree_i128(P_i128[k1], 3),
+                                            P_i128[k2], effective_degree_i128(P_i128[k2], 3), g);
+                if (dg < 1) continue;  // no common root (shouldn't happen)
+                // Product of derivatives: f = P'[k1] · P'[k2] (degree ≤ 4)
+                __int128 prod[5] = {};
+                for (int i = 0; i <= 2; i++)
+                    for (int j = 0; j <= 2; j++)
+                        prod[i + j] += dP_i128[k1][i] * dP_i128[k2][j];
+                int dp = 4;
+                while (dp > 0 && prod[dp] == 0) dp--;
+                // Sign of prod at root(s) of g: pass-through iff negative
+                int sign = resultant_sign_i128(g, dg, prod, dp);
+                if (sign < 0)
+                    pi.is_passthrough = true;
+            } else if (pi.is_vertex) {
+                // Vertex: tet_vertex=v → zero P's are k≠v
+                int v = pi.tet_vertex;
+                int ks[3], nk = 0;
+                for (int k = 0; k < 4; k++)
+                    if (k != v) ks[nk++] = k;
+                // g = gcd(P[ks[0]], gcd(P[ks[1]], P[ks[2]])): common root polynomial
+                __int128 g12[4];
+                int dg12 = poly_gcd_full_i128(P_i128[ks[1]], effective_degree_i128(P_i128[ks[1]], 3),
+                                              P_i128[ks[2]], effective_degree_i128(P_i128[ks[2]], 3), g12);
+                __int128 g[4];
+                int dg = poly_gcd_full_i128(P_i128[ks[0]], effective_degree_i128(P_i128[ks[0]], 3),
+                                            g12, dg12, g);
+                if (dg < 1) continue;
+                // Check sign of P'[ks[0]] · P'[ks[1]] at root(s) of g
+                __int128 prod01[5] = {};
+                for (int i = 0; i <= 2; i++)
+                    for (int j = 0; j <= 2; j++)
+                        prod01[i + j] += dP_i128[ks[0]][i] * dP_i128[ks[1]][j];
+                int dp01 = 4;
+                while (dp01 > 0 && prod01[dp01] == 0) dp01--;
+                int sign01 = resultant_sign_i128(g, dg, prod01, dp01);
+                // Check sign of P'[ks[0]] · P'[ks[2]] at root(s) of g
+                __int128 prod02[5] = {};
+                for (int i = 0; i <= 2; i++)
+                    for (int j = 0; j <= 2; j++)
+                        prod02[i + j] += dP_i128[ks[0]][i] * dP_i128[ks[2]][j];
+                int dp02 = 4;
+                while (dp02 > 0 && prod02[dp02] == 0) dp02--;
+                int sign02 = resultant_sign_i128(g, dg, prod02, dp02);
+                // Pass-through if any pair of derivatives has opposite sign
+                if (sign01 < 0 || sign02 < 0)
+                    pi.is_passthrough = true;
+            }
+        }
+    }
     int n = (int)cc.punctures.size();
     auto is_waypoint = [](const ClassifiedCase::PunctureInfo& pi) {
+        if (pi.is_passthrough) return true;
         return (pi.is_edge || pi.is_vertex) &&
                (pi.lambda == 0.0 || std::isinf(pi.lambda));
     };
@@ -1793,6 +1882,807 @@ static ClassifiedCase classify_case(const TetCaseGPU& gpu) {
     return cc;
 }
 
+// ─── classify_case_v2: Pure-integer classification from ExactPV2Result ────
+// Takes TetCaseV2GPU directly — all topological decisions use __int128.
+// Floats computed only for visualization (lambda, bary for JSON/plotting).
+static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
+    ClassifiedCase cc;
+    memset(&cc.gpu, 0, sizeof(cc.gpu));
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 3; j++) {
+            cc.gpu.V[i][j] = gpu_v2.V[i][j];
+            cc.gpu.W[i][j] = gpu_v2.W[i][j];
+        }
+    cc.gpu.total_punctures = gpu_v2.v2.n_punctures;
+    cc.gpu.seed = gpu_v2.seed;
+    cc.has_shared_root = false;
+    cc.has_non_isolated_sr = false;
+    cc.n_sr_roots = 0;
+    cc.has_B = false;
+    cc.has_Cv_pos = false;
+    cc.has_Cw_pos = false;
+    cc.n_tn = 0;
+    cc.n_deduplicated = 0;
+
+    // ─── Step 0: Float + integer Q, P polynomials ─────────────────────
+    double Vd[4][3], Wd[4][3];
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 3; j++) {
+            Vd[i][j] = (double)gpu_v2.V[i][j];
+            Wd[i][j] = (double)gpu_v2.W[i][j];
+        }
+
+    double Q[4], P[4][4];
+    characteristic_polynomials_pv_tetrahedron(Vd, Wd, Q, P);
+    for (int i = 0; i < 4; i++) cc.Q_coeffs[i] = Q[i];
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++)
+            cc.P_coeffs[i][j] = P[i][j];
+
+    __int128 Q_i128[4], P_i128[4][4];
+    compute_tet_QP_i128(gpu_v2.V, gpu_v2.W, Q_i128, P_i128);
+
+    cc.Q_disc_sign = discriminant_sign_i128(Q_i128);
+    cc.n_Q_roots = solve_cubic_real(Q, cc.Q_roots);
+    std::sort(cc.Q_roots, cc.Q_roots + cc.n_Q_roots);
+
+    static const int fv[4][3] = {
+        {1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}
+    };
+
+    // Solve float face cubics for lambda recovery
+    double face_roots[4][3];
+    int face_n_distinct[4];
+    for (int fi = 0; fi < 4; fi++) {
+        double raw_roots[3];
+        int nr = solve_cubic_real(P[fi], raw_roots);
+        std::sort(raw_roots, raw_roots + nr);
+        // Deduplicate (merge roots within relative epsilon)
+        face_n_distinct[fi] = 0;
+        for (int r = 0; r < nr; r++) {
+            if (face_n_distinct[fi] == 0 ||
+                std::abs(raw_roots[r] - face_roots[fi][face_n_distinct[fi]-1]) >
+                1e-8 * std::max(1.0, std::abs(raw_roots[r]))) {
+                face_roots[fi][face_n_distinct[fi]++] = raw_roots[r];
+            }
+        }
+    }
+
+    // ─── Step 1: Map v2 punctures → PunctureInfo ──────────────────────
+    const ExactPV2Result& v2 = gpu_v2.v2;
+    for (int pi = 0; pi < v2.n_punctures; pi++) {
+        const auto& vp = v2.punctures[pi];
+        ClassifiedCase::PunctureInfo ci;
+        ci.face = vp.face;
+        ci.is_edge = vp.is_edge;
+        ci.is_vertex = vp.is_vertex;
+        ci.is_passthrough = false;  // v2 already excluded pass-throughs
+        ci.is_D00 = false;
+        ci.is_D01 = false;
+        ci.interval_idx = -1;
+        ci.tet_edge[0] = ci.tet_edge[1] = -1;
+        ci.tet_vertex = -1;
+
+        // Float lambda from root_idx
+        if (vp.root_idx < 0) {
+            ci.lambda = INFINITY;  // infinity puncture (Cw2)
+            // Guard: v2 solver may spuriously set edge/vertex flags on infinity
+            // punctures (root_idx=-1 causes signs_at_roots_i128[-1] UB in step 3).
+            // Cw2 face-interior infinity punctures must NOT be edge/vertex.
+            ci.is_edge = false;
+            ci.is_vertex = false;
+        } else if (vp.root_idx < face_n_distinct[vp.face]) {
+            ci.lambda = face_roots[vp.face][vp.root_idx];
+        } else {
+            // Fallback: shouldn't happen for generic cases
+            ci.lambda = face_roots[vp.face][face_n_distinct[vp.face] - 1];
+            fprintf(stderr, "  [v2] seed=%lu: root_idx=%d >= n_distinct=%d for face %d\n",
+                    (unsigned long)gpu_v2.seed, vp.root_idx, face_n_distinct[vp.face], vp.face);
+        }
+
+        // Float bary for visualization
+        if (std::isinf(ci.lambda)) {
+            double sum = 0;
+            for (int k = 0; k < 3; k++) {
+                ci.bary[k] = P[fv[vp.face][k]][3] / Q[3];
+                sum += ci.bary[k];
+            }
+            if (sum != 0.0)
+                for (int k = 0; k < 3; k++) ci.bary[k] /= sum;
+        } else {
+            double Qval = Q[0] + ci.lambda*(Q[1] + ci.lambda*(Q[2] + ci.lambda*Q[3]));
+            double sum = 0;
+            for (int k = 0; k < 3; k++) {
+                int j = fv[vp.face][k];
+                double Pj = P[j][0] + ci.lambda*(P[j][1] + ci.lambda*(P[j][2] + ci.lambda*P[j][3]));
+                ci.bary[k] = (std::abs(Qval) > 1e-20) ? Pj / Qval : 0.0;
+                sum += ci.bary[k];
+            }
+            if (sum != 0.0)
+                for (int k = 0; k < 3; k++) ci.bary[k] /= sum;
+        }
+
+        // Edge: tet_edge = {0,1,2,3}\{edge_faces[0], edge_faces[1]}
+        if (ci.is_edge) {
+            int ef0 = vp.edge_faces[0], ef1 = vp.edge_faces[1];
+            int nv = 0;
+            int ev[2];
+            for (int v = 0; v < 4; v++)
+                if (v != ef0 && v != ef1 && nv < 2)
+                    ev[nv++] = v;
+            ci.tet_edge[0] = std::min(ev[0], ev[1]);
+            ci.tet_edge[1] = std::max(ev[0], ev[1]);
+        }
+
+        // Vertex: find k with max |P[k](lambda)| (the non-zero face = tet vertex)
+        if (ci.is_vertex) {
+            double best = -1;
+            for (int k = 0; k < 4; k++) {
+                double pk_abs;
+                if (std::isinf(ci.lambda))
+                    pk_abs = std::abs(P[k][3]);
+                else
+                    pk_abs = std::abs(P[k][0] + ci.lambda*(P[k][1] + ci.lambda*(P[k][2] + ci.lambda*P[k][3])));
+                if (pk_abs > best) { best = pk_abs; ci.tet_vertex = k; }
+            }
+        }
+
+        cc.punctures.push_back(ci);
+    }
+    // v2 punctures are already sorted by lambda (solver step 6) and deduplicated (SoS ownership)
+
+    // ─── Step 2: Q-type string ────────────────────────────────────────
+    int degQ = 3;
+    while (degQ > 0 && Q[degQ] == 0.0) degQ--;
+
+    std::string q_type;
+    if (degQ == 0 && Q[0] == 0.0) q_type = "Qz";
+    else if (degQ == 0) q_type = "Q0";
+    else if (degQ == 1) q_type = "Q1";
+    else if (degQ == 2) {
+        double disc2 = Q[1]*Q[1] - 4*Q[2]*Q[0];
+        if (disc2 > 0) q_type = "Q2";
+        else if (disc2 < 0) q_type = "Q2-";
+        else q_type = "Q2o";
+    } else {
+        if (cc.Q_disc_sign > 0) q_type = "Q3+";
+        else if (cc.Q_disc_sign < 0) q_type = "Q3-";
+        else q_type = "Q3o";
+    }
+
+    // ─── Step 3: Build intervals between Q roots ──────────────────────
+    if (cc.n_Q_roots > 0) {
+        cc.intervals.push_back({-INFINITY, cc.Q_roots[0], 0, true});
+        for (int i = 0; i + 1 < cc.n_Q_roots; i++)
+            cc.intervals.push_back({cc.Q_roots[i], cc.Q_roots[i+1], 0, false});
+        cc.intervals.push_back({cc.Q_roots[cc.n_Q_roots-1], INFINITY, 0, true});
+    } else {
+        cc.intervals.push_back({-INFINITY, INFINITY, 0, true});
+    }
+
+    // ─── Step 4: Interval assignment (Sturm-based on float lambda) ────
+    // Uses original Q (not Q_red) for consistency with v1 taxonomy.
+    double Q_exact[4];
+    for (int i = 0; i < 4; i++) Q_exact[i] = Q[i];
+
+    // Shared root detection (needed for SR tag and verify_case)
+    // Use Q_i128/P_i128 from compute_tet_QP_i128 (line 1921) with
+    // resultant_sign_i128 (GCD-factored Bareiss, no overflow).
+    if (degQ > 0) {
+        int degQ_i = ftk2::effective_degree_i128(Q_i128, 3);
+        bool sr = false;
+        for (int k = 0; k < 4 && !sr; k++) {
+            int degPk = ftk2::effective_degree_i128(P_i128[k], 3);
+            if (degPk <= 0) continue;
+            if (ftk2::resultant_sign_i128(Q_i128, degQ_i, P_i128[k], degPk) == 0)
+                sr = true;
+        }
+        cc.has_shared_root = sr;
+    }
+
+    if (degQ > 0 && cc.n_Q_roots == 1) {
+        // Sign-of-Q method (Q3-, Q1)
+        for (auto& pi : cc.punctures) {
+            if (std::isinf(pi.lambda)) {
+                pi.interval_idx = 1;  // infinity > the single root
+                cc.intervals[1].n_pv++;
+                continue;
+            }
+            double Qval = eval_poly_sturm(Q_exact, 3, pi.lambda);
+            double ax = std::abs(pi.lambda);
+            double cond = std::abs(Q_exact[3]);
+            for (int d = 2; d >= 0; --d) cond = cond * ax + std::abs(Q_exact[d]);
+            double gamma = (double)(2 * 3 + 2) * DBL_EPSILON;
+            bool cert = std::abs(Qval) > gamma * cond;
+            if (!cert) {
+                double delta = 4.0 * DBL_EPSILON * std::max(1.0, ax);
+                Qval = eval_poly_sturm(Q_exact, 3, pi.lambda + delta);
+            }
+            // For any degree with 1 root: above root iff sign(Q(λ)) == sign(lc)
+            double lc = Q_exact[degQ];
+            int interval_idx = ((Qval > 0) == (lc > 0)) ? 1 : 0;
+            pi.interval_idx = interval_idx;
+            cc.intervals[interval_idx].n_pv++;
+        }
+    } else if (degQ > 0 && cc.n_Q_roots > 1) {
+        // Sturm chain (Q3+, Q2)
+        __int128 p0 = (__int128)llround(Q[0]), p1 = (__int128)llround(Q[1]),
+                 p2 = (__int128)llround(Q[2]), p3 = (__int128)llround(Q[3]);
+        SturmSeqDouble Q_seq;
+
+        for (int i = 0; i < 4; i++) Q_seq.c[0][i] = Q_exact[i];
+        Q_seq.deg[0] = degQ;
+        Q_seq.c[1][0] = Q_exact[1];
+        Q_seq.c[1][1] = 2.0 * Q_exact[2];
+        Q_seq.c[1][2] = 3.0 * Q_exact[3];
+        Q_seq.c[1][3] = 0;
+        Q_seq.deg[1] = degQ - 1;
+
+        if (degQ == 2) {
+            __int128 s2_const = p2 * (p1 * p1 - (__int128)4 * p0 * p2);
+            Q_seq.c[2][0] = (s2_const > 0) ? 1.0 : ((s2_const < 0) ? -1.0 : 0.0);
+            Q_seq.c[2][1] = 0; Q_seq.c[2][2] = 0; Q_seq.c[2][3] = 0;
+            Q_seq.deg[2] = 0;
+            Q_seq.n = (s2_const != 0) ? 3 : 2;
+        } else {
+            __int128 s20_i = p3 * (p1 * p2 - (__int128)9 * p0 * p3);
+            __int128 s21_i = (__int128)2 * p3 * (p2 * p2 - (__int128)3 * p1 * p3);
+            __int128 abs20 = (s20_i >= 0) ? s20_i : -s20_i;
+            __int128 abs21 = (s21_i >= 0) ? s21_i : -s21_i;
+            __int128 s2max = (abs20 > abs21) ? abs20 : abs21;
+            if (s2max > 0) {
+                Q_seq.c[2][0] = (double)s20_i / (double)s2max;
+                Q_seq.c[2][1] = (double)s21_i / (double)s2max;
+            } else {
+                Q_seq.c[2][0] = 0; Q_seq.c[2][1] = 0;
+            }
+            Q_seq.c[2][2] = 0; Q_seq.c[2][3] = 0;
+            Q_seq.deg[2] = (s21_i != 0) ? 1 : 0;
+
+            if (s21_i == 0 && s20_i == 0) {
+                Q_seq.c[3][0] = 0; Q_seq.n = 2;
+            } else if (cc.Q_disc_sign == 0) {
+                Q_seq.c[3][0] = 0; Q_seq.n = 3;
+            } else {
+                int sign_lc = (p3 > 0) ? 1 : -1;
+                Q_seq.c[3][0] = (double)(sign_lc * cc.Q_disc_sign);
+                Q_seq.deg[3] = 0;
+                Q_seq.n = 4;
+            }
+        }
+
+        for (auto& pi : cc.punctures) {
+            if (std::isinf(pi.lambda)) {
+                pi.interval_idx = cc.n_Q_roots;
+                cc.intervals[cc.n_Q_roots].n_pv++;
+                continue;
+            }
+            auto [count, cert] = sturm_count_at_certified(Q_seq, pi.lambda);
+            if (!cert) {
+                double delta = 4.0 * DBL_EPSILON * std::max(1.0, std::abs(pi.lambda));
+                count = sturm_count_at(Q_seq, pi.lambda + delta);
+            }
+            int interval_idx = cc.n_Q_roots - count;
+            if (interval_idx >= 0 && interval_idx < (int)cc.intervals.size()) {
+                pi.interval_idx = interval_idx;
+                cc.intervals[interval_idx].n_pv++;
+            }
+        }
+    } else {
+        for (auto& pi : cc.punctures)
+            pi.interval_idx = 0;
+        cc.intervals[0].n_pv = (int)cc.punctures.size();
+    }
+
+    // ─── Step 5: Pairs from ExactPV2Result (moved before T-count) ─────
+    {
+        // Infinity merging (same logic as v1)
+        bool merge_infinity;
+        if (Q[3] == 0.0) {
+            merge_infinity = true;
+        } else {
+            int64_t q3 = llround(Q[3]);
+            merge_infinity = true;
+            for (int k = 0; k < 4; k++) {
+                int64_t pk3 = llround(P[k][3]);
+                if ((pk3 > 0 && q3 < 0) || (pk3 < 0 && q3 > 0)) {
+                    merge_infinity = false;
+                    break;
+                }
+            }
+        }
+
+        // Determine left/right interval sets for cross detection
+        int n_iv = (int)cc.intervals.size();
+        std::set<int> right_pis_set, left_pis_set;
+        if (merge_infinity && n_iv >= 2) {
+            for (int i = 0; i < (int)cc.punctures.size(); i++) {
+                if (cc.punctures[i].interval_idx == n_iv - 1)
+                    right_pis_set.insert(i);
+                if (cc.punctures[i].interval_idx == 0)
+                    left_pis_set.insert(i);
+            }
+        }
+
+        for (int i = 0; i < v2.n_pairs; i++) {
+            int a = v2.pairs[i].a, b = v2.pairs[i].b;
+            if (a >= (int)cc.punctures.size() || b >= (int)cc.punctures.size())
+                continue;  // safety
+            bool is_cross = merge_infinity &&
+                ((right_pis_set.count(a) && left_pis_set.count(b)) ||
+                 (left_pis_set.count(a) && right_pis_set.count(b)));
+            int iv_idx = cc.punctures[a].interval_idx;
+            cc.pairs.push_back({a, b, is_cross, iv_idx});
+        }
+
+        // Handle unpaired remainder (SR pass-through)
+        std::set<int> paired;
+        for (const auto& pp : cc.pairs) {
+            paired.insert(pp.pi_a);
+            paired.insert(pp.pi_b);
+        }
+        std::vector<int> unpaired;
+        for (int i = 0; i < (int)cc.punctures.size(); i++)
+            if (paired.find(i) == paired.end())
+                unpaired.push_back(i);
+        std::sort(unpaired.begin(), unpaired.end(), [&](int a, int b) {
+            double la = cc.punctures[a].lambda;
+            double lb = cc.punctures[b].lambda;
+            if (std::isinf(la) && std::isinf(lb)) return false;
+            if (std::isinf(la)) return false;
+            if (std::isinf(lb)) return true;
+            return la < lb;
+        });
+        for (int j = 0; j + 1 < (int)unpaired.size(); j += 2)
+            cc.pairs.push_back({unpaired[j], unpaired[j + 1], false, -1});
+    }
+
+    // ─── Step 6: D00/D01 detection and marking on punctures ──────────
+    // Detect D00 (PV vertex) and D01 (isolated edge puncture) BEFORE T-count
+    // so they can be excluded from T (which counts 1-manifold curve crossings).
+
+    // D00: vertex i where V[i] × W[i] = 0
+    struct PVVertInfo {
+        bool is_pv;
+        bool any_lambda;
+        int64_t lam_num, lam_den;
+    };
+    PVVertInfo pv_vi[4];
+    for (int i = 0; i < 4; i++) {
+        pv_vi[i] = {false, false, 0, 1};
+        const int* vi = gpu_v2.V[i];
+        const int* wi = gpu_v2.W[i];
+        int64_t cx = (int64_t)vi[1]*wi[2] - (int64_t)vi[2]*wi[1];
+        int64_t cy = (int64_t)vi[2]*wi[0] - (int64_t)vi[0]*wi[2];
+        int64_t cz = (int64_t)vi[0]*wi[1] - (int64_t)vi[1]*wi[0];
+        if (cx != 0 || cy != 0 || cz != 0) continue;
+        pv_vi[i].is_pv = true;
+        bool v_zero = (vi[0]==0 && vi[1]==0 && vi[2]==0);
+        bool w_zero = (wi[0]==0 && wi[1]==0 && wi[2]==0);
+        if (v_zero && w_zero) pv_vi[i].any_lambda = true;
+        else if (v_zero) { pv_vi[i].lam_num = 0; pv_vi[i].lam_den = 1; }
+        else if (w_zero) { pv_vi[i].lam_num = 1; pv_vi[i].lam_den = 0; }
+        else {
+            for (int k = 0; k < 3; k++)
+                if (wi[k] != 0) {
+                    pv_vi[i].lam_num = -vi[k];
+                    pv_vi[i].lam_den = wi[k];
+                    break;
+                }
+        }
+    }
+
+    auto lam_compat = [&](int a, int b) -> bool {
+        if (!pv_vi[a].is_pv || !pv_vi[b].is_pv) return false;
+        if (pv_vi[a].any_lambda || pv_vi[b].any_lambda) return true;
+        return pv_vi[a].lam_num * pv_vi[b].lam_den
+            == pv_vi[b].lam_num * pv_vi[a].lam_den;
+    };
+
+    bool has_D00 = false;
+    for (int i = 0; i < 4; i++)
+        if (pv_vi[i].is_pv) { has_D00 = true; break; }
+
+    // Mark vertex punctures as D00 (0-manifold isolated point at vertex)
+    if (has_D00) {
+        for (auto& pi : cc.punctures)
+            if (pi.is_vertex) pi.is_D00 = true;
+    }
+
+    // D01: edge puncture that is unpaired or paired with another on the same edge
+    bool has_D01 = false;
+    std::vector<int> edge_punct_indices;
+    for (int pi_idx = 0; pi_idx < (int)cc.punctures.size(); pi_idx++) {
+        const auto& pi = cc.punctures[pi_idx];
+        if (pi.is_edge && !std::isinf(pi.lambda) && pi.lambda != 0.0)
+            edge_punct_indices.push_back(pi_idx);
+    }
+    if (!edge_punct_indices.empty()) {
+        for (int ei : edge_punct_indices) {
+            const auto& pi = cc.punctures[ei];
+            bool paired_same_edge = false;
+            bool is_paired = false;
+            for (const auto& pp : cc.pairs) {
+                int partner = -1;
+                if (pp.pi_a == ei) { partner = pp.pi_b; is_paired = true; }
+                else if (pp.pi_b == ei) { partner = pp.pi_a; is_paired = true; }
+                if (partner < 0) continue;
+                const auto& pj = cc.punctures[partner];
+                if (pj.is_edge &&
+                    pi.tet_edge[0] == pj.tet_edge[0] &&
+                    pi.tet_edge[1] == pj.tet_edge[1])
+                    paired_same_edge = true;
+                break;
+            }
+            if (!is_paired || paired_same_edge) {
+                has_D01 = true;
+                cc.punctures[ei].is_D01 = true;
+                // Also mark partner if paired on same edge
+                if (paired_same_edge) {
+                    for (const auto& pp : cc.pairs) {
+                        int partner = -1;
+                        if (pp.pi_a == ei) partner = pp.pi_b;
+                        else if (pp.pi_b == ei) partner = pp.pi_a;
+                        if (partner >= 0) { cc.punctures[partner].is_D01 = true; break; }
+                    }
+                }
+            }
+        }
+    }
+
+    // ─── Step 7: Dmd detection (D11/D12/D22/D33) ─────────────────────
+    bool has_D11 = false;
+    static const int te[6][2] = {{0,1},{0,2},{0,3},{1,2},{1,3},{2,3}};
+    for (int e = 0; e < 6; e++)
+        if (lam_compat(te[e][0], te[e][1])) { has_D11 = true; break; }
+
+    bool has_D22 = false;
+    static const int tf[4][3] = {{1,2,3},{0,2,3},{0,1,3},{0,1,2}};
+    for (int f = 0; f < 4; f++)
+        if (lam_compat(tf[f][0], tf[f][1]) && lam_compat(tf[f][1], tf[f][2]))
+            { has_D22 = true; break; }
+
+    int n_total_punctures = (int)cc.punctures.size();
+
+    bool has_D12 = false;
+    for (int k = 0; k < 4; k++) {
+        if (!(P[k][0]==0.0 && P[k][1]==0.0 && P[k][2]==0.0 && P[k][3]==0.0))
+            continue;
+        __int128 q_lc = 0, p_lc[3] = {};
+        { int oi = 0;
+          for (int c = 3; c >= 0; c--) if ((__int128)llround(Q[c]) != 0) { q_lc = (__int128)llround(Q[c]); break; }
+          for (int j = 0; j < 4; j++) {
+              if (j == k) continue;
+              for (int c = 3; c >= 0; c--) if ((__int128)llround(P[j][c]) != 0) { p_lc[oi] = (__int128)llround(P[j][c]); break; }
+              oi++;
+          }
+        }
+        if (q_lc != 0) {
+            bool ok = true;
+            for (int j = 0; j < 3; j++)
+                if (p_lc[j] * q_lc < 0) { ok = false; break; }
+            if (ok) { has_D12 = true; break; }
+        }
+        if (n_total_punctures > 0) { has_D12 = true; break; }
+    }
+
+    bool has_D33 = lam_compat(0,1) && lam_compat(1,2) && lam_compat(2,3);
+
+    // ─── Step 8: T-count ───────────────────────────────────────────────
+    // T counts punctures that participate in PV curve segments (1-manifold).
+    // Excluded: isolated D00 (vertex PV point, 0-manifold),
+    //           isolated D01 (edge PV point, unpaired or same-edge paired).
+    // Included: all other punctures (face-interior, Cw2, non-isolated edge/vertex).
+    int n_face = 0;
+    // Recompute interval occupancy excluding isolated D00/D01
+    for (auto& iv : cc.intervals) iv.n_pv = 0;
+    for (int pi_idx = 0; pi_idx < (int)cc.punctures.size(); pi_idx++) {
+        const auto& pi = cc.punctures[pi_idx];
+        if (pi.is_D00 || pi.is_D01) continue;
+        n_face++;
+        if (pi.interval_idx >= 0 && pi.interval_idx < (int)cc.intervals.size())
+            cc.intervals[pi.interval_idx].n_pv++;
+    }
+
+    std::vector<int> occ;
+    for (auto& iv : cc.intervals)
+        if (iv.n_pv > 0) occ.push_back(iv.n_pv);
+    std::sort(occ.begin(), occ.end());
+
+    std::string t_type = "T" + std::to_string(n_face);
+    if (occ.size() > 1) {
+        t_type += "_(";
+        for (size_t i = 0; i < occ.size(); i++) {
+            if (i > 0) t_type += ",";
+            t_type += std::to_string(occ[i]);
+        }
+        t_type += ")";
+    }
+    cc.category = t_type + "_" + q_type;
+
+    // ─── Step 9: Tags ─────────────────────────────────────────────────
+    std::vector<std::string> tags;
+
+    // ── SR/ISR: shared-root classification ──
+    if (cc.has_shared_root) {
+        // Use Q_i128/P_i128 directly (from compute_tet_QP_i128, no llround overflow)
+        __int128 g[4];
+        int dg;
+        for (int i = 0; i < 4; i++) g[i] = Q_i128[i];
+        dg = ftk2::effective_degree_i128(Q_i128, 3);
+        for (int k = 0; k < 4 && dg >= 1; k++) {
+            int dk = ftk2::effective_degree_i128(P_i128[k], 3);
+            if (dk == 0 && P_i128[k][0] == 0) continue;
+            __int128 g2[4] = {};
+            dg = ftk2::poly_gcd_full_i128(g, dg, P_i128[k], dk, g2);
+            for (int i = 0; i < 4; i++) g[i] = g2[i];
+        }
+
+        bool any_in_tet = false;
+        cc.has_non_isolated_sr = false;
+
+        if (dg >= 1) {
+            int dQi = ftk2::effective_degree_i128(Q_i128, 3);
+            __int128 Qr[4] = {};
+            int dQr = ftk2::poly_exact_div_i128(Q_i128, dQi, g, dg, Qr);
+            __int128 Pr[4][4] = {};
+            int dPr[4] = {};
+            for (int k = 0; k < 4; k++) {
+                int dk = ftk2::effective_degree_i128(P_i128[k], 3);
+                if (dk == 0 && P_i128[k][0] == 0) {
+                    dPr[k] = 0; Pr[k][0] = 0;
+                } else {
+                    dPr[k] = ftk2::poly_exact_div_i128(P_i128[k], dk, g, dg, Pr[k]);
+                }
+            }
+
+            if (dg == 1) {
+                auto eval_at_root = [&](__int128* f, int df) -> int {
+                    __int128 val = 0;
+                    __int128 neg_g0_pow = 1;
+                    __int128 g1_pow_desc = 1;
+                    for (int i = 0; i < df; i++) g1_pow_desc *= g[1];
+                    for (int i = 0; i <= df; i++) {
+                        val += f[i] * neg_g0_pow * g1_pow_desc;
+                        neg_g0_pow *= (-g[0]);
+                        if (i < df) g1_pow_desc /= g[1];
+                    }
+                    int g1_sign = (g[1] > 0) ? 1 : -1;
+                    int factor = (df % 2 == 0) ? 1 : g1_sign;
+                    return (val > 0) ? factor : (val < 0) ? -factor : 0;
+                };
+                int sq = eval_at_root(Qr, dQr);
+                if (sq != 0) {
+                    bool in_tet = true;
+                    for (int k = 0; k < 4; k++) {
+                        if (dPr[k] == 0 && Pr[k][0] == 0) continue;
+                        int sp = eval_at_root(Pr[k], dPr[k]);
+                        if (sp * sq < 0) { in_tet = false; break; }
+                    }
+                    if (in_tet) any_in_tet = true;
+                }
+            } else {
+                int sq[4] = {};
+                int nrg = ftk2::signs_at_roots_i128(g, dg, Qr, dQr, sq, 4);
+                if (nrg > 0) {
+                    for (int ri = 0; ri < nrg; ri++) {
+                        if (sq[ri] == 0) continue;
+                        bool in_tet = true;
+                        for (int k = 0; k < 4; k++) {
+                            if (dPr[k] == 0 && Pr[k][0] == 0) continue;
+                            int spk[4] = {};
+                            ftk2::signs_at_roots_i128(g, dg, Pr[k], dPr[k], spk, 4);
+                            if (spk[ri] * sq[ri] < 0) { in_tet = false; break; }
+                        }
+                        if (in_tet) { any_in_tet = true; break; }
+                    }
+                }
+            }
+            if (dg >= 2) cc.has_non_isolated_sr = true;
+        }
+
+        if (any_in_tet) {
+            tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
+            cc.n_sr_roots = 0;
+            for (int qi = 0; qi < cc.n_Q_roots && cc.n_sr_roots < 3; qi++) {
+                double r = cc.Q_roots[qi];
+                double gval = 0, gscale = 0;
+                for (int j = 0; j <= dg; j++) {
+                    double gj = (double)g[j];
+                    double rpow = 1.0;
+                    for (int p = 0; p < j; p++) rpow *= r;
+                    gval += gj * rpow;
+                    gscale += std::abs(gj * rpow);
+                }
+                bool is_root = (std::abs(gval) < 1e-10) ||
+                               (gscale > 0 && std::abs(gval) / gscale < 1e-6);
+                if (is_root)
+                    cc.sr_q_root_idx[cc.n_sr_roots++] = qi;
+            }
+        } else {
+            cc.has_shared_root = false;
+        }
+    }
+
+    // ── Cv/Cw: critical-point degeneracies ──
+    // Interior v=0 / w=0 (independent of punctures)
+    bool has_Cv = check_field_zero_in_tet(gpu_v2.V, cc.Cv_mu);
+    bool has_Cw = check_field_zero_in_tet(gpu_v2.W, cc.Cw_mu);
+    cc.has_Cv_pos = has_Cv;
+    cc.has_Cw_pos = has_Cw;
+
+    // Face/edge/vertex crossings at λ=0 and λ=∞ (from integer P coefficients).
+    // V2 excludes Cv1/Cv0/Cw1/Cw0 punctures — detect from polynomials.
+    bool has_C2v = false, has_C1v = false, has_C0v = false;
+    bool has_C2w = false, has_C1w = false, has_C0w = false;
+
+    // λ=0 crossings: face i when P[i][0]=0 with Q[0]≠0
+    {
+        __int128 q0 = Q_i128[0];
+        if (q0 != 0) {
+            for (int i = 0; i < 4; i++) {
+                if (P_i128[i][0] != 0) continue;
+                bool inside = true;
+                for (int j = 0; j < 4; j++) {
+                    if (j == i) continue;
+                    __int128 pj0 = P_i128[j][0];
+                    if ((pj0 > 0 && q0 < 0) || (pj0 < 0 && q0 > 0))
+                        { inside = false; break; }
+                }
+                if (!inside) continue;
+                int nz = 0;
+                for (int k = 0; k < 3; k++)
+                    if (P_i128[fv[i][k]][0] == 0) nz++;
+                if (nz == 2) has_C0v = true;
+                else if (nz == 1) has_C1v = true;
+                else has_C2v = true;
+            }
+        }
+    }
+    // λ=∞ crossings: face i when P[i][3]=0 with Q[3]≠0
+    {
+        __int128 q3 = Q_i128[3];
+        if (q3 != 0) {
+            for (int i = 0; i < 4; i++) {
+                if (P_i128[i][3] != 0) continue;
+                bool inside = true;
+                for (int j = 0; j < 4; j++) {
+                    if (j == i) continue;
+                    __int128 pj3 = P_i128[j][3];
+                    if ((pj3 > 0 && q3 < 0) || (pj3 < 0 && q3 > 0))
+                        { inside = false; break; }
+                }
+                if (!inside) continue;
+                int nz = 0;
+                for (int k = 0; k < 3; k++)
+                    if (P_i128[fv[i][k]][3] == 0) nz++;
+                if (nz == 2) has_C0w = true;
+                else if (nz == 1) has_C1w = true;
+                else has_C2w = true;
+            }
+        }
+    }
+
+    // Emit Cv{d}/Cw{d} tag (most specific wins)
+    if (has_Cv || has_C2v || has_C1v || has_C0v) {
+        if (has_C0v)      tags.push_back("Cv0");
+        else if (has_C1v) tags.push_back("Cv1");
+        else if (has_C2v) tags.push_back("Cv2");
+        else              tags.push_back("Cv");
+    }
+    if (has_Cw || has_C2w || has_C1w || has_C0w) {
+        if (has_C0w)      tags.push_back("Cw0");
+        else if (has_C1w) tags.push_back("Cw1");
+        else if (has_C2w) tags.push_back("Cw2");
+        else              tags.push_back("Cw");
+    }
+
+    // ── TN tag: tangency (disc(P_k) = 0, repeated root) ──
+    {
+        // Compute disc_sign on CPU from unquantized P coefficients (max ~50000
+        // at R=20, fits __int128 easily).  GPU disc_sign overflows at R≥20
+        // because quantized P_i128 coefficients are ~10^18.
+        int disc_sign_cpu[4];
+        for (int k = 0; k < 4; k++) {
+            __int128 Pk_cpu[4];
+            for (int j = 0; j < 4; j++) Pk_cpu[j] = (__int128)llround(P[k][j]);
+            disc_sign_cpu[k] = ftk2::discriminant_sign_i128(Pk_cpu);
+        }
+
+        bool has_TN = false;
+        for (int k = 0; k < 4; k++) {
+            int degk = effective_degree_i128(P_i128[k], 3);
+            if (degk < 2 || disc_sign_cpu[k] != 0)
+                continue;
+
+            __int128 Pk_prime[4] = {P_i128[k][1], 2*P_i128[k][2], 3*P_i128[k][3], 0};
+            int dk_prime = degk - 1;
+            while (dk_prime > 0 && Pk_prime[dk_prime] == 0) dk_prime--;
+
+            __int128 h[4] = {};
+            int dh = ftk2::poly_gcd_full_i128(P_i128[k], degk, Pk_prime, dk_prime, h);
+            if (dh < 1) continue;
+
+            if (dh == 1) {
+                auto eval_at_root_h = [&](__int128* f, int df) -> int {
+                    __int128 val = 0;
+                    __int128 neg_h0_pow = 1;
+                    __int128 h1_pow_desc = 1;
+                    for (int i = 0; i < df; i++) h1_pow_desc *= h[1];
+                    for (int i = 0; i <= df; i++) {
+                        val += f[i] * neg_h0_pow * h1_pow_desc;
+                        neg_h0_pow *= (-h[0]);
+                        if (i < df) h1_pow_desc /= h[1];
+                    }
+                    int h1_sign = (h[1] > 0) ? 1 : -1;
+                    int factor = (df % 2 == 0) ? 1 : h1_sign;
+                    return (val > 0) ? factor : (val < 0) ? -factor : 0;
+                };
+
+                // Use Q_i128 directly (from compute_tet_QP_i128)
+                __int128 Q_tn_copy[4] = {Q_i128[0], Q_i128[1], Q_i128[2], Q_i128[3]};
+                int edQ = ftk2::effective_degree_i128(Q_i128, 3);
+                int sq = eval_at_root_h(Q_tn_copy, edQ);
+                if (sq == 0) continue;
+
+                bool in_tet = true;
+                for (int j = 0; j < 4; j++) {
+                    if (j == k) continue;
+                    __int128 Pj_copy[4] = {P_i128[j][0], P_i128[j][1], P_i128[j][2], P_i128[j][3]};
+                    int edj = ftk2::effective_degree_i128(P_i128[j], 3);
+                    if (edj == 0 && P_i128[j][0] == 0) continue;
+                    int sp = eval_at_root_h(Pj_copy, edj);
+                    if (sp * sq < 0) { in_tet = false; break; }
+                }
+                if (!in_tet) continue;
+
+                has_TN = true;
+                double lam_tn = -(double)h[0] / (double)h[1];
+                double bary[3] = {};
+                double Qval = Q[0] + Q[1]*lam_tn + Q[2]*lam_tn*lam_tn + Q[3]*lam_tn*lam_tn*lam_tn;
+                if (std::abs(Qval) > 1e-20) {
+                    static const int face_verts[4][3] = {{1,2,3},{0,2,3},{0,1,3},{0,1,2}};
+                    for (int fi = 0; fi < 3; fi++) {
+                        int j = face_verts[k][fi];
+                        double Pj = P[j][0] + P[j][1]*lam_tn + P[j][2]*lam_tn*lam_tn + P[j][3]*lam_tn*lam_tn*lam_tn;
+                        bary[fi] = Pj / Qval;
+                    }
+                }
+                if (cc.n_tn < 4) {
+                    cc.tn_points[cc.n_tn].face = k;
+                    cc.tn_points[cc.n_tn].lambda = lam_tn;
+                    for (int fi = 0; fi < 3; fi++)
+                        cc.tn_points[cc.n_tn].bary[fi] = bary[fi];
+                    cc.n_tn++;
+                }
+            }
+        }
+        if (has_TN) tags.push_back("TN");
+    }
+
+    // ── Dmd tags ──
+    if (has_D33)           tags.push_back("D33");
+    else if (has_D22)      tags.push_back("D22");
+    else if (has_D12)      tags.push_back("D12");
+    else if (has_D11)      tags.push_back("D11");
+    else if (has_D01)      tags.push_back("D01");
+    else if (has_D00)      tags.push_back("D00");
+
+    // B: bubble (T0, closed PV curve inside tet)
+    if (n_face == 0 && cc.n_Q_roots == 0 && Q[0] != 0.0) {
+        bool inside = true;
+        for (int k = 0; k < 4; k++)
+            if (P[k][0] / Q[0] <= 0) { inside = false; break; }
+        if (inside) { cc.has_B = true; tags.push_back("B"); }
+    }
+
+    // Join tags
+    for (size_t i = 0; i < tags.size(); i++)
+        cc.category += "_" + tags[i];
+
+    return cc;
+}
+
 // ─── JSON output ────────────────────────────────────────────────────────────
 
 static void print_json(const ClassifiedCase& cc) {
@@ -1800,6 +2690,7 @@ static void print_json(const ClassifiedCase& cc) {
     printf("\"seed\":%lu,", (unsigned long)cc.gpu.seed);
     printf("\"category\":\"%s\",", cc.category.c_str());
     auto is_waypoint_out = [](const ClassifiedCase::PunctureInfo& pi) {
+        if (pi.is_passthrough) return true;
         return (pi.is_edge || pi.is_vertex) &&
                (pi.lambda == 0.0 || std::isinf(pi.lambda));
     };
@@ -1876,10 +2767,17 @@ static void print_json(const ClassifiedCase& cc) {
         else printf("%.15g", pi.lambda);
         printf(",\"bary\":[%.15g,%.15g,%.15g],\"interval\":%d",
                pi.bary[0], pi.bary[1], pi.bary[2], pi.interval_idx);
-        if (pi.is_edge)
+        if (pi.is_edge) {
             printf(",\"is_edge\":true,\"tet_edge\":[%d,%d]", pi.tet_edge[0], pi.tet_edge[1]);
+            if (pi.is_passthrough)
+                printf(",\"is_passthrough\":true");
+        }
         if (pi.is_vertex)
             printf(",\"is_vertex\":true,\"tet_vertex\":%d", pi.tet_vertex);
+        if (pi.is_D00)
+            printf(",\"is_D00\":true");
+        if (pi.is_D01)
+            printf(",\"is_D01\":true");
         printf("}");
         if (i + 1 < cc.punctures.size()) printf(",");
     }
@@ -1939,16 +2837,18 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     int n = (int)cc.punctures.size();
 
     // ── 1. Puncture-interval consistency ──────────────────────────────────
-    // Waypoints = edge/vertex at critical λ (0 or ∞) only.
+    // Waypoints = edge/vertex at critical λ (0 or ∞), or pass-through edge.
     auto is_waypoint = [](const ClassifiedCase::PunctureInfo& pi) {
+        if (pi.is_passthrough) return true;
         return (pi.is_edge || pi.is_vertex) &&
                (pi.lambda == 0.0 || std::isinf(pi.lambda));
     };
     int sum_iv_npv = 0;
     for (const auto& iv : cc.intervals) sum_iv_npv += iv.n_pv;
+    // n_face_check: T-count (excludes isolated D00/D01)
     int n_face_check = 0;
     for (const auto& pi : cc.punctures)
-        if (!is_waypoint(pi)) n_face_check++;
+        if (!pi.is_D00 && !pi.is_D01) n_face_check++;
     if (sum_iv_npv != n_face_check)
         fprintf(stderr, "[WARN seed=%lu] Σ interval.n_pv=%d ≠ n_face=%d\n",
                 (unsigned long)seed, sum_iv_npv, n_face_check);
@@ -1977,6 +2877,7 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     // puncture (the curve enters/exits via SR passage instead of face
     // crossing).  The discrepancy (n_face - 2×pairs) must be ≤ the
     // number of Q-roots that are shared with at least one P_k.
+    // n_face counts ALL non-waypoint punctures (for pair completeness check)
     int n_face = 0;
     for (const auto& pi : cc.punctures)
         if (!is_waypoint(pi)) n_face++;
@@ -2025,7 +2926,7 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
     }
 
     // ── 3. Category-data consistency ─────────────────────────────────────
-    // T-number should match n_punctures
+    // T-number should match total puncture count (all interval endpoints)
     {
         std::string cat = cc.category;
         // Extract T number from "T{n}_..." or "T{n}_(..."
@@ -2035,9 +2936,9 @@ static void verify_case(const ClassifiedCase& cc, const double Q[4], const doubl
             size_t i = t_pos + 1;
             while (i < cat.size() && cat[i] >= '0' && cat[i] <= '9')
                 t_num = t_num * 10 + (cat[i++] - '0');
-            if (t_num != n_face)
+            if (t_num != n_face_check)
                 fprintf(stderr, "[WARN seed=%lu] T-number=%d but n_face=%d (n_total=%d)\n",
-                        (unsigned long)seed, t_num, n_face, n);
+                        (unsigned long)seed, t_num, n_face_check, n);
         }
     }
 
@@ -2512,36 +3413,9 @@ int main(int argc, char** argv)
             CUDA_CHECK(cudaMemcpy(h_v2.data(), d_output_v2,
                                   h_count * sizeof(TetCaseV2GPU), cudaMemcpyDeviceToHost));
 
-            // CPU classification: reconstruct TetCaseGPU from V,W, then classify
+            // Pure-integer classification from ExactPV2Result (no re-solve)
             for (int i = 0; i < h_count && total_found < max_cases; i++) {
-                TetCaseGPU tc;
-                memset(&tc, 0, sizeof(tc));
-                for (int vi = 0; vi < 4; vi++)
-                    for (int ci = 0; ci < 3; ci++) {
-                        tc.V[vi][ci] = h_v2[i].V[vi][ci];
-                        tc.W[vi][ci] = h_v2[i].W[vi][ci];
-                    }
-                // Re-solve faces on CPU for classify_case (it needs PunctureResult)
-                static const int fv[4][3] = {{1,3,2},{0,2,3},{0,3,1},{0,1,2}};
-                tc.total_punctures = 0;
-                for (int fi = 0; fi < 4; fi++) {
-                    double Vf[3][3], Wf[3][3];
-                    for (int vi = 0; vi < 3; vi++)
-                        for (int ci = 0; ci < 3; ci++) {
-                            Vf[vi][ci] = (double)tc.V[fv[fi][vi]][ci];
-                            Wf[vi][ci] = (double)tc.W[fv[fi][vi]][ci];
-                        }
-                    uint64_t indices[3] = {
-                        (uint64_t)fv[fi][0], (uint64_t)fv[fi][1], (uint64_t)fv[fi][2]
-                    };
-                    uint64_t tet_fourth = (uint64_t)fi;
-                    tc.face[fi] = solve_pv_triangle_device(Vf, Wf, indices, tet_fourth);
-                    if (tc.face[fi].count > 0 && tc.face[fi].count < INT_MAX)
-                        tc.total_punctures += tc.face[fi].count;
-                }
-                tc.seed = h_v2[i].seed;
-
-                ClassifiedCase cc = classify_case(tc);
+                ClassifiedCase cc = classify_case_v2(h_v2[i]);
                 verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
                 category_counts[cc.category]++;
                 print_json(cc);
