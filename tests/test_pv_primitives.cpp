@@ -436,8 +436,9 @@ void test_solve_v2_seed4984() {
     ASSERT_EQ(Q[3], (__int128)0);
 
     ExactPV2Result result = solve_pv_tet_v2(Q, P);
-    ASSERT_EQ(result.n_punctures, 1);
-    ASSERT_EQ(result.n_pairs, 0);
+    // 1 face puncture + 1 Cw1 edge at ∞ (now included), paired cross-infinity
+    ASSERT_EQ(result.n_punctures, 2);
+    ASSERT_EQ(result.n_pairs, 1);
 }
 
 void test_solve_v2_seed6247() {

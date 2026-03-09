@@ -1965,12 +1965,8 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
 
         // Float lambda from root_idx
         if (vp.root_idx < 0) {
-            ci.lambda = INFINITY;  // infinity puncture (Cw2)
-            // Guard: v2 solver may spuriously set edge/vertex flags on infinity
-            // punctures (root_idx=-1 causes signs_at_roots_i128[-1] UB in step 3).
-            // Cw2 face-interior infinity punctures must NOT be edge/vertex.
-            ci.is_edge = false;
-            ci.is_vertex = false;
+            ci.lambda = INFINITY;  // infinity puncture (Cw2 or Cw1 edge)
+            // Solver Steps 3/4 have is_infinity guards → is_edge is intentional (Cw1)
         } else if (vp.root_idx < face_n_distinct[vp.face]) {
             ci.lambda = face_roots[vp.face][vp.root_idx];
         } else {
@@ -2666,23 +2662,30 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         }
         // Cw at λ→∞: "derivative" analog is P[k][d_Q-1]
         if (has_C0w || has_C1w) {
-            int d_Q = 3;
-            while (d_Q > 0 && Q_i128[d_Q] == 0) d_Q--;
-            int cw_faces[4] = {}, ncw = 0;
-            for (int k = 0; k < 4; k++)
-                if (P_i128[k][d_Q] == 0) cw_faces[ncw++] = k;
-            bool is_pt = false;
-            if (d_Q >= 1) {
-                for (int a = 0; a < ncw && !is_pt; a++)
-                    for (int b = a+1; b < ncw && !is_pt; b++)
-                        if (P_i128[cw_faces[a]][d_Q-1] * P_i128[cw_faces[b]][d_Q-1] < 0)
-                            is_pt = true;
-            }
-            if (!is_pt) {
-                int last_iv = (int)cc.intervals.size() - 1;
-                if (last_iv >= 0) {
-                    cc.intervals[last_iv].n_pv++;
-                    n_face++;
+            // Check if the solver already added the Cw1 as a puncture
+            bool cw_in_punctures = false;
+            for (const auto& pi : cc.punctures)
+                if (std::isinf(pi.lambda) && pi.is_edge) { cw_in_punctures = true; break; }
+
+            if (!cw_in_punctures) {
+                int d_Q = 3;
+                while (d_Q > 0 && Q_i128[d_Q] == 0) d_Q--;
+                int cw_faces[4] = {}, ncw = 0;
+                for (int k = 0; k < 4; k++)
+                    if (P_i128[k][d_Q] == 0) cw_faces[ncw++] = k;
+                bool is_pt = false;
+                if (d_Q >= 1) {
+                    for (int a = 0; a < ncw && !is_pt; a++)
+                        for (int b = a+1; b < ncw && !is_pt; b++)
+                            if (P_i128[cw_faces[a]][d_Q-1] * P_i128[cw_faces[b]][d_Q-1] < 0)
+                                is_pt = true;
+                }
+                if (!is_pt) {
+                    int last_iv = (int)cc.intervals.size() - 1;
+                    if (last_iv >= 0) {
+                        cc.intervals[last_iv].n_pv++;
+                        n_face++;
+                    }
                 }
             }
         }

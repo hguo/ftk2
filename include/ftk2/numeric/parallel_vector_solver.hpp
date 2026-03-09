@@ -3932,11 +3932,42 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                             else if (s != first_sign3) { valid_inf = false; break; }
                         }
                     }
-                    // Only add face-INTERIOR infinity punctures (Cw2).
-                    // Edge/vertex infinity punctures (Cw1/Cw0) are waypoints — not paired.
                     if (!valid_inf || first_sign3 == 0) continue;
-                    if (n_zero3 >= 1) continue;  // edge/vertex at ∞ → Cw1/Cw0 waypoint, skip
+                    if (n_zero3 >= 2) continue;  // Cw0 (vertex at ∞) — skip
 
+                    if (n_zero3 == 1) {
+                        // Cw1 (edge at ∞): include if non-pass-through.
+                        // Find the other zero-leading face j.
+                        int j_zero = -1;
+                        for (int j = 0; j < 4; j++) {
+                            if (j == k) continue;
+                            if (P[j][d_Q] == 0) { j_zero = j; break; }
+                        }
+                        if (j_zero < 0) continue;
+                        if (k > j_zero) continue;  // dedup: only add for smaller k
+
+                        // Pass-through check: P[k][d_Q-1] * P[j][d_Q-1] < 0 → pass-through
+                        __int128 pk_sub = (d_Q >= 1) ? P[k][d_Q - 1] : 0;
+                        __int128 pj_sub = (d_Q >= 1) ? P[j_zero][d_Q - 1] : 0;
+                        if (pk_sub * pj_sub < 0) continue;  // pass-through
+                        if (pk_sub == 0 || pj_sub == 0) continue;  // degenerate
+
+                        if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
+                        RootInfo& ri_info = all_roots[n_all];
+                        ri_info.face = k;
+                        ri_info.root_idx = -1;
+                        ri_info.q_interval = -1;
+                        ri_info.valid = true;
+                        ri_info.is_edge = true;
+                        ri_info.is_vertex = false;
+                        ri_info.is_infinity = true;
+                        ri_info.edge_faces[0] = k < j_zero ? k : j_zero;
+                        ri_info.edge_faces[1] = k < j_zero ? j_zero : k;
+                        n_all++;
+                        continue;
+                    }
+
+                    // Cw2 (face-interior at ∞)
                     if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
                     RootInfo& ri_info = all_roots[n_all];
                     ri_info.face = k;
