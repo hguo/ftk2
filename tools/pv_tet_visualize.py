@@ -380,105 +380,62 @@ def _find_segment_for_lambda(lam, segments):
 
 
 def draw_special_points(ax, case_data, segments=None):
-    """Draw D00, D01, Cv, Cw, SR markers."""
+    """Draw D00, D01, Cv, Cw, SR, TN markers — merging co-located tags."""
     category = case_data['category']
     if segments is None:
         segments = []
+    cv_cw_default = '#008800'  # green fallback
 
-    # D01: punctures on tet edge (from C++ is_edge flag)
+    # ── Collect annotations: (pos, tag, lam_str, color, bg_color,
+    #    marker, marker_size, marker_color) ──
+    annots = []
+
+    # D01: punctures on tet edge
     if 'D01' in category:
-        punctures = case_data['punctures']
-        d01_offsets = [
-            np.array([0.10, 0.08, 0.10]),
-            np.array([-0.10, -0.06, 0.12]),
-            np.array([0.08, -0.10, 0.10]),
-            np.array([-0.08, 0.10, 0.12]),
-        ]
-        d01_count = 0
-        for i, pi in enumerate(punctures):
+        for pi in case_data['punctures']:
             if not pi.get('is_edge', False):
                 continue
             pos = bary_to_3d(pi['bary'], pi['face'])
             lam = pi['lambda']
-            lam_str = f'$\\lambda={lam:.2f}$' if lam is not None else r'$\lambda=\infty$'
-            off = d01_offsets[d01_count % len(d01_offsets)]
-            d01_count += 1
-            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
-                      [pos[2], pos[2]+off[2]],
-                      color='#dd5500', linewidth=1.2, linestyle='-')
-            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    f'D01  {lam_str}',
-                    fontsize=8, ha='left' if off[0] > 0 else 'right',
-                    va='bottom',
-                    color='#aa4400', fontweight='bold',
-                    bbox=dict(facecolor='#fff4ee', alpha=0.9,
-                              edgecolor='#dd5500', linewidth=1.2,
-                              boxstyle='round,pad=0.3'))
+            lam_str = (f'$\\lambda={lam:.2f}$' if lam is not None
+                       else r'$\lambda\!\to\!\infty$')
+            annots.append(dict(pos=pos, tag='D01', lam_str=lam_str,
+                               color='#dd5500', bg='#fff4ee',
+                               marker='v', ms=80, mc='#dd5500'))
 
     # D00: vertices where V x W = 0
     if 'D00' in category:
-        d00_verts = find_d00_vertices(case_data)
-        for vi in d00_verts:
+        for vi in find_d00_vertices(case_data):
             p = TET_VERTS[vi]
-            # Magenta square (consistent with lambda-ring D00 marker)
-            ax.scatter(p[0], p[1], p[2], c='#9900cc', s=100, marker='s',
-                       zorder=10, edgecolors='black', linewidth=1.0)
-            # Leader line from offset annotation to point
-            off = np.array([0.08, 0.08, 0.12])
-            ax.plot3D([p[0], p[0]+off[0]], [p[1], p[1]+off[1]],
-                      [p[2], p[2]+off[2]],
-                      color='#cc00cc', linewidth=1.2, linestyle='-')
-            # D00 is at a vertex; lambda depends on which field vanishes
-            # V[i]×W[i]=0 means V∥W, so lambda = -|V|/|W| or |V|/|W|
-            # More precisely: v(λ)=V+λW=0 at vertex i → λ = -V[i]/W[i]
             Vi = np.array(case_data['V'][vi], dtype=float)
             Wi = np.array(case_data['W'][vi], dtype=float)
-            # Find λ from any nonzero component
             d00_lam = None
             for comp in range(3):
                 if Wi[comp] != 0:
                     d00_lam = -Vi[comp] / Wi[comp]
                     break
-            if d00_lam is not None:
-                lam_str = f'$\\lambda={d00_lam:.2f}$'
-            else:
-                lam_str = r'$\lambda=?$'
-            ax.text(p[0]+off[0], p[1]+off[1], p[2]+off[2]+0.01,
-                    lam_str,
-                    fontsize=8, ha='left', va='bottom',
-                    color='#cc00cc', fontweight='bold',
-                    bbox=dict(facecolor='white', alpha=0.9,
-                              edgecolor='#cc00cc', linewidth=1.2,
-                              boxstyle='round,pad=0.3'))
+            lam_str = (f'$\\lambda={d00_lam:.2f}$' if d00_lam is not None
+                       else r'$\lambda=?$')
+            annots.append(dict(pos=p, tag='D00', lam_str=lam_str,
+                               color='#cc00cc', bg='white',
+                               marker='s', ms=100, mc='#9900cc'))
 
-    # Cv/Cv2/Cv1/Cv0: critical point of v at lambda=0
-    cv_cw_default = '#008800'  # green fallback
-    # Extract specific Cv tag from category (Cv0, Cv1, Cv2, or Cv)
+    # Cv/Cv2/Cv1/Cv0
     cv_tag = None
     cv_m = re.search(r'(?:^|_)Cv(\d?)(?=_|$)', category)
     if cv_m:
-        cv_tag = 'Cv' + cv_m.group(1)  # e.g. "Cv1", "Cv2", or "Cv"
+        cv_tag = 'Cv' + cv_m.group(1)
     if cv_tag:
         pos = compute_cv_position(case_data)
         if pos is not None:
             seg_color = _find_segment_for_lambda(0.0, segments)
             cv_color = seg_color if seg_color != '#333333' else cv_cw_default
-            ax.scatter(pos[0], pos[1], pos[2], c=cv_color, s=200,
-                       marker='*', zorder=10, edgecolors='black',
-                       linewidth=1.0)
-            off = np.array([-0.08, 0.08, 0.10])
-            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
-                      [pos[2], pos[2]+off[2]],
-                      color=cv_color, linewidth=1.2, linestyle='-')
-            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    cv_tag + r' ($\lambda=0$)',
-                    fontsize=8, ha='right', va='bottom',
-                    color=cv_color, fontweight='bold',
-                    bbox=dict(facecolor='#eeffee', alpha=0.9,
-                              edgecolor=cv_color, linewidth=1.2,
-                              boxstyle='round,pad=0.3'))
+            annots.append(dict(pos=pos, tag=cv_tag,
+                               lam_str=r'$\lambda=0$',
+                               color=cv_color, bg='#eeffee',
+                               marker='*', ms=200, mc=cv_color))
 
-    # Cw/Cw2/Cw1/Cw0: critical point of w at lambda->inf
+    # Cw/Cw2/Cw1/Cw0
     cw_tag = None
     cw_m = re.search(r'(?:^|_)Cw(\d?)(?=_|$)', category)
     if cw_m:
@@ -492,39 +449,22 @@ def draw_special_points(ax, case_data, segments=None):
                     seg['lam_entry'] is None or seg['lam_exit'] is None):
                     cw_color = seg['color']
                     break
-            ax.scatter(pos[0], pos[1], pos[2], c=cw_color, s=200,
-                       marker='*', zorder=10, edgecolors='black',
-                       linewidth=1.0)
-            off = np.array([0.10, -0.06, 0.10])
-            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
-                      [pos[2], pos[2]+off[2]],
-                      color=cw_color, linewidth=1.2, linestyle='-')
-            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    cw_tag + r' ($\lambda \to \infty$)',
-                    fontsize=8, ha='left', va='bottom',
-                    color=cw_color, fontweight='bold',
-                    bbox=dict(facecolor='#eeffee', alpha=0.9,
-                              edgecolor=cw_color, linewidth=1.2,
-                              boxstyle='round,pad=0.3'))
+            annots.append(dict(pos=pos, tag=cw_tag,
+                               lam_str=r'$\lambda\!\to\!\infty$',
+                               color=cw_color, bg='#eeffee',
+                               marker='*', ms=200, mc=cw_color))
 
-
-    # SR/ISR: shared root — use C++ sr_q_root_indices (no float re-derivation)
+    # SR/ISR
     sr_label_prefix = 'ISR' if 'ISR' in category else 'SR'
     sr_q_indices = case_data.get('sr_q_root_indices', [])
     if 'SR' in category and sr_q_indices:
         Q = case_data['Q_coeffs']
         P = case_data['P_coeffs']
         Q_roots = case_data.get('Q_roots', [])
-        sr_offsets = [
-            np.array([0.06, 0.10, 0.08]),
-            np.array([-0.08, 0.06, 0.12]),
-            np.array([0.10, -0.06, 0.10]),
-        ]
         for si, qi in enumerate(sr_q_indices):
             if qi >= len(Q_roots):
                 continue
             qr = Q_roots[qi]
-            # Compute 3D position via L'Hopital: μ_k = P_k'(λ)/Q'(λ)
             Q_prime = [Q[j] * j for j in range(1, len(Q))]
             Qp_val = poly_eval(Q_prime, qr)
             if abs(Qp_val) < 1e-20:
@@ -538,53 +478,78 @@ def draw_special_points(ax, case_data, segments=None):
             if s > 1e-10:
                 mu_clip /= s
             pos = bary_tet_to_3d(mu_clip)
-            ax.scatter(pos[0], pos[1], pos[2], c='#ff8800', s=180,
-                       marker='D', zorder=10, edgecolors='black',
-                       linewidth=1.0)
-            off = sr_offsets[si % len(sr_offsets)]
-            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
-                      [pos[2], pos[2]+off[2]],
-                      color='#ff8800', linewidth=1.2, linestyle='-')
-            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    f'{sr_label_prefix} ($\\lambda={qr:.2f}$)',
-                    fontsize=8, ha='left', va='bottom',
-                    color='#cc6600', fontweight='bold',
-                    bbox=dict(facecolor='#fff8ee', alpha=0.9,
-                              edgecolor='#ff8800', linewidth=1.2,
-                              boxstyle='round,pad=0.3'))
+            annots.append(dict(pos=pos, tag=sr_label_prefix,
+                               lam_str=f'$\\lambda={qr:.2f}$',
+                               color='#ff8800', bg='#fff8ee',
+                               marker='D', ms=180, mc='#ff8800'))
 
-
-    # TN: tangency points (disc(P_k) = 0, repeated root)
+    # TN: tangency
     tn_points = case_data.get('tn_points', [])
     if 'TN' in category and tn_points:
-        tn_color = '#9933cc'  # purple
-        tn_offsets = [
-            np.array([0.08, -0.08, 0.06]),
-            np.array([-0.06, 0.10, 0.08]),
-            np.array([0.10, 0.06, 0.04]),
-            np.array([-0.08, -0.06, 0.10]),
-        ]
-        for ti, tn in enumerate(tn_points):
-            bary = tn['bary']
-            # C++ already filters out-of-tet TN points
-            pos = bary_to_3d(bary, tn['face'])
-            # Find segment color at this λ
+        tn_color = '#9933cc'
+        for tn in tn_points:
+            pos = bary_to_3d(tn['bary'], tn['face'])
             seg_color = _find_segment_for_lambda(tn['lambda'], segments)
-            marker_color = seg_color if seg_color != '#333333' else tn_color
-            ax.scatter(pos[0], pos[1], pos[2], c=marker_color, s=120,
-                       marker='^', zorder=10, edgecolors='black',
+            mc = seg_color if seg_color != '#333333' else tn_color
+            annots.append(dict(pos=pos, tag='TN',
+                               lam_str=f'$\\lambda={tn["lambda"]:.2f}$',
+                               color=tn_color, bg='#f4eeff',
+                               marker='^', ms=120, mc=mc))
+
+    if not annots:
+        return
+
+    # ── Merge co-located annotations (distance < 0.03) ──
+    groups = []
+    used = [False] * len(annots)
+    for i, a in enumerate(annots):
+        if used[i]:
+            continue
+        group = [a]
+        used[i] = True
+        for j in range(i + 1, len(annots)):
+            if used[j]:
+                continue
+            if np.linalg.norm(np.array(a['pos']) - np.array(annots[j]['pos'])) < 0.03:
+                group.append(annots[j])
+                used[j] = True
+        groups.append(group)
+
+    # ── Draw each group ──
+    offsets = [
+        np.array([0.10, 0.08, 0.10]),
+        np.array([-0.10, -0.06, 0.12]),
+        np.array([0.08, -0.10, 0.10]),
+        np.array([-0.08, 0.10, 0.12]),
+        np.array([0.06, 0.10, 0.08]),
+        np.array([-0.08, 0.06, 0.12]),
+    ]
+    for gi, group in enumerate(groups):
+        pos = group[0]['pos']
+        # Draw all markers (stacked at same pos)
+        for g in group:
+            ax.scatter(pos[0], pos[1], pos[2], c=g['mc'], s=g['ms'],
+                       marker=g['marker'], zorder=10, edgecolors='black',
                        linewidth=1.0)
-            off = tn_offsets[ti % len(tn_offsets)]
-            ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
-                      [pos[2], pos[2]+off[2]],
-                      color=marker_color, linewidth=1.0, linestyle='-')
-            ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
-                    f'TN ($\\lambda={tn["lambda"]:.2f}$)',
-                    fontsize=7, ha='left', va='bottom',
-                    color=tn_color, fontweight='bold',
-                    bbox=dict(facecolor='#f4eeff', alpha=0.9,
-                              edgecolor=tn_color, linewidth=1.0,
-                              boxstyle='round,pad=0.2'))
+        # Build merged label: "D01+Cw1 (λ→∞)" or "SR (λ=1.23)"
+        tags = '+'.join(g['tag'] for g in group)
+        # Deduplicate lambda strings
+        lam_strs = list(dict.fromkeys(g['lam_str'] for g in group))
+        lam_combined = ', '.join(lam_strs)
+        label = f'{tags}  {lam_combined}'
+        color = group[0]['color']
+        bg = group[0]['bg']
+        off = offsets[gi % len(offsets)]
+        ax.plot3D([pos[0], pos[0]+off[0]], [pos[1], pos[1]+off[1]],
+                  [pos[2], pos[2]+off[2]],
+                  color=color, linewidth=1.2, linestyle='-')
+        ax.text(pos[0]+off[0], pos[1]+off[1], pos[2]+off[2]+0.01,
+                label, fontsize=8,
+                ha='left' if off[0] > 0 else 'right', va='bottom',
+                color=color, fontweight='bold',
+                bbox=dict(facecolor=bg, alpha=0.9,
+                          edgecolor=color, linewidth=1.2,
+                          boxstyle='round,pad=0.3'))
 
 
 def draw_vector_arrows(ax, case_data, arrow_scale=0.10):
@@ -792,8 +757,12 @@ def draw_lambda_ring(ax, case_data, segments):
                 bbox=dict(boxstyle='round,pad=0.15', facecolor='white',
                           edgecolor='#cccccc', linewidth=0.5))
 
-    # ── Mark SR/ISR points on ring (using C++ sr_q_root_indices) ──
+    # ── Collect ring annotations, merge co-located, then draw ──
     category = case_data.get('category', '')
+    cv_cw_default = '#008800'
+    ring_annots = []  # list of dict(angle, tag, lam_str, color, bg, marker, ms)
+
+    # SR/ISR
     sr_ring_label = 'ISR' if 'ISR' in category else 'SR'
     sr_q_indices_ring = case_data.get('sr_q_root_indices', [])
     if 'SR' in category and sr_q_indices_ring:
@@ -801,79 +770,45 @@ def draw_lambda_ring(ax, case_data, segments):
             if qi >= len(Q_roots):
                 continue
             qr = Q_roots[qi]
-            a = lambda_to_angle(qr, scale)
-            sx, sy = angle_to_xy(a, R_ring)
-            ax.plot(sx, sy, 'D', color='#ff8800', markersize=9,
-                    zorder=9, markeredgecolor='black', markeredgewidth=1.0)
-            # SR label outside ring
-            lr = R_ring + 0.35
-            lx, ly = angle_to_xy(a, lr)
-            mx, my = angle_to_xy(a, R_ring + 0.06)
-            ax.plot([mx, lx], [my, ly], '-', color='#ff8800', linewidth=0.8)
-            ax.text(lx, ly, sr_ring_label,
-                    ha='center', va='center', fontsize=8,
-                    color='#cc6600', fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.15',
-                              facecolor='#fff4ee',
-                              edgecolor='#ff8800', linewidth=0.8))
+            ring_annots.append(dict(angle=lambda_to_angle(qr, scale),
+                tag=sr_ring_label, lam_str=f'$\\lambda$={qr:.2f}',
+                color='#ff8800', bg='#fff4ee', marker='D', ms=9))
 
-    # ── Mark D00/D01 points on ring ──
-    # D00: vertex where V∥W (detected from field data)
-    # D01: puncture on tet edge (one bary coord ≈ 0, deduplicated)
-    # Always mark edge/vertex punctures on ring (regardless of category tag)
-    if True:
-        d_markers = []  # (lam, label) deduplicated
-        # D00: check vertices for V×W = 0
-        V = np.array(case_data['V'])
-        W = np.array(case_data['W'])
-        for vi in range(4):
-            cross = np.cross(V[vi], W[vi])
-            if np.all(cross == 0):
-                v_zero = np.all(V[vi] == 0)
-                w_zero = np.all(W[vi] == 0)
-                if w_zero:
-                    lam_d = None
-                elif v_zero:
-                    lam_d = 0.0
-                else:
-                    lam_d = None
-                    for k in range(3):
-                        if W[vi][k] != 0:
-                            lam_d = -V[vi][k] / W[vi][k]
-                            break
-                d_markers.append((lam_d, 'D00'))
-        # D01: punctures on tet edge (from C++ is_edge flag)
-        for pi in punctures:
-            if pi.get('is_vertex', False):
-                continue  # D00, handled above
-            if pi.get('is_edge', False):
-                lam_d = pi['lambda']
-                d_markers.append((lam_d, 'D01'))
-
-        d_color = '#9900cc'
-        d_label_offsets = [0.35, 0.55, 0.75, 0.45, 0.65]
-        for di, (lam_d, label) in enumerate(d_markers):
+    # D00: vertices where V x W = 0
+    V = np.array(case_data['V'])
+    W = np.array(case_data['W'])
+    for vi in range(4):
+        cross = np.cross(V[vi], W[vi])
+        if np.all(cross == 0):
+            v_zero = np.all(V[vi] == 0)
+            w_zero = np.all(W[vi] == 0)
+            if w_zero:
+                lam_d = None
+            elif v_zero:
+                lam_d = 0.0
+            else:
+                lam_d = None
+                for k in range(3):
+                    if W[vi][k] != 0:
+                        lam_d = -V[vi][k] / W[vi][k]
+                        break
             a = lambda_to_angle(lam_d, scale) if lam_d is not None else np.pi / 2
-            sx, sy = angle_to_xy(a, R_ring)
-            marker = 's' if label == 'D00' else 'v'
-            ax.plot(sx, sy, marker, color=d_color, markersize=9,
-                    zorder=9, markeredgecolor='black', markeredgewidth=1.0)
-            lr = R_ring + d_label_offsets[di % len(d_label_offsets)]
-            lx, ly = angle_to_xy(a, lr)
-            mx, my = angle_to_xy(a, R_ring + 0.06)
-            ax.plot([mx, lx], [my, ly], '-', color=d_color, linewidth=0.8)
-            lam_str = f'{lam_d:.2f}' if lam_d is not None else r'$\infty$'
-            ax.text(lx, ly, f'{label} ($\\lambda$={lam_str})',
-                    ha='center', va='center', fontsize=7,
-                    color='#660099', fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.15',
-                              facecolor='#f4eeff',
-                              edgecolor=d_color, linewidth=0.8))
+            lam_str = f'$\\lambda$={lam_d:.2f}' if lam_d is not None else r'$\lambda\!=\!\infty$'
+            ring_annots.append(dict(angle=a, tag='D00', lam_str=lam_str,
+                color='#9900cc', bg='#f4eeff', marker='s', ms=9))
 
-    # ── Mark Cv/Cw on ring (text labels, like SR) ──
-    # Cv{d}: critical point of v (v=0) at λ=0; Cw{d}: critical point of w at λ→∞
-    # Use segment color when Cv/Cw lies on a curve segment, else green fallback
-    cv_cw_default = '#008800'
+    # D01: edge punctures
+    for pi in punctures:
+        if pi.get('is_vertex', False):
+            continue
+        if pi.get('is_edge', False):
+            lam_d = pi['lambda']
+            a = lambda_to_angle(lam_d, scale) if lam_d is not None else np.pi / 2
+            lam_str = f'$\\lambda$={lam_d:.2f}' if lam_d is not None else r'$\lambda\!\to\!\infty$'
+            ring_annots.append(dict(angle=a, tag='D01', lam_str=lam_str,
+                color='#9900cc', bg='#f4eeff', marker='v', ms=9))
+
+    # Cv
     cv_tag_ring = None
     cv_mr = re.search(r'(?:^|_)Cv(\d?)(?=_|$)', category)
     if cv_mr:
@@ -881,20 +816,11 @@ def draw_lambda_ring(ax, case_data, segments):
     if cv_tag_ring:
         seg_color = _find_segment_for_lambda(0.0, segments)
         cv_color = seg_color if seg_color != '#333333' else cv_cw_default
-        a = lambda_to_angle(0.0, scale)
-        sx, sy = angle_to_xy(a, R_ring)
-        ax.plot(sx, sy, '*', color=cv_color, markersize=10,
-                zorder=9, markeredgecolor='black', markeredgewidth=0.8)
-        lr = R_ring + 0.35
-        lx, ly = angle_to_xy(a, lr)
-        mx, my = angle_to_xy(a, R_ring + 0.06)
-        ax.plot([mx, lx], [my, ly], '-', color=cv_color, linewidth=0.8)
-        ax.text(lx, ly, cv_tag_ring + r' ($\lambda=0$)',
-                ha='center', va='center', fontsize=7,
-                color=cv_color, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.15',
-                          facecolor='#eeffee',
-                          edgecolor=cv_color, linewidth=0.8))
+        ring_annots.append(dict(angle=lambda_to_angle(0.0, scale),
+            tag=cv_tag_ring, lam_str=r'$\lambda\!=\!0$',
+            color=cv_color, bg='#eeffee', marker='*', ms=10))
+
+    # Cw
     cw_tag_ring = None
     cw_mr = re.search(r'(?:^|_)Cw(\d?)(?=_|$)', category)
     if cw_mr:
@@ -906,44 +832,66 @@ def draw_lambda_ring(ax, case_data, segments):
                 seg['lam_entry'] is None or seg['lam_exit'] is None):
                 cw_color = seg['color']
                 break
-        a = np.pi / 2  # infinity angle
-        sx, sy = angle_to_xy(a, R_ring)
-        ax.plot(sx, sy, '*', color=cw_color, markersize=10,
-                zorder=9, markeredgecolor='black', markeredgewidth=0.8)
-        lr = R_ring + 0.55  # further out to avoid overlap with puncture labels
-        lx, ly = angle_to_xy(a, lr)
-        mx, my = angle_to_xy(a, R_ring + 0.06)
-        ax.plot([mx, lx], [my, ly], '-', color=cw_color, linewidth=0.8)
-        ax.text(lx, ly, cw_tag_ring + r' ($\lambda \to \infty$)',
-                ha='center', va='center', fontsize=7,
-                color=cw_color, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.15',
-                          facecolor='#eeffee',
-                          edgecolor=cw_color, linewidth=0.8))
+        ring_annots.append(dict(angle=np.pi / 2,
+            tag=cw_tag_ring, lam_str=r'$\lambda\!\to\!\infty$',
+            color=cw_color, bg='#eeffee', marker='*', ms=10))
 
-    # ── Mark TN (tangency) points on ring ──
+    # TN
     tn_ring_points = case_data.get('tn_points', [])
     if 'TN' in category and tn_ring_points:
         tn_color = '#9933cc'
-        tn_label_offsets = [R_ring + 0.35, R_ring + 0.55, R_ring + 0.45, R_ring + 0.65]
-        for ti, tn in enumerate(tn_ring_points):
-            # Skip tangencies outside the face triangle
+        for tn in tn_ring_points:
             if any(b < -0.05 for b in tn['bary']):
                 continue
-            a = lambda_to_angle(tn['lambda'], scale)
-            sx, sy = angle_to_xy(a, R_ring)
-            ax.plot(sx, sy, '^', color=tn_color, markersize=8,
+            ring_annots.append(dict(angle=lambda_to_angle(tn['lambda'], scale),
+                tag='TN', lam_str=f'$\\lambda$={tn["lambda"]:.2f}',
+                color=tn_color, bg='#f4eeff', marker='^', ms=8))
+
+    # ── Merge co-located ring annotations (angular distance < 0.08 rad) ──
+    ring_groups = []
+    r_used = [False] * len(ring_annots)
+    for i, a in enumerate(ring_annots):
+        if r_used[i]:
+            continue
+        group = [a]
+        r_used[i] = True
+        for j in range(i + 1, len(ring_annots)):
+            if r_used[j]:
+                continue
+            da = abs(a['angle'] - ring_annots[j]['angle'])
+            if da > np.pi:
+                da = 2 * np.pi - da
+            if da < 0.08:
+                group.append(ring_annots[j])
+                r_used[j] = True
+        ring_groups.append(group)
+
+    # ── Draw merged ring annotations ──
+    label_offsets = [0.35, 0.55, 0.75, 0.45, 0.65]
+    for gi, group in enumerate(ring_groups):
+        a = group[0]['angle']
+        # Draw all markers
+        for g in group:
+            sx, sy = angle_to_xy(g['angle'], R_ring)
+            ax.plot(sx, sy, g['marker'], color=g['color'], markersize=g['ms'],
                     zorder=9, markeredgecolor='black', markeredgewidth=0.8)
-            lr = tn_label_offsets[ti % len(tn_label_offsets)]
-            lx, ly = angle_to_xy(a, lr)
-            mx, my = angle_to_xy(a, R_ring + 0.06)
-            ax.plot([mx, lx], [my, ly], '-', color=tn_color, linewidth=0.6)
-            ax.text(lx, ly, f'TN ($\\lambda$={tn["lambda"]:.2f})',
-                    ha='center', va='center', fontsize=6,
-                    color=tn_color, fontweight='bold',
-                    bbox=dict(boxstyle='round,pad=0.1',
-                              facecolor='#f4eeff',
-                              edgecolor=tn_color, linewidth=0.6))
+        # Build merged label
+        tags = '+'.join(g['tag'] for g in group)
+        lam_strs = list(dict.fromkeys(g['lam_str'] for g in group))
+        lam_combined = ', '.join(lam_strs)
+        label = f'{tags} ({lam_combined})'
+        color = group[0]['color']
+        bg = group[0]['bg']
+        lr = R_ring + label_offsets[gi % len(label_offsets)]
+        lx, ly = angle_to_xy(a, lr)
+        mx, my = angle_to_xy(a, R_ring + 0.06)
+        ax.plot([mx, lx], [my, ly], '-', color=color, linewidth=0.8)
+        ax.text(lx, ly, label,
+                ha='center', va='center', fontsize=7,
+                color=color, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.15',
+                          facecolor=bg,
+                          edgecolor=color, linewidth=0.8))
 
     # ── Puncture ticks with lambda labels OUTSIDE the ring ──
     punc_color = {}
