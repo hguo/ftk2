@@ -34,3 +34,7 @@ add_test(NAME test_3d_cp COMMAND ftk2_test_3d_cp)
 add_executable(ftk2_test_exactpv test_exactpv.cpp)
 target_link_libraries(ftk2_test_exactpv PRIVATE ftk2)
 add_test(NAME test_exactpv COMMAND ftk2_test_exactpv)
+
+add_executable(ftk2_test_pv_primitives test_pv_primitives.cpp)
+target_link_libraries(ftk2_test_pv_primitives PRIVATE ftk2)
+add_test(NAME test_pv_primitives COMMAND ftk2_test_pv_primitives)

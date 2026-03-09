@@ -2290,6 +2290,7 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
     }
 
     // D01: edge puncture that is unpaired or paired with another on the same edge
+    // For same-edge pairs, use derivative entry test to check if curve enters tet
     bool has_D01 = false;
     std::vector<int> edge_punct_indices;
     for (int pi_idx = 0; pi_idx < (int)cc.punctures.size(); pi_idx++) {
@@ -2314,11 +2315,66 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                     paired_same_edge = true;
                 break;
             }
-            if (!is_paired || paired_same_edge) {
+            if (!is_paired) {
+                // Unpaired edge puncture → always D01
                 has_D01 = true;
                 cc.punctures[ei].is_D01 = true;
-                // Also mark partner if paired on same edge
-                if (paired_same_edge) {
+            } else if (paired_same_edge) {
+                // Same-edge pair: derivative entry test to distinguish
+                // isolated D01 vs connected U-turn curve through tet interior
+                int a = pi.tet_edge[0], b = pi.tet_edge[1];
+                // The two faces sharing edge [a,b] are {0,1,2,3} \ {a, b}
+                int f = -1, g = -1;
+                for (int k = 0; k < 4; k++) {
+                    if (k == a || k == b) continue;
+                    if (f < 0) f = k; else g = k;
+                }
+
+                int degPf = ftk2::effective_degree_i128(P_i128[f], 3);
+                int degPg = ftk2::effective_degree_i128(P_i128[g], 3);
+                __int128 g_fg[4] = {};
+                int deg_gfg = ftk2::poly_gcd_full_i128(P_i128[f], degPf,
+                                                        P_i128[g], degPg, g_fg);
+
+                bool is_isolated = true;  // conservative default
+                if (deg_gfg >= 2) {
+                    // Derivatives of P[f] and P[g] (integer coefficients)
+                    __int128 Pf_prime[3] = {P_i128[f][1], 2*P_i128[f][2], 3*P_i128[f][3]};
+                    __int128 Pg_prime[3] = {P_i128[g][1], 2*P_i128[g][2], 3*P_i128[g][3]};
+                    int degPfp = ftk2::effective_degree_i128(Pf_prime, 2);
+                    int degPgp = ftk2::effective_degree_i128(Pg_prime, 2);
+                    int degQ_i = ftk2::effective_degree_i128(Q_i128, 3);
+
+                    int s_fprime[3] = {}, s_gprime[3] = {}, s_q[3] = {};
+                    int n_roots = ftk2::signs_at_roots_i128(g_fg, deg_gfg,
+                                    Pf_prime, degPfp, s_fprime, 3);
+                    ftk2::signs_at_roots_i128(g_fg, deg_gfg,
+                                    Pg_prime, degPgp, s_gprime, 3);
+                    ftk2::signs_at_roots_i128(g_fg, deg_gfg,
+                                    Q_i128, degQ_i, s_q, 3);
+
+                    // Check consecutive root pairs for entry at both endpoints
+                    for (int r = 0; r + 1 < n_roots; r++) {
+                        // At root r (smaller), moving toward root r+1:
+                        // curve enters iff P[f]'/Q > 0 and P[g]'/Q > 0
+                        bool enters_f_r = s_fprime[r] * s_q[r] > 0;
+                        bool enters_g_r = s_gprime[r] * s_q[r] > 0;
+                        // At root r+1 (larger), moving toward root r:
+                        // curve enters iff P[f]'/Q < 0 and P[g]'/Q < 0
+                        bool enters_f_r1 = s_fprime[r+1] * s_q[r+1] < 0;
+                        bool enters_g_r1 = s_gprime[r+1] * s_q[r+1] < 0;
+
+                        if (enters_f_r && enters_g_r && enters_f_r1 && enters_g_r1)
+                            is_isolated = false;  // curve enters tet at both endpoints → connected
+                    }
+                }
+                // deg_gfg < 2: fewer than 2 shared roots → conservative D01
+                // Any s_q[r]==0 or s_fprime[r]==0: SR/TN case → conservative D01
+
+                if (is_isolated) {
+                    has_D01 = true;
+                    cc.punctures[ei].is_D01 = true;
+                    // Mark partner
                     for (const auto& pp : cc.pairs) {
                         int partner = -1;
                         if (pp.pi_a == ei) partner = pp.pi_b;
@@ -2370,35 +2426,27 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
 
     // ─── Step 8: T-count ───────────────────────────────────────────────
     // T counts punctures that participate in PV curve segments (1-manifold).
-    // Excluded: isolated D00 (vertex PV point, 0-manifold),
-    //           isolated D01 (edge PV point, unpaired or same-edge paired).
+    // Excluded: isolated D00/D01 (unpaired 0-manifold point at vertex/edge).
     // Included: all other punctures (face-interior, Cw2, non-isolated edge/vertex).
+    // Non-isolated D00/D01 (paired with face-interior puncture) ARE counted.
     int n_face = 0;
-    // Recompute interval occupancy excluding isolated D00/D01
+    // Build set of paired puncture indices
+    std::vector<bool> is_paired(cc.punctures.size(), false);
+    for (const auto& pr : cc.pairs) {
+        if (pr.pi_a >= 0 && pr.pi_a < (int)cc.punctures.size()) is_paired[pr.pi_a] = true;
+        if (pr.pi_b >= 0 && pr.pi_b < (int)cc.punctures.size()) is_paired[pr.pi_b] = true;
+    }
+    // Recompute interval occupancy: exclude only ISOLATED D00/D01 (unpaired)
     for (auto& iv : cc.intervals) iv.n_pv = 0;
     for (int pi_idx = 0; pi_idx < (int)cc.punctures.size(); pi_idx++) {
         const auto& pi = cc.punctures[pi_idx];
-        if (pi.is_D00 || pi.is_D01) continue;
+        if ((pi.is_D00 || pi.is_D01) && !is_paired[pi_idx]) continue;
         n_face++;
         if (pi.interval_idx >= 0 && pi.interval_idx < (int)cc.intervals.size())
             cc.intervals[pi.interval_idx].n_pv++;
     }
 
-    std::vector<int> occ;
-    for (auto& iv : cc.intervals)
-        if (iv.n_pv > 0) occ.push_back(iv.n_pv);
-    std::sort(occ.begin(), occ.end());
-
-    std::string t_type = "T" + std::to_string(n_face);
-    if (occ.size() > 1) {
-        t_type += "_(";
-        for (size_t i = 0; i < occ.size(); i++) {
-            if (i > 0) t_type += ",";
-            t_type += std::to_string(occ[i]);
-        }
-        t_type += ")";
-    }
-    cc.category = t_type + "_" + q_type;
+    // Category string built after Cv/Cw detection (Step 8b) to include waypoints
 
     // ─── Step 9: Tags ─────────────────────────────────────────────────
     std::vector<std::string> tags;
@@ -2539,26 +2587,39 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             }
         }
     }
-    // λ=∞ crossings: face i when P[i][3]=0 with Q[3]≠0
+    // λ=∞ crossings: generalized for degree-reduced Q.
+    // When deg(Q) < 3, check at actual degree d_Q instead of 3.
     {
-        __int128 q3 = Q_i128[3];
-        if (q3 != 0) {
-            for (int i = 0; i < 4; i++) {
-                if (P_i128[i][3] != 0) continue;
-                bool inside = true;
-                for (int j = 0; j < 4; j++) {
-                    if (j == i) continue;
-                    __int128 pj3 = P_i128[j][3];
-                    if ((pj3 > 0 && q3 < 0) || (pj3 < 0 && q3 > 0))
-                        { inside = false; break; }
+        int d_Q = 3;
+        while (d_Q > 0 && Q_i128[d_Q] == 0) d_Q--;
+        __int128 q_lead = (d_Q >= 0) ? Q_i128[d_Q] : 0;
+        if (d_Q >= 1 && q_lead != 0) {
+            // Guard: all P[k] must have degree ≤ d_Q
+            bool all_p_bounded = true;
+            for (int kb = 0; kb < 4; kb++) {
+                for (int d = d_Q + 1; d <= 3; d++) {
+                    if (P_i128[kb][d] != 0) { all_p_bounded = false; break; }
                 }
-                if (!inside) continue;
-                int nz = 0;
-                for (int k = 0; k < 3; k++)
-                    if (P_i128[fv[i][k]][3] == 0) nz++;
-                if (nz == 2) has_C0w = true;
-                else if (nz == 1) has_C1w = true;
-                else has_C2w = true;
+                if (!all_p_bounded) break;
+            }
+            if (all_p_bounded) {
+                for (int i = 0; i < 4; i++) {
+                    if (P_i128[i][d_Q] != 0) continue;
+                    bool inside = true;
+                    for (int j = 0; j < 4; j++) {
+                        if (j == i) continue;
+                        __int128 pj_lead = P_i128[j][d_Q];
+                        if ((pj_lead > 0 && q_lead < 0) || (pj_lead < 0 && q_lead > 0))
+                            { inside = false; break; }
+                    }
+                    if (!inside) continue;
+                    int nz = 0;
+                    for (int k = 0; k < 3; k++)
+                        if (P_i128[fv[i][k]][d_Q] == 0) nz++;
+                    if (nz == 2) has_C0w = true;
+                    else if (nz == 1) has_C1w = true;
+                    else has_C2w = true;
+                }
             }
         }
     }
@@ -2577,6 +2638,74 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         else              tags.push_back("Cw");
     }
 
+    // ── Step 8b: Include non-pass-through Cv1/Cv0/Cw1/Cw0 waypoints in T ──
+    // Only genuine crossings (not pass-through) contribute to T-count.
+    // Pass-through test: derivative product < 0 at the edge/vertex.
+    {
+        // Cv at λ=0: P'[k](0) = P[k][1]
+        if (has_C0v || has_C1v) {
+            int cv_faces[4] = {}, ncv = 0;
+            for (int k = 0; k < 4; k++)
+                if (P_i128[k][0] == 0) cv_faces[ncv++] = k;
+            bool is_pt = false;
+            for (int a = 0; a < ncv && !is_pt; a++)
+                for (int b = a+1; b < ncv && !is_pt; b++)
+                    if (P_i128[cv_faces[a]][1] * P_i128[cv_faces[b]][1] < 0)
+                        is_pt = true;
+            if (!is_pt) {
+                int iv_idx = 0;
+                for (int i = 0; i < cc.n_Q_roots; i++) {
+                    if (cc.Q_roots[i] > 0.0) break;
+                    iv_idx = i + 1;
+                }
+                if (iv_idx >= 0 && iv_idx < (int)cc.intervals.size()) {
+                    cc.intervals[iv_idx].n_pv++;
+                    n_face++;
+                }
+            }
+        }
+        // Cw at λ→∞: "derivative" analog is P[k][d_Q-1]
+        if (has_C0w || has_C1w) {
+            int d_Q = 3;
+            while (d_Q > 0 && Q_i128[d_Q] == 0) d_Q--;
+            int cw_faces[4] = {}, ncw = 0;
+            for (int k = 0; k < 4; k++)
+                if (P_i128[k][d_Q] == 0) cw_faces[ncw++] = k;
+            bool is_pt = false;
+            if (d_Q >= 1) {
+                for (int a = 0; a < ncw && !is_pt; a++)
+                    for (int b = a+1; b < ncw && !is_pt; b++)
+                        if (P_i128[cw_faces[a]][d_Q-1] * P_i128[cw_faces[b]][d_Q-1] < 0)
+                            is_pt = true;
+            }
+            if (!is_pt) {
+                int last_iv = (int)cc.intervals.size() - 1;
+                if (last_iv >= 0) {
+                    cc.intervals[last_iv].n_pv++;
+                    n_face++;
+                }
+            }
+        }
+    }
+
+    // Build category string: T{n}[_(tuple)]_Q{type}
+    {
+        std::vector<int> occ;
+        for (auto& iv : cc.intervals)
+            if (iv.n_pv > 0) occ.push_back(iv.n_pv);
+        std::sort(occ.begin(), occ.end());
+        std::string t_type = "T" + std::to_string(n_face);
+        if (occ.size() > 1) {
+            t_type += "_(";
+            for (size_t i = 0; i < occ.size(); i++) {
+                if (i > 0) t_type += ",";
+                t_type += std::to_string(occ[i]);
+            }
+            t_type += ")";
+        }
+        cc.category = t_type + "_" + q_type;
+    }
+
     // ── TN tag: tangency (disc(P_k) = 0, repeated root) ──
     {
         // Compute disc_sign on CPU from unquantized P coefficients (max ~50000
@@ -2589,7 +2718,7 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             disc_sign_cpu[k] = ftk2::discriminant_sign_i128(Pk_cpu);
         }
 
-        bool has_TN = false;
+        bool has_TN = false;   // non-isolated TN (touch from inside, 2 punctures)
         for (int k = 0; k < 4; k++) {
             int degk = effective_degree_i128(P_i128[k], 3);
             if (degk < 2 || disc_sign_cpu[k] != 0)
@@ -2636,7 +2765,19 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                 }
                 if (!in_tet) continue;
 
-                has_TN = true;
+                // Determine isolated vs non-isolated TN via P[k]''(α) · Q(α) sign
+                __int128 Pk_pp[2] = {2 * P_i128[k][2], 6 * P_i128[k][3]};
+                int deg_pp = ftk2::effective_degree_i128(Pk_pp, 1);
+                int spp = 0;
+                if (deg_pp > 0 || Pk_pp[0] != 0) {
+                    spp = eval_at_root_h(Pk_pp, deg_pp);
+                }
+
+                if (spp * sq < 0)
+                    ;  // isolated TN (≡ D02): curve touches from outside, already excluded
+                else
+                    has_TN = true;    // non-isolated: curve touches from inside
+
                 double lam_tn = -(double)h[0] / (double)h[1];
                 double bary[3] = {};
                 double Qval = Q[0] + Q[1]*lam_tn + Q[2]*lam_tn*lam_tn + Q[3]*lam_tn*lam_tn*lam_tn;
@@ -3278,7 +3419,23 @@ int main(int argc, char** argv)
                 if (tc.face[fi].count > 0 && tc.face[fi].count < INT_MAX)
                     tc.total_punctures += tc.face[fi].count;
             }
-            ClassifiedCase cc = classify_case(tc);
+            ClassifiedCase cc;
+            if (pv_version == 2 || pv_version == 3) {
+                // ExactPV2 path: pure-integer solver + classifier
+                __int128 Q_i128[4], P_i128[4][4];
+                ftk2::compute_tet_QP_i128(tc.V, tc.W, Q_i128, P_i128);
+                ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+                TetCaseV2GPU tv2;
+                memcpy(tv2.V, tc.V, sizeof(tc.V));
+                memcpy(tv2.W, tc.W, sizeof(tc.W));
+                tv2.v2 = v2;
+                for (int k = 0; k < 4; k++)
+                    tv2.disc_sign[k] = ftk2::discriminant_sign_i128(P_i128[k]);
+                tv2.seed = tc.seed;
+                cc = classify_case_v2(tv2);
+            } else {
+                cc = classify_case(tc);
+            }
             int np = (int)cc.punctures.size();
             if (min_punctures == 0) {
                 // Print ALL cases when --min-punctures 0
@@ -3288,7 +3445,8 @@ int main(int argc, char** argv)
             } else if (np > best_punct) {
                 best_punct = np;
                 fprintf(stderr, "  line %d: %s (%d punctures, raw=%d)\n",
-                        line_num, cc.category.c_str(), np, cc.gpu.total_punctures);
+                        line_num, cc.category.c_str(), np,
+                        cc.gpu.total_punctures);
                 print_json(cc);
             }
             if (np >= 12) {

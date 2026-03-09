@@ -953,16 +953,21 @@ FTK_HOST_DEVICE inline int effective_degree_i128(const __int128* poly, int max_d
 // Computes r = prem(f, g) and returns deg(r).  Content-reduces the result.
 // f has degree df, g has degree dg, with dg <= df.
 // r must have space for at least df+1 entries.
+// If actual_exp is non-null, writes the actual number of g[dg] multiplications
+// performed (may be less than df-dg+1 when intermediate leading coeffs vanish).
 FTK_HOST_DEVICE inline int prem_i128(const __int128* f, int df,
                      const __int128* g, int dg,
-                     __int128* r) {
+                     __int128* r,
+                     int* actual_exp = nullptr) {
     // Copy f into r
     for (int i = 0; i <= df; i++) r[i] = f[i];
     for (int i = df + 1; i < 8; i++) r[i] = 0;  // zero pad
 
     int dr = df;
+    int n_muls = 0;
     while (dr >= dg && dr >= 0) {
         if (r[dr] == 0) { dr--; continue; }
+        n_muls++;
         __int128 rdr = r[dr];
         __int128 gdq = g[dg];
         int shift = dr - dg;
@@ -975,6 +980,7 @@ FTK_HOST_DEVICE inline int prem_i128(const __int128* f, int df,
     while (dr > 0 && r[dr] == 0) dr--;
 
     content_reduce_i128(r, dr);
+    if (actual_exp) *actual_exp = n_muls;
     return dr;
 }
 
@@ -1434,14 +1440,14 @@ FTK_HOST_DEVICE inline int signs_at_roots_i128(const __int128* f_in, int df_max,
         // Reduce g mod f to get remainder r of degree ≤ 1.
         if (dg >= df) {
             __int128 r[8] = {};
-            int dr = prem_i128(g, dg, f, df, r);
-            // sign(g(α_i)) = sign(r(α_i)) × sign(lc(f)^(dg-df+1))
-            // But prem already handled the scaling.  Actually:
-            // prem(g, f) = lc(f)^(dg-df+1) * g  mod f
-            // At roots of f: prem(g,f)(α) = lc(f)^(dg-df+1) * g(α)
-            int exp = dg - df + 1;
+            int prem_exp;
+            int dr = prem_i128(g, dg, f, df, r, &prem_exp);
+            // prem performed prem_exp multiplications by lc(f).
+            // At roots of f: lc(f)^prem_exp * g(α) = content * r(α)
+            // content > 0 (from content_reduce), so:
+            // sign(g(α)) = sign(lc(f)^prem_exp) * sign(r(α))
             int lc_f_sign = (f[df] > 0) ? 1 : -1;
-            int scale_sign = (exp % 2 == 0) ? 1 : lc_f_sign;
+            int scale_sign = (prem_exp % 2 == 0) ? 1 : lc_f_sign;
 
             // Now determine sign(r(α_i)) at the two roots of f
             int sub_signs[2];
@@ -1548,10 +1554,10 @@ FTK_HOST_DEVICE inline int signs_at_roots_i128(const __int128* f_in, int df_max,
         int dr1;
         int scale1 = 1;
         if (dg >= df) {
-            dr1 = prem_i128(g, dg, f, df, r1);
-            int exp1 = dg - df + 1;
+            int prem_exp;
+            dr1 = prem_i128(g, dg, f, df, r1, &prem_exp);
             int lc_sign1 = (f[df] > 0) ? 1 : -1;
-            scale1 = (exp1 % 2 == 0) ? 1 : lc_sign1;
+            scale1 = (prem_exp % 2 == 0) ? 1 : lc_sign1;
         } else {
             for (int j = 0; j <= dg; j++) r1[j] = g[j];
             dr1 = dg;
@@ -1635,10 +1641,10 @@ FTK_HOST_DEVICE inline int signs_at_roots_i128(const __int128* f_in, int df_max,
     int scale_sign = 1;
 
     if (dg >= df) {
-        dr = prem_i128(g, dg, f, df, r);
-        int exp = dg - df + 1;
+        int prem_exp;
+        dr = prem_i128(g, dg, f, df, r, &prem_exp);
         int lc_f_sign = (f[df] > 0) ? 1 : -1;
-        scale_sign = (exp % 2 == 0) ? 1 : lc_f_sign;
+        scale_sign = (prem_exp % 2 == 0) ? 1 : lc_f_sign;
     } else {
         for (int i = 0; i <= dg; i++) r[i] = g[i];
         dr = dg;
@@ -1722,15 +1728,26 @@ FTK_HOST_DEVICE inline int signs_at_roots_i128(const __int128* f_in, int df_max,
         if (disc_r == 0) {
             // r has double root ρ = -r[1]/(2*r[2])
             // r(x) = r[2]*(x - ρ)², so sign(r(α_i)) = sign(r[2]) unless α_i = ρ
-            int n_below = count_roots_below_rational(f, df, -r[1], 2*r[2]);
             // Check if any f-root equals ρ: evaluate f at ρ = -r[1]/(2*r[2])
             int ft_sign = sign_poly_at_rational_i128(f, df, -r[1], 2*r[2]);
+            for (int i = 0; i < 3; i++) signs[i] = sign_r2 * scale_sign;
             if (ft_sign == 0) {
-                // ρ is a root of f too
-                for (int i = 0; i < 3; i++) signs[i] = sign_r2 * scale_sign;
-                if (n_below >= 0 && n_below < 3) signs[n_below] = 0;
-            } else {
-                for (int i = 0; i < 3; i++) signs[i] = sign_r2 * scale_sign;
+                // ρ is a root of f too. Determine WHICH root via f'(ρ), f''(ρ).
+                __int128 fp_d[4] = {};
+                poly_derivative_i128(f, df, fp_d);
+                int sign_fpt = sign_poly_at_rational_i128(fp_d, df-1, -r[1], 2*r[2]);
+                int sign_lc_f = (f[df] > 0) ? 1 : -1;
+                int eft = sign_fpt * sign_lc_f;
+                int which;
+                if (eft < 0) {
+                    which = 1;  // middle root α₁
+                } else {
+                    __int128 fpp_d[4] = {};
+                    poly_derivative_i128(fp_d, df-1, fpp_d);
+                    int efppt = sign_poly_at_rational_i128(fpp_d, df-2, -r[1], 2*r[2]) * sign_lc_f;
+                    which = (efppt > 0) ? 2 : 0;  // α₂ or α₀
+                }
+                signs[which] = 0;
             }
             return 3;
         }
@@ -3748,6 +3765,7 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
     }
 
     // Q_red = Q / h if deg(h) >= 1
+    // P_red[k] = P[k] / h — removes pass-through roots from face root-finding
     __int128 Q_red[4] = {};
     int degQ_red = degQ;
     if (dh >= 1) {
@@ -3756,12 +3774,19 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
         __int128 q_div[4] = {};
         degQ_red = poly_exact_div_i128(Q, degQ, h, dh, q_div);
         for (int i = 0; i <= degQ_red; i++) Q_red[i] = q_div[i];
+        // Replace P[k] with P[k] / h to exclude pass-through roots
+        for (int k = 0; k < 4; k++) {
+            __int128 p_div[4] = {};
+            int dp = poly_exact_div_i128(P[k], degP[k], h, dh, p_div);
+            for (int i = 0; i < 4; i++) P[k][i] = (i <= dp) ? p_div[i] : 0;
+            degP[k] = dp;
+        }
     } else {
         for (int i = 0; i <= degQ; i++) Q_red[i] = Q[i];
     }
 
     // --- Step 2: For each face, determine root count and validity ---
-    // n_distinct_roots[k] = number of distinct real roots of P_k
+    // n_distinct_roots[k] = number of distinct real roots of P_k (reduced by h)
     // For each root: determine validity (all P_j same sign for j ≠ k)
     struct RootInfo {
         int face;
@@ -3874,45 +3899,58 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
     }
 
     // --- Step 2b: Infinity punctures for degree-reduced faces ---
-    // When degP[k] < 3, the "missing" root is at λ=±∞.
-    // Barycentric coords at ∞: μ_j = P[j][3] / Q[3] for j ≠ k, μ_k = 0.
-    // Valid iff all P[j][3] (j ≠ k) have the same sign and Q[3] ≠ 0.
-    for (int k = 0; k < 4; k++) {
-        if (degP[k] >= 3 || P[k][3] != 0) continue;  // only degree-reduced faces
-        if (Q[3] == 0) continue;  // Q also degree-reduced, skip for now
+    // When degP[k] < degQ_red, face k is approached at λ→±∞.
+    // Bary coords at ∞: μ_j = P[j][d_Q] / Q_red[d_Q] for j ≠ k, μ_k = 0.
+    // Valid iff all P[j][d_Q] (j ≠ k) same sign and Q_red[d_Q] ≠ 0.
+    // Generalized from degree 3 to actual degree d_Q of Q_red.
+    {
+        int d_Q = degQ_red;
+        __int128 Q_lead = (d_Q >= 0 && d_Q <= 3) ? Q_red[d_Q] : 0;
+        if (d_Q >= 1 && Q_lead != 0) {
+            // Guard: all P[k] must have degree ≤ d_Q.
+            // If any P[k] has degree > d_Q, μ_k diverges at ∞ → curve outside tet.
+            bool all_p_bounded = true;
+            for (int kb = 0; kb < 4; kb++) {
+                if (degP[kb] > d_Q) { all_p_bounded = false; break; }
+            }
+            if (all_p_bounded) {
+                for (int k = 0; k < 4; k++) {
+                    if (degP[k] >= d_Q) continue;  // P[k] has same degree as Q_red, μ_k ≠ 0 at ∞
 
-        // Check validity: all P[j][3] (j ≠ k) must have same sign
-        int first_sign3 = 0;
-        bool valid_inf = true;
-        int n_zero3 = 0;
-        int zero_faces3[3] = {};
-        for (int j = 0; j < 4; j++) {
-            if (j == k) continue;
-            __int128 pj3 = P[j][3];
-            if (pj3 == 0) {
-                zero_faces3[n_zero3++] = j;
-            } else {
-                int s = (pj3 > 0) ? 1 : -1;
-                if (first_sign3 == 0) first_sign3 = s;
-                else if (s != first_sign3) { valid_inf = false; break; }
+                    // Check validity: all P[j][d_Q] (j ≠ k) must have same sign
+                    int first_sign3 = 0;
+                    bool valid_inf = true;
+                    int n_zero3 = 0;
+                    for (int j = 0; j < 4; j++) {
+                        if (j == k) continue;
+                        __int128 pj_lead = P[j][d_Q];
+                        if (pj_lead == 0) {
+                            n_zero3++;
+                        } else {
+                            int s = (pj_lead > 0) ? 1 : -1;
+                            if (first_sign3 == 0) first_sign3 = s;
+                            else if (s != first_sign3) { valid_inf = false; break; }
+                        }
+                    }
+                    // Only add face-INTERIOR infinity punctures (Cw2).
+                    // Edge/vertex infinity punctures (Cw1/Cw0) are waypoints — not paired.
+                    if (!valid_inf || first_sign3 == 0) continue;
+                    if (n_zero3 >= 1) continue;  // edge/vertex at ∞ → Cw1/Cw0 waypoint, skip
+
+                    if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
+                    RootInfo& ri_info = all_roots[n_all];
+                    ri_info.face = k;
+                    ri_info.root_idx = -1;  // infinity marker
+                    ri_info.q_interval = -1;
+                    ri_info.valid = true;
+                    ri_info.is_edge = false;
+                    ri_info.is_vertex = false;
+                    ri_info.is_infinity = true;
+                    ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
+                    n_all++;
+                }
             }
         }
-        // Only add face-INTERIOR infinity punctures (Cw2).
-        // Edge/vertex infinity punctures (Cw1/Cw0) are waypoints — not paired.
-        if (!valid_inf || first_sign3 == 0) continue;
-        if (n_zero3 >= 1) continue;  // edge/vertex at ∞ → Cw1/Cw0 waypoint, skip
-
-        if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
-        RootInfo& ri_info = all_roots[n_all];
-        ri_info.face = k;
-        ri_info.root_idx = -1;  // infinity marker
-        ri_info.q_interval = -1;
-        ri_info.valid = true;
-        ri_info.is_edge = false;
-        ri_info.is_vertex = false;
-        ri_info.is_infinity = true;
-        ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
-        n_all++;
     }
 
     // --- Step 3: Edge detection ---
@@ -4027,15 +4065,15 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
     //
     // For vertex punctures (3 P's zero), pass-through if any pair of
     // derivatives has opposite sign.
-    {
-        // Precompute P'[k] = derivative of P[k] (degree ≤ 2)
-        __int128 dP[4][3];
-        for (int k = 0; k < 4; k++) {
-            dP[k][0] = P[k][1];
-            dP[k][1] = 2 * P[k][2];
-            dP[k][2] = 3 * P[k][3];
-        }
+    // Precompute P'[k] = derivative of P[k] (degree ≤ 2)
+    __int128 dP[4][3];
+    for (int k = 0; k < 4; k++) {
+        dP[k][0] = P[k][1];
+        dP[k][1] = 2 * P[k][2];
+        dP[k][2] = 3 * P[k][3];
+    }
 
+    {
         for (int r = 0; r < n_all; r++) {
             if (!all_roots[r].valid) continue;
             if (all_roots[r].is_infinity) continue;
@@ -4043,10 +4081,6 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
             if (all_roots[r].is_edge) {
                 int k1 = all_roots[r].edge_faces[0];
                 int k2 = all_roots[r].edge_faces[1];
-                // g = gcd(P[k1], P[k2])
-                __int128 g[4];
-                int dg = poly_gcd_full_i128(P[k1], degP[k1], P[k2], degP[k2], g);
-                if (dg < 1) continue;
                 // Product P'[k1] · P'[k2] (degree ≤ 4)
                 __int128 prod[5] = {};
                 for (int i = 0; i <= 2; i++)
@@ -4054,19 +4088,48 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                         prod[i + j] += dP[k1][i] * dP[k2][j];
                 int dp = 4;
                 while (dp > 0 && prod[dp] == 0) dp--;
-                int sign = resultant_sign_i128(g, dg, prod, dp);
-                if (sign < 0)
+                // Evaluate at the SPECIFIC root of P[face] (not resultant
+                // over all roots, which gives false positive when an even
+                // number of roots are pass-through)
+                int face = all_roots[r].face;
+                int signs_prod[3] = {};
+                signs_at_roots_i128(P[face], degP[face], prod, dp, signs_prod, 3);
+                int ri = all_roots[r].root_idx;
+                if (ri < 3 && signs_prod[ri] < 0) {
                     all_roots[r].valid = false;  // pass-through waypoint
+                } else if (ri < 3 && signs_prod[ri] == 0) {
+                    // One derivative is 0 at the edge root (tangency).
+                    // Check each face: if P'[k]=0 and P''[k]·Q<0 → isolated
+                    // tangency → curve touches from outside → exclude.
+                    for (int ki = 0; ki < 2; ki++) {
+                        int kf = all_roots[r].edge_faces[ki];
+                        // P'[kf] at the root
+                        int signs_dk[3] = {};
+                        int deg_dk = effective_degree_i128(dP[kf], 2);
+                        if (deg_dk < 0) continue;
+                        signs_at_roots_i128(P[face], degP[face], dP[kf], deg_dk, signs_dk, 3);
+                        if (signs_dk[ri] != 0) continue;  // derivative nonzero, not tangency
+                        // P''[kf] at the root
+                        __int128 ddP[3] = {2*P[kf][2], 6*P[kf][3], 0};
+                        int deg_ddP = effective_degree_i128(ddP, 1);
+                        // P''[kf] · Q product (degree ≤ deg_ddP + degQ_red)
+                        __int128 pq_prod[8] = {};
+                        for (int ii = 0; ii <= deg_ddP; ii++)
+                            for (int jj = 0; jj <= degQ_red; jj++)
+                                pq_prod[ii+jj] += ddP[ii] * Q_red[jj];
+                        int dpq = deg_ddP + degQ_red;
+                        while (dpq > 0 && pq_prod[dpq] == 0) dpq--;
+                        int signs_pq[3] = {};
+                        signs_at_roots_i128(P[face], degP[face], pq_prod, dpq, signs_pq, 3);
+                        if (signs_pq[ri] < 0) {
+                            all_roots[r].valid = false;  // isolated tangency at edge
+                            break;
+                        }
+                    }
+                }
             } else if (all_roots[r].is_vertex) {
                 // 3 faces share a root.  Find them from all_roots[r].
-                // The owner face is all_roots[r].face (smallest index).
-                // The other two faces are the ones from the edge_faces or
-                // from the vertex triple.  Find them by checking which
-                // pairs of faces have shared roots at this root index.
                 int f = all_roots[r].face;
-                // The three zero-P faces for a vertex at face f:
-                // face f has P[f]=0, and two other faces also have P=0.
-                // We need to find which faces those are.
                 int other_faces[2];
                 int nof = 0;
                 for (int j = 0; j < 4; j++) {
@@ -4079,13 +4142,7 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                 }
                 if (nof == 2) {
                     int k1 = other_faces[0], k2 = other_faces[1];
-                    // g = gcd of all three P's
-                    __int128 g12[4];
-                    int dg12 = poly_gcd_full_i128(P[k1], degP[k1], P[k2], degP[k2], g12);
-                    __int128 g[4];
-                    int dg = poly_gcd_full_i128(P[f], degP[f], g12, dg12, g);
-                    if (dg < 1) continue;
-                    // Check P'[f]·P'[k1] and P'[f]·P'[k2]
+                    // Check P'[f]·P'[k1] and P'[f]·P'[k2] at the specific root
                     __int128 prod1[5] = {};
                     for (int i = 0; i <= 2; i++)
                         for (int j = 0; j <= 2; j++)
@@ -4098,12 +4155,73 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                             prod2[i + j] += dP[f][i] * dP[k2][j];
                     int dp2 = 4;
                     while (dp2 > 0 && prod2[dp2] == 0) dp2--;
-                    int sign1 = resultant_sign_i128(g, dg, prod1, dp1);
-                    int sign2 = resultant_sign_i128(g, dg, prod2, dp2);
-                    if (sign1 < 0 || sign2 < 0)
+                    int signs1[3] = {}, signs2[3] = {};
+                    signs_at_roots_i128(P[f], degP[f], prod1, dp1, signs1, 3);
+                    signs_at_roots_i128(P[f], degP[f], prod2, dp2, signs2, 3);
+                    int ri = all_roots[r].root_idx;
+                    if (ri < 3 && (signs1[ri] < 0 || signs2[ri] < 0))
                         all_roots[r].valid = false;  // pass-through waypoint
                 }
             }
+        }
+    }
+
+    // --- Step 4d: TN face-interior handling ---
+    // A face-interior root with P[k]'(α)=0 is a tangency (double root).
+    // At a double root, μ_k ≈ P[k]''(α)(λ-α)²/(2Q(α)) — same sign both sides.
+    //
+    // Two sub-cases:
+    //   P[k]''·Q < 0 → isolated TN: curve touches face from OUTSIDE → exclude
+    //   P[k]''·Q > 0 → interior TN: curve touches face from INSIDE → count as
+    //                   2 punctures (the double root is the limit of two merging
+    //                   simple crossings; they pair with each other)
+    {
+        const int n_all_orig = n_all;  // freeze: don't process duplicates
+        for (int r = 0; r < n_all_orig; r++) {
+            if (!all_roots[r].valid) continue;
+            if (all_roots[r].is_infinity) continue;
+            if (all_roots[r].is_edge || all_roots[r].is_vertex) continue;
+
+            int face = all_roots[r].face;
+            int ri = all_roots[r].root_idx;
+            if (ri >= 3 || degP[face] < 2) continue;
+
+            // Check if P[face]'(α) = 0 at this root
+            int deg_dp = effective_degree_i128(dP[face], 2);
+            if (deg_dp == 0 && dP[face][0] == 0) continue;  // P' ≡ 0
+            int signs_dp[3] = {};
+            signs_at_roots_i128(P[face], degP[face], dP[face], deg_dp, signs_dp, 3);
+
+            if (signs_dp[ri] != 0) continue;  // not TN, normal crossing
+
+            // TN detected: check P[k]''(α) · Q(α) sign
+            __int128 P_pp[2] = {2 * P[face][2], 6 * P[face][3]};
+            int deg_pp = effective_degree_i128(P_pp, 1);
+            if (deg_pp == 0 && P_pp[0] == 0) {
+                // P'' ≡ 0 → triple root → exclude (no crossing)
+                all_roots[r].valid = false;
+                result.has_passthrough = true;
+                continue;
+            }
+
+            int signs_pp[3] = {}, signs_q[3] = {};
+            signs_at_roots_i128(P[face], degP[face], P_pp, deg_pp, signs_pp, 3);
+            signs_at_roots_i128(P[face], degP[face], Q, degQ, signs_q, 3);
+
+            if (signs_pp[ri] * signs_q[ri] < 0) {
+                // Isolated TN (ITN): curve touches face from outside → exclude
+                all_roots[r].valid = false;
+                result.has_passthrough = true;
+            } else if (signs_pp[ri] * signs_q[ri] > 0) {
+                // Non-isolated TN: curve touches face from inside → 2 punctures
+                // Add a second copy of this root
+                if (n_all < 12) {
+                    all_roots[n_all] = all_roots[r];  // copy
+                    n_all++;
+                }
+            }
+            // signs_pp[ri] * signs_q[ri] == 0: Q(α)=0 (SR) or P''=0 at root
+            // → leave as single puncture (degenerate, handled elsewhere)
         }
     }
 
