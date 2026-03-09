@@ -3735,6 +3735,18 @@ struct ExactPV2Result {
 
     bool has_passthrough = false;
     int passthrough_deg = 0;   // degree of gcd(P_0, P_1, P_2, P_3)
+
+    // Integer infrastructure for classifier (no floats needed)
+    bool merge_infinity = false;  // intervals 0 and n_qr_roots merge through λ=±∞
+    int n_qr_roots = 0;          // number of real roots of Q_red
+
+    __int128 h[4] = {};           // pass-through polynomial h = gcd(P_0..P_3)
+    int h_deg = 0;
+    int h_n_roots = 0;           // number of real roots of h
+
+    __int128 P_red[4][4] = {};    // P_red[k] = P_raw[k] / h (reduced face polynomials)
+    int degP_red[4] = {};
+    int n_distinct_red[4] = {};   // distinct real root count per reduced face poly
 };
 
 FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
@@ -4438,6 +4450,32 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                 result.n_pairs++;
             }
         }
+    }
+
+    // --- Fill integer infrastructure for classifier ---
+    result.merge_infinity = merge_infinity;
+    result.n_qr_roots = n_qr_roots;
+    for (int i = 0; i < 4; i++) result.h[i] = h[i];
+    result.h_deg = dh;
+    // h real root count
+    if (dh == 0) result.h_n_roots = 0;
+    else if (dh == 1) result.h_n_roots = 1;
+    else if (dh == 2) {
+        __int128 d2h = h[1]*h[1] - 4*h[2]*h[0];
+        result.h_n_roots = (d2h > 0) ? 2 : (d2h == 0) ? 1 : 0;
+    } else {
+        int dsh = discriminant_sign_i128(h);
+        if (dsh > 0) result.h_n_roots = 3;
+        else if (dsh < 0) result.h_n_roots = 1;
+        else {
+            __int128 sf[4]; result.h_n_roots = poly_sqfree_i128(h, dh, sf);
+        }
+    }
+    // P_red and n_distinct_red (P[k] is already P_red after Step 1)
+    for (int k = 0; k < 4; k++) {
+        for (int i = 0; i < 4; i++) result.P_red[k][i] = P[k][i];
+        result.degP_red[k] = degP[k];
+        result.n_distinct_red[k] = n_distinct[k];
     }
 
     return result;

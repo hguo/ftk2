@@ -1930,12 +1930,44 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         {1, 3, 2}, {0, 2, 3}, {0, 3, 1}, {0, 1, 2}
     };
 
-    // Solve float face cubics for lambda recovery
+    // Solve float face cubics for lambda recovery.
+    // When pass-through factoring removed h=gcd(P0..P3), the v2 solver's
+    // root_idx refers to roots of P_red = P/h, so we must solve P_red here.
+    double P_solve[4][4];  // polynomial to solve (original or reduced)
+    for (int fi = 0; fi < 4; fi++)
+        for (int j = 0; j < 4; j++)
+            P_solve[fi][j] = P[fi][j];
+
+    if (gpu_v2.v2.has_passthrough) {
+        // Replicate pass-through factoring: h = gcd(P0..P3), P_red = P/h
+        __int128 h[4] = {};
+        int degP_loc[4];
+        for (int k = 0; k < 4; k++)
+            degP_loc[k] = ftk2::effective_degree_i128(P_i128[k], 3);
+        int dh = ftk2::poly_gcd_full_i128(P_i128[0], degP_loc[0],
+                                           P_i128[1], degP_loc[1], h);
+        for (int k = 2; k < 4; k++) {
+            __int128 h2[4] = {};
+            int dh2 = ftk2::poly_gcd_full_i128(h, dh, P_i128[k], degP_loc[k], h2);
+            dh = dh2;
+            for (int i = 0; i < 4; i++) h[i] = h2[i];
+        }
+        if (dh >= 1) {
+            for (int k = 0; k < 4; k++) {
+                __int128 p_div[4] = {};
+                int dp = ftk2::poly_exact_div_i128(P_i128[k], degP_loc[k],
+                                                    h, dh, p_div);
+                for (int j = 0; j < 4; j++)
+                    P_solve[k][j] = (j <= dp) ? (double)p_div[j] : 0.0;
+            }
+        }
+    }
+
     double face_roots[4][3];
     int face_n_distinct[4];
     for (int fi = 0; fi < 4; fi++) {
         double raw_roots[3];
-        int nr = solve_cubic_real(P[fi], raw_roots);
+        int nr = solve_cubic_real(P_solve[fi], raw_roots);
         std::sort(raw_roots, raw_roots + nr);
         // Deduplicate (merge roots within relative epsilon)
         face_n_distinct[fi] = 0;
@@ -2056,157 +2088,85 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         cc.intervals.push_back({-INFINITY, INFINITY, 0, true});
     }
 
-    // ─── Step 4: Interval assignment (Sturm-based on float lambda) ────
-    // Uses original Q (not Q_red) for consistency with v1 taxonomy.
-    double Q_exact[4];
-    for (int i = 0; i < 4; i++) Q_exact[i] = Q[i];
+    // ─── Step 4: Interval assignment (pure integer from v2 solver) ─────
+    // The v2 solver provides q_interval (Q_red interval index) for each
+    // puncture, computed via integer compare_roots_i128.  To map to original
+    // Q intervals (Q = h * Q_red), we add the number of h-roots below
+    // each puncture, also computed via integer compare_roots_i128.
 
-    // Shared root detection (needed for SR tag and verify_case)
-    // Use Q_i128/P_i128 from compute_tet_QP_i128 (line 1921) with
-    // resultant_sign_i128 (GCD-factored Bareiss, no overflow).
+    // Shared root detection (integer): Q shares a root with any P[k]
+    // Uses resultant_sign_i128 (GCD-factored Bareiss, pure __int128).
+    // This is distinct from pass-through (h = gcd(P0..P3) nontrivial):
+    // SR means Q shares root with some P[k]; pass-through means ALL P[k] share a root.
     if (degQ > 0) {
         int degQ_i = ftk2::effective_degree_i128(Q_i128, 3);
-        bool sr = false;
-        for (int k = 0; k < 4 && !sr; k++) {
+        for (int k = 0; k < 4; k++) {
             int degPk = ftk2::effective_degree_i128(P_i128[k], 3);
             if (degPk <= 0) continue;
-            if (ftk2::resultant_sign_i128(Q_i128, degQ_i, P_i128[k], degPk) == 0)
-                sr = true;
+            if (ftk2::resultant_sign_i128(Q_i128, degQ_i, P_i128[k], degPk) == 0) {
+                cc.has_shared_root = true;
+                break;
+            }
         }
-        cc.has_shared_root = sr;
     }
 
-    if (degQ > 0 && cc.n_Q_roots == 1) {
-        // Sign-of-Q method (Q3-, Q1)
-        for (auto& pi : cc.punctures) {
-            if (std::isinf(pi.lambda)) {
-                pi.interval_idx = 1;  // infinity > the single root
-                cc.intervals[1].n_pv++;
-                continue;
-            }
-            double Qval = eval_poly_sturm(Q_exact, 3, pi.lambda);
-            double ax = std::abs(pi.lambda);
-            double cond = std::abs(Q_exact[3]);
-            for (int d = 2; d >= 0; --d) cond = cond * ax + std::abs(Q_exact[d]);
-            double gamma = (double)(2 * 3 + 2) * DBL_EPSILON;
-            bool cert = std::abs(Qval) > gamma * cond;
-            if (!cert) {
-                double delta = 4.0 * DBL_EPSILON * std::max(1.0, ax);
-                Qval = eval_poly_sturm(Q_exact, 3, pi.lambda + delta);
-            }
-            // For any degree with 1 root: above root iff sign(Q(λ)) == sign(lc)
-            double lc = Q_exact[degQ];
-            int interval_idx = ((Qval > 0) == (lc > 0)) ? 1 : 0;
-            pi.interval_idx = interval_idx;
-            cc.intervals[interval_idx].n_pv++;
-        }
-    } else if (degQ > 0 && cc.n_Q_roots > 1) {
-        // Sturm chain (Q3+, Q2)
-        __int128 p0 = (__int128)llround(Q[0]), p1 = (__int128)llround(Q[1]),
-                 p2 = (__int128)llround(Q[2]), p3 = (__int128)llround(Q[3]);
-        SturmSeqDouble Q_seq;
+    for (int pi = 0; pi < (int)cc.punctures.size(); pi++) {
+        auto& punc = cc.punctures[pi];
+        const auto& vp = v2.punctures[pi];
+        int q_red_iv = vp.q_interval;  // from v2 solver (integer)
 
-        for (int i = 0; i < 4; i++) Q_seq.c[0][i] = Q_exact[i];
-        Q_seq.deg[0] = degQ;
-        Q_seq.c[1][0] = Q_exact[1];
-        Q_seq.c[1][1] = 2.0 * Q_exact[2];
-        Q_seq.c[1][2] = 3.0 * Q_exact[3];
-        Q_seq.c[1][3] = 0;
-        Q_seq.deg[1] = degQ - 1;
-
-        if (degQ == 2) {
-            __int128 s2_const = p2 * (p1 * p1 - (__int128)4 * p0 * p2);
-            Q_seq.c[2][0] = (s2_const > 0) ? 1.0 : ((s2_const < 0) ? -1.0 : 0.0);
-            Q_seq.c[2][1] = 0; Q_seq.c[2][2] = 0; Q_seq.c[2][3] = 0;
-            Q_seq.deg[2] = 0;
-            Q_seq.n = (s2_const != 0) ? 3 : 2;
-        } else {
-            __int128 s20_i = p3 * (p1 * p2 - (__int128)9 * p0 * p3);
-            __int128 s21_i = (__int128)2 * p3 * (p2 * p2 - (__int128)3 * p1 * p3);
-            __int128 abs20 = (s20_i >= 0) ? s20_i : -s20_i;
-            __int128 abs21 = (s21_i >= 0) ? s21_i : -s21_i;
-            __int128 s2max = (abs20 > abs21) ? abs20 : abs21;
-            if (s2max > 0) {
-                Q_seq.c[2][0] = (double)s20_i / (double)s2max;
-                Q_seq.c[2][1] = (double)s21_i / (double)s2max;
+        // Count h-roots below this puncture using integer compare_roots
+        int h_below = 0;
+        if (v2.h_n_roots > 0 && !vp.is_edge && !vp.is_vertex) {
+            if (vp.root_idx < 0) {
+                // Infinity puncture: all h-roots are below
+                h_below = v2.h_n_roots;
             } else {
-                Q_seq.c[2][0] = 0; Q_seq.c[2][1] = 0;
+                for (int hi = 0; hi < v2.h_n_roots; hi++) {
+                    int cmp = ftk2::compare_roots_i128(
+                        v2.P_red[vp.face], v2.degP_red[vp.face],
+                        v2.n_distinct_red[vp.face], vp.root_idx,
+                        v2.h, v2.h_deg, v2.h_n_roots, hi);
+                    if (cmp > 0) h_below++;  // h root is below puncture
+                }
             }
-            Q_seq.c[2][2] = 0; Q_seq.c[2][3] = 0;
-            Q_seq.deg[2] = (s21_i != 0) ? 1 : 0;
-
-            if (s21_i == 0 && s20_i == 0) {
-                Q_seq.c[3][0] = 0; Q_seq.n = 2;
-            } else if (cc.Q_disc_sign == 0) {
-                Q_seq.c[3][0] = 0; Q_seq.n = 3;
+        } else if (v2.h_n_roots > 0 && (vp.is_edge || vp.is_vertex)) {
+            // Edge/vertex puncture: use any non-zero face's P_red for comparison
+            // (all faces share the same λ at edge/vertex points)
+            if (vp.root_idx < 0) {
+                h_below = v2.h_n_roots;
             } else {
-                int sign_lc = (p3 > 0) ? 1 : -1;
-                Q_seq.c[3][0] = (double)(sign_lc * cc.Q_disc_sign);
-                Q_seq.deg[3] = 0;
-                Q_seq.n = 4;
-            }
-        }
-
-        for (auto& pi : cc.punctures) {
-            if (std::isinf(pi.lambda)) {
-                pi.interval_idx = cc.n_Q_roots;
-                cc.intervals[cc.n_Q_roots].n_pv++;
-                continue;
-            }
-            auto [count, cert] = sturm_count_at_certified(Q_seq, pi.lambda);
-            if (!cert) {
-                double delta = 4.0 * DBL_EPSILON * std::max(1.0, std::abs(pi.lambda));
-                count = sturm_count_at(Q_seq, pi.lambda + delta);
-            }
-            int interval_idx = cc.n_Q_roots - count;
-            if (interval_idx >= 0 && interval_idx < (int)cc.intervals.size()) {
-                pi.interval_idx = interval_idx;
-                cc.intervals[interval_idx].n_pv++;
-            }
-        }
-    } else {
-        for (auto& pi : cc.punctures)
-            pi.interval_idx = 0;
-        cc.intervals[0].n_pv = (int)cc.punctures.size();
-    }
-
-    // ─── Step 5: Pairs from ExactPV2Result (moved before T-count) ─────
-    {
-        // Infinity merging (same logic as v1)
-        bool merge_infinity;
-        if (Q[3] == 0.0) {
-            merge_infinity = true;
-        } else {
-            int64_t q3 = llround(Q[3]);
-            merge_infinity = true;
-            for (int k = 0; k < 4; k++) {
-                int64_t pk3 = llround(P[k][3]);
-                if ((pk3 > 0 && q3 < 0) || (pk3 < 0 && q3 > 0)) {
-                    merge_infinity = false;
-                    break;
+                for (int hi = 0; hi < v2.h_n_roots; hi++) {
+                    int cmp = ftk2::compare_roots_i128(
+                        v2.P_red[vp.face], v2.degP_red[vp.face],
+                        v2.n_distinct_red[vp.face], vp.root_idx,
+                        v2.h, v2.h_deg, v2.h_n_roots, hi);
+                    if (cmp > 0) h_below++;
                 }
             }
         }
 
-        // Determine left/right interval sets for cross detection
-        int n_iv = (int)cc.intervals.size();
-        std::set<int> right_pis_set, left_pis_set;
-        if (merge_infinity && n_iv >= 2) {
-            for (int i = 0; i < (int)cc.punctures.size(); i++) {
-                if (cc.punctures[i].interval_idx == n_iv - 1)
-                    right_pis_set.insert(i);
-                if (cc.punctures[i].interval_idx == 0)
-                    left_pis_set.insert(i);
-            }
+        int interval_idx = q_red_iv + h_below;
+        if (interval_idx >= 0 && interval_idx < (int)cc.intervals.size()) {
+            punc.interval_idx = interval_idx;
+            cc.intervals[interval_idx].n_pv++;
         }
+    }
 
+    // ─── Step 5: Pairs + is_cross (pure integer from v2 solver) ──────
+    {
         for (int i = 0; i < v2.n_pairs; i++) {
             int a = v2.pairs[i].a, b = v2.pairs[i].b;
             if (a >= (int)cc.punctures.size() || b >= (int)cc.punctures.size())
-                continue;  // safety
-            bool is_cross = merge_infinity &&
-                ((right_pis_set.count(a) && left_pis_set.count(b)) ||
-                 (left_pis_set.count(a) && right_pis_set.count(b)));
+                continue;
+
+            // is_cross: the v2 solver paired these in Q_RED space.
+            // A pair spans infinity iff merge_infinity_red AND the two
+            // punctures are in different Q_red intervals (0 vs n_qr_roots).
+            int qa = v2.punctures[a].q_interval;
+            int qb = v2.punctures[b].q_interval;
+            bool is_cross = v2.merge_infinity && (qa != qb);
+
             int iv_idx = cc.punctures[a].interval_idx;
             cc.pairs.push_back({a, b, is_cross, iv_idx});
         }
@@ -2221,16 +2181,83 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         for (int i = 0; i < (int)cc.punctures.size(); i++)
             if (paired.find(i) == paired.end())
                 unpaired.push_back(i);
+        // Sort unpaired by q_interval (integer), then root_idx (integer)
         std::sort(unpaired.begin(), unpaired.end(), [&](int a, int b) {
-            double la = cc.punctures[a].lambda;
-            double lb = cc.punctures[b].lambda;
-            if (std::isinf(la) && std::isinf(lb)) return false;
-            if (std::isinf(la)) return false;
-            if (std::isinf(lb)) return true;
-            return la < lb;
+            int qa = v2.punctures[a].q_interval, qb = v2.punctures[b].q_interval;
+            if (qa != qb) return qa < qb;
+            return v2.punctures[a].root_idx < v2.punctures[b].root_idx;
         });
         for (int j = 0; j + 1 < (int)unpaired.size(); j += 2)
             cc.pairs.push_back({unpaired[j], unpaired[j + 1], false, -1});
+
+        // ── Assertion: no segment arc may contain a non-SR Q-root ──
+        // For each pair, the original Q-interval indices of both punctures
+        // must agree that only SR Q-roots lie between them (short arc),
+        // or outside them (long arc / is_cross).
+        // SR Q-root indices: those Q-root positions that correspond to
+        // h-roots (not Q_red roots).  We identify them by checking which
+        // original Q-root indices are "h root positions."
+        // SR root index i means Q_roots[i] is a root of h (pass-through).
+        // h-root positions among sorted Q roots: for each h root (indexed hi),
+        // its position = (number of Q_red roots below it) + hi.
+        // We compute this with compare_roots_i128(Q_red, h).
+        std::set<int> sr_qr_set;
+        if (v2.h_n_roots > 0) {
+            __int128 Q_red_i128[4] = {};
+            int degQ_red = ftk2::effective_degree_i128(Q_i128, 3);
+            if (v2.h_deg >= 1) {
+                __int128 qd[4] = {};
+                degQ_red = ftk2::poly_exact_div_i128(
+                    Q_i128, ftk2::effective_degree_i128(Q_i128, 3),
+                    v2.h, v2.h_deg, qd);
+                for (int i = 0; i < 4; i++) Q_red_i128[i] = (i <= degQ_red) ? qd[i] : 0;
+            } else {
+                for (int i = 0; i < 4; i++) Q_red_i128[i] = Q_i128[i];
+            }
+            for (int hi = 0; hi < v2.h_n_roots; hi++) {
+                int qr_below = 0;
+                for (int qi = 0; qi < v2.n_qr_roots; qi++) {
+                    int cmp = ftk2::compare_roots_i128(
+                        v2.h, v2.h_deg, v2.h_n_roots, hi,
+                        Q_red_i128, degQ_red, v2.n_qr_roots, qi);
+                    if (cmp > 0) qr_below++;  // Q_red root below this h root
+                }
+                sr_qr_set.insert(qr_below + hi);
+            }
+        }
+        // Store SR indices for JSON output
+        cc.n_sr_roots = 0;
+        for (int idx : sr_qr_set)
+            if (cc.n_sr_roots < 3)
+                cc.sr_q_root_idx[cc.n_sr_roots++] = idx;
+
+        for (const auto& pp : cc.pairs) {
+            if (pp.pi_a < 0 || pp.pi_b < 0) continue;
+            int iv_a = cc.punctures[pp.pi_a].interval_idx;
+            int iv_b = cc.punctures[pp.pi_b].interval_idx;
+            int lo_iv = std::min(iv_a, iv_b);
+            int hi_iv = std::max(iv_a, iv_b);
+            if (!pp.is_cross) {
+                for (int qi = lo_iv; qi < hi_iv; qi++) {
+                    if (sr_qr_set.find(qi) == sr_qr_set.end()) {
+                        fprintf(stderr, "  [ASSERT FAIL] seed=%lu: pair (%d,%d) short arc "
+                                "crosses non-SR Q-root %d (Q_roots[%d]=%.6f)\n",
+                                (unsigned long)gpu_v2.seed, pp.pi_a, pp.pi_b,
+                                qi, qi, cc.Q_roots[qi]);
+                    }
+                }
+            } else {
+                for (int qi = 0; qi < cc.n_Q_roots; qi++) {
+                    if (qi >= lo_iv && qi < hi_iv) continue;
+                    if (sr_qr_set.find(qi) == sr_qr_set.end()) {
+                        fprintf(stderr, "  [ASSERT FAIL] seed=%lu: pair (%d,%d) long arc "
+                                "crosses non-SR Q-root %d (Q_roots[%d]=%.6f)\n",
+                                (unsigned long)gpu_v2.seed, pp.pi_a, pp.pi_b,
+                                qi, qi, cc.Q_roots[qi]);
+                    }
+                }
+            }
+        }
     }
 
     // ─── Step 6: D00/D01 detection and marking on punctures ──────────
@@ -2527,22 +2554,8 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
 
         if (any_in_tet) {
             tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
-            cc.n_sr_roots = 0;
-            for (int qi = 0; qi < cc.n_Q_roots && cc.n_sr_roots < 3; qi++) {
-                double r = cc.Q_roots[qi];
-                double gval = 0, gscale = 0;
-                for (int j = 0; j <= dg; j++) {
-                    double gj = (double)g[j];
-                    double rpow = 1.0;
-                    for (int p = 0; p < j; p++) rpow *= r;
-                    gval += gj * rpow;
-                    gscale += std::abs(gj * rpow);
-                }
-                bool is_root = (std::abs(gval) < 1e-10) ||
-                               (gscale > 0 && std::abs(gval) / gscale < 1e-6);
-                if (is_root)
-                    cc.sr_q_root_idx[cc.n_sr_roots++] = qi;
-            }
+            // sr_q_root_idx already computed in Step 5 via integer
+            // compare_roots_i128(h, Q_red) — no float re-identification needed
         } else {
             cc.has_shared_root = false;
         }
