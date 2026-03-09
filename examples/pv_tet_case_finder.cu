@@ -2635,8 +2635,9 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
     }
 
     // ── Step 8b: Include non-pass-through Cv1/Cv0/Cw1/Cw0 waypoints in T ──
-    // Only genuine crossings (not pass-through) contribute to T-count.
-    // Pass-through test: derivative product < 0 at the edge/vertex.
+    // Edge/vertex punctures count towards T ONLY if non-isolated (i.e., they
+    // are endpoints of curve intervals with face-interior punctures in the
+    // adjacent Q-interval).  Isolated waypoints (no partner) are excluded.
     {
         // Cv at λ=0: P'[k](0) = P[k][1]
         if (has_C0v || has_C1v) {
@@ -2649,12 +2650,16 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                     if (P_i128[cv_faces[a]][1] * P_i128[cv_faces[b]][1] < 0)
                         is_pt = true;
             if (!is_pt) {
+                // Find which interval contains λ=0
                 int iv_idx = 0;
                 for (int i = 0; i < cc.n_Q_roots; i++) {
                     if (cc.Q_roots[i] > 0.0) break;
                     iv_idx = i + 1;
                 }
-                if (iv_idx >= 0 && iv_idx < (int)cc.intervals.size()) {
+                // Only count if the interval already has face-interior punctures
+                // (non-isolated = there's a partner to form a curve segment)
+                if (iv_idx >= 0 && iv_idx < (int)cc.intervals.size()
+                    && cc.intervals[iv_idx].n_pv > 0) {
                     cc.intervals[iv_idx].n_pv++;
                     n_face++;
                 }
@@ -2681,8 +2686,9 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                                 is_pt = true;
                 }
                 if (!is_pt) {
+                    // Only count if the last interval has face-interior punctures
                     int last_iv = (int)cc.intervals.size() - 1;
-                    if (last_iv >= 0) {
+                    if (last_iv >= 0 && cc.intervals[last_iv].n_pv > 0) {
                         cc.intervals[last_iv].n_pv++;
                         n_face++;
                     }
@@ -3468,36 +3474,47 @@ int main(int argc, char** argv)
                 (int)seeds.size(), R, (unsigned long)base_seed);
         for (uint64_t s : seeds) {
             TetCaseGPU tc = generate_tet_from_seed(s, base_seed, R);
-            ClassifiedCase cc = classify_case(tc);
-            verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
-            print_json(cc);
-            fprintf(stderr, "  seed=%lu: %s (%d punctures, %d pairs)\n",
-                    (unsigned long)s, cc.category.c_str(),
-                    (int)cc.punctures.size(), (int)cc.pairs.size());
+            ClassifiedCase cc;
 
-            // ExactPV2 comparison
-            if (pv_version == 2 || pv_version == 3) {
+            if (pv_version == 2) {
+                // Pure v2 path: same as GPU batch mode
                 __int128 Q_i128[4], P_i128[4][4];
                 ftk2::compute_tet_QP_i128(tc.V, tc.W, Q_i128, P_i128);
                 ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+                TetCaseV2GPU tv2;
+                memcpy(tv2.V, tc.V, sizeof(tc.V));
+                memcpy(tv2.W, tc.W, sizeof(tc.W));
+                tv2.v2 = v2;
+                for (int k = 0; k < 4; k++)
+                    tv2.disc_sign[k] = ftk2::discriminant_sign_i128(P_i128[k]);
+                tv2.seed = tc.seed;
+                cc = classify_case_v2(tv2);
+                verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
+                print_json(cc);
+                fprintf(stderr, "  seed=%lu: %s (%d punctures, %d pairs)\n",
+                        (unsigned long)s, cc.category.c_str(),
+                        (int)cc.punctures.size(), (int)cc.pairs.size());
                 fprintf(stderr, "    [v2] %d punctures, %d pairs, passthrough=%d (deg %d)\n",
                         v2.n_punctures, v2.n_pairs, v2.has_passthrough, v2.passthrough_deg);
+            } else {
+                cc = classify_case(tc);
+                verify_case(cc, cc.Q_coeffs, cc.P_coeffs);
+                print_json(cc);
+                fprintf(stderr, "  seed=%lu: %s (%d punctures, %d pairs)\n",
+                        (unsigned long)s, cc.category.c_str(),
+                        (int)cc.punctures.size(), (int)cc.pairs.size());
 
+                // ExactPV2 comparison (v1 or both mode)
                 if (pv_version == 3) {
-                    // Compare: v1 pairs vs v2 pairs count
+                    __int128 Q_i128[4], P_i128[4][4];
+                    ftk2::compute_tet_QP_i128(tc.V, tc.W, Q_i128, P_i128);
+                    ftk2::ExactPV2Result v2 = ftk2::solve_pv_tet_v2(Q_i128, P_i128);
+                    fprintf(stderr, "    [v2] %d punctures, %d pairs, passthrough=%d (deg %d)\n",
+                            v2.n_punctures, v2.n_pairs, v2.has_passthrough, v2.passthrough_deg);
                     int v1_pairs = (int)cc.pairs.size();
                     if (v1_pairs != v2.n_pairs) {
                         fprintf(stderr, "    [MISMATCH] v1 pairs=%d, v2 pairs=%d\n",
                                 v1_pairs, v2.n_pairs);
-                        for (int pi = 0; pi < v2.n_punctures; pi++) {
-                            auto& p = v2.punctures[pi];
-                            fprintf(stderr, "      v2 punct[%d]: face=%d root_idx=%d q_int=%d edge=%d\n",
-                                    pi, p.face, p.root_idx, p.q_interval, p.is_edge);
-                        }
-                        for (int pi = 0; pi < v2.n_pairs; pi++) {
-                            fprintf(stderr, "      v2 pair[%d]: %d-%d\n",
-                                    pi, v2.pairs[pi].a, v2.pairs[pi].b);
-                        }
                     } else
                         fprintf(stderr, "    [MATCH] %d pairs\n", v1_pairs);
                 }

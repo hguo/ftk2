@@ -316,6 +316,52 @@ def find_d00_vertices(case_data):
     return d00
 
 
+def find_d11_edges(case_data):
+    """Find tet edges where both endpoints have V×W = 0 at the same λ (D11).
+
+    Returns list of (vi, vj, lambda) tuples.
+    """
+    V = np.array(case_data['V'], dtype=float)
+    W = np.array(case_data['W'], dtype=float)
+
+    # Find PV vertices and their λ values
+    pv_info = {}  # vertex_index -> (is_pv, lambda_num, lambda_den, any_lambda)
+    for i in range(4):
+        cross = np.cross(V[i], W[i])
+        if np.linalg.norm(cross) > 1e-10 * max(np.linalg.norm(V[i]),
+                                                  np.linalg.norm(W[i]), 1e-30):
+            continue
+        v_zero = np.allclose(V[i], 0, atol=1e-15)
+        w_zero = np.allclose(W[i], 0, atol=1e-15)
+        if v_zero and w_zero:
+            pv_info[i] = (True, 0, 0, True)  # any lambda
+        elif v_zero:
+            pv_info[i] = (True, 0, 1, False)  # lambda=0
+        elif w_zero:
+            pv_info[i] = (True, 1, 0, False)  # lambda=inf
+        else:
+            for k in range(3):
+                if abs(W[i][k]) > 1e-15:
+                    pv_info[i] = (True, -V[i][k], W[i][k], False)
+                    break
+
+    TET_EDGE_PAIRS = [(0,1),(0,2),(0,3),(1,2),(1,3),(2,3)]
+    d11_edges = []
+    for vi, vj in TET_EDGE_PAIRS:
+        if vi not in pv_info or vj not in pv_info:
+            continue
+        _, n1, d1, any1 = pv_info[vi]
+        _, n2, d2, any2 = pv_info[vj]
+        if any1 or any2:
+            lam = n2 / d2 if d2 != 0 and not any2 else (n1 / d1 if d1 != 0 else 0.0)
+            d11_edges.append((vi, vj, lam))
+        elif d1 != 0 and d2 != 0 and abs(n1 * d2 - n2 * d1) < 1e-10:
+            d11_edges.append((vi, vj, n1 / d1))
+        elif d1 == 0 and d2 == 0:  # both at infinity
+            d11_edges.append((vi, vj, float('inf')))
+    return d11_edges
+
+
 def compute_cv_position(case_data):
     """Read Cv position from C++ JSON (tet barycentric coords)."""
     mu = case_data.get('Cv_mu')
@@ -482,6 +528,21 @@ def draw_special_points(ax, case_data, segments=None):
                                lam_str=f'$\\lambda={qr:.2f}$',
                                color='#ff8800', bg='#fff8ee',
                                marker='D', ms=180, mc='#ff8800'))
+
+    # D11: curve on edge — draw highlighted thick edge
+    if 'D11' in category:
+        d11_edges = find_d11_edges(case_data)
+        d11_color = '#cc6600'
+        for vi, vj, lam in d11_edges:
+            p1, p2 = TET_VERTS[vi], TET_VERTS[vj]
+            ax.plot3D(*zip(p1, p2), color=d11_color, linewidth=4.0,
+                      alpha=0.9, zorder=10)
+            mid = (p1 + p2) / 2
+            lam_str = (f'$\\lambda={lam:.2f}$' if not np.isinf(lam)
+                       else r'$\lambda\!\to\!\infty$')
+            annots.append(dict(pos=mid, tag='D11', lam_str=lam_str,
+                               color=d11_color, bg='#fff4ee',
+                               marker='h', ms=100, mc=d11_color))
 
     # TN: tangency
     tn_points = case_data.get('tn_points', [])
@@ -807,6 +868,16 @@ def draw_lambda_ring(ax, case_data, segments):
             lam_str = f'$\\lambda$={lam_d:.2f}' if lam_d is not None else r'$\lambda\!\to\!\infty$'
             ring_annots.append(dict(angle=a, tag='D01', lam_str=lam_str,
                 color='#9900cc', bg='#f4eeff', marker='v', ms=9))
+
+    # D11: curve on edge (mark λ on ring)
+    if 'D11' in category:
+        d11_edges = find_d11_edges(case_data)
+        for vi, vj, lam_d11 in d11_edges:
+            a = lambda_to_angle(lam_d11, scale) if not np.isinf(lam_d11) else np.pi / 2
+            lam_str = (f'$\\lambda$={lam_d11:.2f}' if not np.isinf(lam_d11)
+                       else r'$\lambda\!\to\!\infty$')
+            ring_annots.append(dict(angle=a, tag='D11', lam_str=lam_str,
+                color='#cc6600', bg='#fff4ee', marker='h', ms=9))
 
     # Cv
     cv_tag_ring = None

@@ -3968,17 +3968,41 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                     }
 
                     // Cw2 (face-interior at ∞)
-                    if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
-                    RootInfo& ri_info = all_roots[n_all];
-                    ri_info.face = k;
-                    ri_info.root_idx = -1;  // infinity marker
-                    ri_info.q_interval = -1;
-                    ri_info.valid = true;
-                    ri_info.is_edge = false;
-                    ri_info.is_vertex = false;
-                    ri_info.is_infinity = true;
-                    ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
-                    n_all++;
+                    // Tangency-at-infinity check: determine if the curve
+                    // genuinely crosses face k at λ→∞, or only touches it.
+                    //   μ_k(λ) = P[k](λ)/Q(λ) → 0 as λ→∞ (since degP[k] < d_Q).
+                    // Let d_k = effective degree of P[k], gap = d_Q - d_k.
+                    //   gap odd  → μ_k changes sign at ∞ → genuine crossing (1 puncture)
+                    //   gap even → μ_k same sign on both sides:
+                    //     P[k][d_k]·Q_lead > 0 → from inside (NIT at ∞, 2 punctures)
+                    //     P[k][d_k]·Q_lead < 0 → from outside (ITN at ∞, 0 punctures)
+                    int d_k = degP[k];
+                    // degP[k] already < d_Q (checked above).  Find actual leading coeff.
+                    while (d_k > 0 && P[k][d_k] == 0) d_k--;
+                    int gap = d_Q - d_k;
+                    int n_inf_punc = 1;  // default: genuine crossing
+                    if (gap >= 2 && gap % 2 == 0) {
+                        __int128 sign_prod = P[k][d_k] * Q_lead;
+                        if (sign_prod < 0)
+                            n_inf_punc = 0;  // ITN: curve from outside, exclude
+                        else if (sign_prod > 0)
+                            n_inf_punc = 2;  // NIT: curve from inside, 2 punctures
+                        // sign_prod == 0: degenerate, keep 1
+                    }
+
+                    for (int ip = 0; ip < n_inf_punc; ip++) {
+                        if (n_all >= ExactPV2Result::MAX_PUNCTURES) break;
+                        RootInfo& ri_info = all_roots[n_all];
+                        ri_info.face = k;
+                        ri_info.root_idx = -1;  // infinity marker
+                        ri_info.q_interval = -1;
+                        ri_info.valid = true;
+                        ri_info.is_edge = false;
+                        ri_info.is_vertex = false;
+                        ri_info.is_infinity = true;
+                        ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
+                        n_all++;
+                    }
                 }
             }
         }
