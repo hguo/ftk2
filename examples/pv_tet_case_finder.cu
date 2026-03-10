@@ -520,6 +520,8 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         }
     }
 
+    int h_merged_pos[4] = {-1,-1,-1,-1};
+
     // ─── Step 5: Pairs + is_cross (pure integer from v2 solver) ──────
     {
         for (int i = 0; i < v2.n_pairs; i++) {
@@ -574,7 +576,9 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                         Q_red_i128, degQ_red, v2.n_qr_roots, qi);
                     if (cmp > 0) qr_below++;
                 }
-                sr_qr_set.insert(qr_below + hi);
+                int mpos = qr_below + hi;
+                sr_qr_set.insert(mpos);
+                h_merged_pos[hi] = mpos;
             }
         }
         cc.n_sr_roots = 0;
@@ -936,6 +940,8 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         bool any_sr = false;   // any shared root inside tet → "SR"
         bool any_isr = false;  // any shared root outside tet → "ISR"
         cc.has_non_isolated_sr = false;
+        int inside_tet_sr_pos[4];
+        int n_inside_sr = 0;
 
         if (dg >= 1) {
             int dQi = ftk2::effective_degree_i128(Q_i128, 3);
@@ -975,8 +981,20 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                         int sp = eval_at_root(Pr[k], dPr[k]);
                         if (sp * sq < 0) { in_tet = false; break; }
                     }
-                    if (in_tet) any_sr = true;
-                    else any_isr = true;
+                    if (in_tet) {
+                        any_sr = true;
+                        for (int hi = 0; hi < v2.h_n_roots && n_inside_sr < 4; hi++) {
+                            int cmp = ftk2::compare_roots_i128(
+                                g, dg, 1, 0,
+                                v2.h, v2.h_deg, v2.h_n_roots, hi);
+                            if (cmp == 0 && h_merged_pos[hi] >= 0) {
+                                inside_tet_sr_pos[n_inside_sr++] = h_merged_pos[hi];
+                                break;
+                            }
+                        }
+                    } else {
+                        any_isr = true;
+                    }
                 }
             } else {
                 // Pre-compute signs of P_red[k] at all roots of h
@@ -995,17 +1013,37 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                             if (dPr[k] == 0 && Pr[k][0] == 0) continue;
                             if (spk_all[k][ri] * sq[ri] < 0) { in_tet = false; break; }
                         }
-                        if (in_tet) any_sr = true;
-                        else any_isr = true;
+                        if (in_tet) {
+                            any_sr = true;
+                            for (int hi = 0; hi < v2.h_n_roots && n_inside_sr < 4; hi++) {
+                                int cmp = ftk2::compare_roots_i128(
+                                    g, dg, nrg, ri,
+                                    v2.h, v2.h_deg, v2.h_n_roots, hi);
+                                if (cmp == 0 && h_merged_pos[hi] >= 0) {
+                                    inside_tet_sr_pos[n_inside_sr++] = h_merged_pos[hi];
+                                    break;
+                                }
+                            }
+                        } else {
+                            any_isr = true;
+                        }
                     }
                 }
             }
-            cc.has_non_isolated_sr = any_isr;
         }
 
         if (any_sr) tags.push_back("SR");
-        if (any_isr) tags.push_back("ISR");
-        if (!any_sr && !any_isr) cc.has_shared_root = false;
+        if (!any_sr) cc.has_shared_root = false;
+
+        // Filter sr_q_root_idx to only include inside-tet SR roots
+        if (!any_sr) {
+            cc.n_sr_roots = 0;
+        } else if (any_isr && n_inside_sr > 0) {
+            std::sort(inside_tet_sr_pos, inside_tet_sr_pos + n_inside_sr);
+            cc.n_sr_roots = 0;
+            for (int i = 0; i < n_inside_sr && i < 3; i++)
+                cc.sr_q_root_idx[cc.n_sr_roots++] = inside_tet_sr_pos[i];
+        }
     }
 
     // ── Cv/Cw: critical-point degeneracies ──
