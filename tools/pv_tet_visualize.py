@@ -95,6 +95,194 @@ def bary_tet_to_3d(mu):
     return sum(mu[i] * TET_VERTS[i] for i in range(4))
 
 
+# ─── Integer-to-float reconstruction ──────────────────────────────────────
+
+def _solve_poly_roots(coeffs_float, degree, n_distinct):
+    """Compute sorted distinct real roots of polynomial c0 + c1*x + ... + cd*x^d.
+    Returns exactly n_distinct roots (or fewer if numerics fail)."""
+    if degree <= 0 or n_distinct == 0:
+        return []
+
+    # Factor out exact x=0 roots
+    zero_roots = []
+    trimmed = list(coeffs_float[:degree + 1])
+    while len(trimmed) > 1 and abs(trimmed[0]) < 0.5:
+        zero_roots.append(0.0)
+        trimmed = trimmed[1:]
+
+    remaining_deg = len(trimmed) - 1
+    if remaining_deg <= 0:
+        return sorted(zero_roots[:n_distinct])
+
+    # numpy.roots expects highest-degree-first
+    poly_np = [trimmed[i] for i in range(remaining_deg, -1, -1)]
+    all_roots = np.roots(poly_np)
+
+    # Filter real roots
+    real_roots = [r.real for r in all_roots
+                  if abs(r.imag) < 1e-6 * max(1.0, abs(r.real))]
+    real_roots = sorted(zero_roots + real_roots)
+
+    # Dedup to n_distinct
+    if len(real_roots) <= n_distinct:
+        return real_roots
+
+    deduped = [real_roots[0]]
+    for r in real_roots[1:]:
+        if abs(r - deduped[-1]) > 1e-8 * max(1.0, abs(deduped[-1])):
+            deduped.append(r)
+        else:
+            deduped[-1] = (deduped[-1] + r) / 2
+    return deduped[:n_distinct]
+
+
+def ensure_float_fields(case_data):
+    """Reconstruct float fields from integer-only JSON for visualization.
+
+    New format has Q_i128/P_i128 (string-encoded __int128 coefficients).
+    Old format has Q_coeffs/P_coeffs/Q_roots and puncture lambda/bary.
+    This adds old-style float fields so all drawing code works unchanged.
+    """
+    if 'Q_coeffs' in case_data:
+        return  # old format, nothing to do
+    if 'Q_i128' not in case_data:
+        return
+
+    fv = [[1, 3, 2], [0, 2, 3], [0, 3, 1], [0, 1, 2]]  # FACE_VERTS
+
+    # ── 1. Q_coeffs and P_coeffs from i128 strings ──
+    Q_coeffs = [float(int(c)) for c in case_data['Q_i128']]
+    P_coeffs = [[float(int(c)) for c in row] for row in case_data['P_i128']]
+    case_data['Q_coeffs'] = Q_coeffs
+    case_data['P_coeffs'] = P_coeffs
+
+    degQ = 3
+    while degQ > 0 and abs(Q_coeffs[degQ]) < 0.5:
+        degQ -= 1
+
+    # ── 2. Q_roots ──
+    expected_n = case_data.get('n_Q_roots', 0)
+    if degQ >= 1:
+        poly_np = [Q_coeffs[i] for i in range(degQ, -1, -1)]
+        all_roots = np.roots(poly_np)
+        Q_roots = sorted([r.real for r in all_roots
+                          if abs(r.imag) < 1e-6 * max(1.0, abs(r.real))])
+        # Ensure count matches integer analysis
+        if len(Q_roots) > expected_n:
+            deduped = [Q_roots[0]]
+            for r in Q_roots[1:]:
+                if abs(r - deduped[-1]) > 1e-8 * max(1.0, abs(deduped[-1])):
+                    deduped.append(r)
+                else:
+                    deduped[-1] = (deduped[-1] + r) / 2
+            Q_roots = deduped[:expected_n]
+        elif len(Q_roots) < expected_n:
+            # Relax threshold
+            Q_roots = sorted([r.real for r in all_roots
+                              if abs(r.imag) < 0.1 * max(1.0, abs(r.real))])
+            Q_roots = Q_roots[:expected_n]
+    else:
+        Q_roots = []
+    case_data['Q_roots'] = Q_roots
+
+    # ── 3. Interval lb/ub from Q_roots ──
+    n_qr = len(Q_roots)
+    intervals = case_data.get('intervals', [])
+    if n_qr > 0:
+        for i, iv in enumerate(intervals):
+            if i == 0:
+                iv['lb'] = None
+                iv['ub'] = Q_roots[0]
+            elif i <= n_qr - 1:
+                iv['lb'] = Q_roots[i - 1]
+                iv['ub'] = Q_roots[i]
+            else:
+                iv['lb'] = Q_roots[-1]
+                iv['ub'] = None
+    else:
+        for iv in intervals:
+            iv['lb'] = None
+            iv['ub'] = None
+
+    # ── 4. Face roots from P_red ──
+    P_red = [[float(int(c)) for c in row] for row in case_data['P_red']]
+    degP_red = case_data['degP_red']
+    n_distinct_red = case_data['n_distinct_red']
+
+    face_roots = {}
+    for f in range(4):
+        face_roots[f] = _solve_poly_roots(P_red[f], degP_red[f], n_distinct_red[f])
+
+    # ── 5. Puncture lambda and bary ──
+    for pi in case_data.get('punctures', []):
+        f = pi['face']
+        ri = pi['root_idx']
+
+        if ri < 0:
+            # Infinity puncture
+            pi['lambda'] = None
+            if abs(Q_coeffs[degQ]) > 0.5:
+                pi['bary'] = [P_coeffs[fv[f][j]][degQ] / Q_coeffs[degQ]
+                              for j in range(3)]
+            else:
+                pi['bary'] = [0.33, 0.33, 0.34]
+        elif ri < len(face_roots[f]):
+            lam = face_roots[f][ri]
+            pi['lambda'] = lam
+            Q_val = poly_eval(Q_coeffs, lam)
+            if abs(Q_val) > 1e-30:
+                pi['bary'] = [poly_eval(P_coeffs[fv[f][j]], lam) / Q_val
+                              for j in range(3)]
+            else:
+                # At Q root (SR): L'Hôpital
+                Q_prime = [Q_coeffs[j] * j for j in range(1, len(Q_coeffs))]
+                Qp_val = poly_eval(Q_prime, lam)
+                if abs(Qp_val) > 1e-30:
+                    pi['bary'] = [
+                        poly_eval([P_coeffs[fv[f][j]][k] * k
+                                   for k in range(1, len(P_coeffs[fv[f][j]]))],
+                                  lam) / Qp_val
+                        for j in range(3)
+                    ]
+                else:
+                    pi['bary'] = [0.33, 0.33, 0.34]
+        else:
+            pi['lambda'] = 0.0
+            pi['bary'] = [0.33, 0.33, 0.34]
+
+    # ── 6. Cv_mu and Cw_mu ──
+    cv_num = case_data.get('Cv_num')
+    cv_den = case_data.get('Cv_den')
+    if cv_num is not None and cv_den is not None and cv_den != 0:
+        case_data['Cv_mu'] = [n / cv_den for n in cv_num]
+    else:
+        case_data['Cv_mu'] = None
+
+    cw_num = case_data.get('Cw_num')
+    cw_den = case_data.get('Cw_den')
+    if cw_num is not None and cw_den is not None and cw_den != 0:
+        case_data['Cw_mu'] = [n / cw_den for n in cw_num]
+    else:
+        case_data['Cw_mu'] = None
+
+    # ── 7. TN points: lambda and bary from h_tn ──
+    for tn in case_data.get('tn_points', []):
+        h_tn = [float(int(c)) for c in tn['h_tn']]
+        f = tn['face']
+        if abs(h_tn[1]) > 0.5:
+            lam = -h_tn[0] / h_tn[1]
+            tn['lambda'] = lam
+            Q_val = poly_eval(Q_coeffs, lam)
+            if abs(Q_val) > 1e-30:
+                tn['bary'] = [poly_eval(P_coeffs[fv[f][j]], lam) / Q_val
+                              for j in range(3)]
+            else:
+                tn['bary'] = [0.33, 0.33, 0.34]
+        else:
+            tn['lambda'] = 0.0
+            tn['bary'] = [0.33, 0.33, 0.34]
+
+
 # ─── Lambda-ring mapping ────────────────────────────────────────────────────
 
 def lambda_to_angle(lam, scale=1.0):
@@ -1104,6 +1292,8 @@ def draw_info_panel(ax, case_data, segments):
 
 def visualize_case(case_data, output_path=None):
     """Generate three-panel figure for a single tet case."""
+    ensure_float_fields(case_data)
+
     fig = plt.figure(figsize=(13, 8))
     gs = GridSpec(2, 2, height_ratios=[3, 1.2], figure=fig,
                   hspace=0.25, wspace=0.3)

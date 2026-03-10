@@ -1,0 +1,1 @@
+For ExactPV2: (1) NEVER introduce floating-point logics; floating numbers in the logic is not Kosher in this project (2) Odd-T count is always a bug; do not cover up any of these cases! (3) No ExactPV1 logics such as floating-point Sturm sequences

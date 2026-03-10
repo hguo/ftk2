@@ -33,151 +33,7 @@ struct PunctureConnection {
     uint64_t tet_id;
 };
 
-// ─── GCD-normalize __int128 polynomial for safe double Sturm chain ───────────
-// Divides all coefficients by their GCD so products in S₂/S₃ fit in double.
-// Without this, quantized coefficients (~2^52–2^73) overflow in S₂ products.
-static void gcd_normalize_poly(const __int128 P[4], double P_d[4]) {
-    __int128 g = gcd_i128(gcd_i128(P[0] < 0 ? -P[0] : P[0],
-                                    P[1] < 0 ? -P[1] : P[1]),
-                           gcd_i128(P[2] < 0 ? -P[2] : P[2],
-                                    P[3] < 0 ? -P[3] : P[3]));
-    if (g == 0) g = 1;
-    for (int i = 0; i < 4; ++i) P_d[i] = (double)(P[i] / g);
-}
 
-// ─── Shared-root detection via Sylvester resultant ───────────────────────────
-// Returns true iff Q and some P[k] share a common root, i.e. Res(Q, P[k]) = 0.
-// Uses exact __int128 Bareiss fraction-free elimination (no thresholds).
-static bool has_shared_root_resultant(const __int128 Q_i128[4],
-                                      const __int128 P_i128[4][4])
-{
-    int degQ = 3;
-    while (degQ > 0 && Q_i128[degQ] == 0) degQ--;
-    if (degQ == 0) return false;
-
-    for (int k = 0; k < 4; ++k) {
-        int degP = 3;
-        while (degP > 0 && P_i128[k][degP] == 0) degP--;
-        if (degP == 0) continue;
-
-        int N = degQ + degP;
-        __int128 M[6][6] = {};
-        for (int i = 0; i < degP; i++)
-            for (int j = 0; j <= degQ; j++)
-                M[i][i + degQ - j] = Q_i128[j];
-        for (int i = 0; i < degQ; i++)
-            for (int j = 0; j <= degP; j++)
-                M[degP + i][i + degP - j] = P_i128[k][j];
-
-        // Bareiss fraction-free elimination: exact integer determinant
-        __int128 prev_pivot = 1;
-        bool zero_det = false;
-        for (int col = 0; col < N; col++) {
-            int pivot = -1;
-            for (int row = col; row < N; row++)
-                if (M[row][col] != 0) { pivot = row; break; }
-            if (pivot < 0) { zero_det = true; break; }
-            if (pivot != col)
-                for (int j = 0; j < N; j++)
-                    std::swap(M[col][j], M[pivot][j]);
-            for (int row = col + 1; row < N; row++) {
-                for (int j = col + 1; j < N; j++)
-                    M[row][j] = (M[col][col] * M[row][j]
-                               - M[row][col] * M[col][j]) / prev_pivot;
-                M[row][col] = 0;
-            }
-            prev_pivot = M[col][col];
-        }
-        if (zero_det || M[N-1][N-1] == 0) return true;
-    }
-    return false;
-}
-
-// ─── Fully combinatorial stitching for tet with >2 punctures ─────────────────
-// Algorithm:
-//   1. Sort punctures by λ
-//   2. Compute Sturm count of Q-roots below each puncture's λ (certified)
-//   3. Build effective groups: merge adjacent intervals when Q-roots between
-//      them are pass-throughs (detected via Sturm counts on P[k])
-//   4. Pair (0,1),(2,3),... within each effective group
-static void stitch_ambiguous_tet(
-    const std::vector<int>&    tet_punctures,
-    const FeatureComplex&      complex,
-    const __int128             Q_i128[4],
-    const __int128             P_i128[4][4],
-    uint64_t                   tet_id,
-    std::vector<PunctureConnection>& connections)
-{
-    int n = (int)tet_punctures.size();
-
-    // 1. Sort by λ
-    std::vector<std::pair<double,int>> lam_idx;
-    lam_idx.reserve(n);
-    for (int p : tet_punctures)
-        lam_idx.push_back({(double)complex.vertices[p].scalar, p});
-    std::sort(lam_idx.begin(), lam_idx.end());
-
-    // 2. GCD-normalize Q_i128 → double, determine effective degree
-    //    Without normalization, quantized coefficients (~2^52–2^73) cause
-    //    overflow in S₂/S₃ products of build_sturm_double.
-    double Q_d[4];
-    gcd_normalize_poly(Q_i128, Q_d);
-    int degQ = 3;
-    while (degQ > 0 && Q_d[degQ] == 0.0) --degQ;
-
-    if (degQ == 0) {
-        // Q is constant → no poles → single group → pair all
-        for (int j = 0; j + 1 < n; j += 2)
-            connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
-        return;
-    }
-
-    // Build Sturm sequence for Q (GCD-normalized coefficients fit in double)
-    SturmSeqDouble Q_seq;
-    build_sturm_double(Q_d, Q_seq);
-
-    // 3. For each puncture, compute Sturm count (# Q-roots below λ)
-    std::vector<int> qi(n);
-    for (int i = 0; i < n; ++i) {
-        double lam = lam_idx[i].first;
-        auto [count, cert] = sturm_count_at_certified(Q_seq, lam);
-        if (!cert) {
-            // SoS perturbation: fixed +delta (any fixed direction works;
-            // must not depend on the uncertifiable float value itself)
-            double delta = 4.0 * std::numeric_limits<double>::epsilon()
-                         * std::max(1.0, std::abs(lam));
-            count = sturm_count_at(Q_seq, lam + delta);
-        }
-        qi[i] = count;
-    }
-
-    // 4. Build effective groups with shared-root detection
-    //    If Q and some P[k] share a root (Sylvester resultant = 0), ALL
-    //    Q-roots are pass-throughs and all intervals merge into one group.
-    bool is_sr = has_shared_root_resultant(Q_i128, P_i128);
-    std::vector<int> qi_eff(n);
-    qi_eff[0] = 0;
-    for (int i = 1; i < n; ++i) {
-        if (qi[i] == qi[i-1]) {
-            qi_eff[i] = qi_eff[i-1];          // same Q-interval
-        } else if (is_sr) {
-            qi_eff[i] = qi_eff[i-1];          // shared root → merge
-        } else {
-            qi_eff[i] = qi_eff[i-1] + 1;      // genuine pole → new group
-        }
-    }
-
-    // 5. Group by qi_eff, pair (0,1),(2,3),... within each group
-    int group_start = 0;
-    for (int i = 1; i <= n; ++i) {
-        if (i == n || qi_eff[i] != qi_eff[i-1]) {
-            // Emit pairs from group_start to i-1
-            for (int j = group_start; j + 1 < i; j += 2)
-                connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
-            group_start = i;
-        }
-    }
-}
 
 // ─── Write curves to VTP ─────────────────────────────────────────────────────
 static void write_curves(
@@ -233,9 +89,6 @@ static void write_curves(
               << curves.size() << " curve(s), "
               << total_segs << " segs\n";
 }
-
-// PV version flag: 1 = ExactPV1 (default), 2 = ExactPV2, 3 = both
-static int g_pv_version = 1;
 
 // ─── ExactPV2 stitching via solve_pv_tet_v2 ──────────────────────────────────
 // Uses pure-integer per-tet solver for topological decisions.
@@ -406,120 +259,11 @@ static void run_test_case(const TestCase& tc, int N)
         }
     }
 
-    // Build face → puncture list map
-    std::map<std::set<uint64_t>, std::vector<int>> face_to_punc;
-    for (int i : plist) {
-        const auto& v = complex.vertices[i];
-        face_to_punc[{v.simplex.vertices, v.simplex.vertices+3}].push_back(i);
-    }
-
-    // Stitch through tetrahedra
+    // Stitch through tetrahedra using ExactPV2 (pure-integer solver)
     std::vector<PunctureConnection> connections;
-    int n2=0, n_more=0;
-    std::map<int,int> tet_hist;
+    std::cout << "  Stitching (pure integer)...\n";
+    stitch_v2(plist, complex, mesh, tc.eval, connections);
 
-    auto stitch_v1_lambda = [&]() {
-        mesh->iterate_simplices(3, [&](const Simplex& s) {
-            std::vector<std::set<uint64_t>> faces = {
-                {s.vertices[0],s.vertices[1],s.vertices[2]},
-                {s.vertices[0],s.vertices[1],s.vertices[3]},
-                {s.vertices[0],s.vertices[2],s.vertices[3]},
-                {s.vertices[1],s.vertices[2],s.vertices[3]}
-            };
-            std::vector<int> tp;
-            for (auto& f : faces)
-                if (face_to_punc.count(f))
-                    for (int p : face_to_punc[f]) tp.push_back(p);
-            if (tp.empty()) return true;
-
-            tet_hist[tp.size()]++;
-
-            uint64_t tet_id = *std::min_element(s.vertices, s.vertices + 4);
-
-            if (tp.size() == 2) {
-                n2++;
-                connections.push_back({tp[0], tp[1], tet_id});
-            } else if (tp.size() > 2) {
-                n_more++;
-                double V_arr[4][3], W_arr[4][3];
-                for (int i = 0; i < 4; ++i) {
-                    auto c = mesh->get_vertex_coordinates(s.vertices[i]);
-                    auto fv = tc.eval(c[0], c[1], c[2]);
-                    for (int j = 0; j < 3; ++j) V_arr[i][j] = fv[j];
-                    for (int j = 0; j < 3; ++j) W_arr[i][j] = fv[3+j];
-                }
-                __int128 Q_i128[4], P_i128[4][4];
-                compute_tet_QP_i128(V_arr, W_arr, Q_i128, P_i128);
-
-                bool q_zero = (Q_i128[0] == 0 && Q_i128[1] == 0 &&
-                               Q_i128[2] == 0 && Q_i128[3] == 0);
-
-                if (!q_zero)
-                    stitch_ambiguous_tet(tp, complex, Q_i128, P_i128, tet_id, connections);
-                else {
-                    std::vector<std::pair<double,int>> lam_idx;
-                    for (int p : tp)
-                        lam_idx.push_back({(double)complex.vertices[p].scalar, p});
-                    std::sort(lam_idx.begin(), lam_idx.end());
-                    for (size_t j = 0; j + 1 < lam_idx.size(); j += 2)
-                        connections.push_back({lam_idx[j].second, lam_idx[j+1].second, tet_id});
-                }
-            }
-            return true;
-        });
-    };
-
-    if (g_pv_version == 1 || g_pv_version == 3) {
-        std::cout << "  [PV v1] Stitching...\n";
-        stitch_v1_lambda();
-    }
-
-    if (g_pv_version == 2) {
-        std::cout << "  [PV v2] Stitching (pure integer)...\n";
-        stitch_v2(plist, complex, mesh, tc.eval, connections);
-    }
-
-    if (g_pv_version == 3) {
-        // "both" mode: run v2 separately and compare
-        std::vector<PunctureConnection> connections_v2;
-        std::cout << "  [PV v2] Stitching (pure integer) for comparison...\n";
-        stitch_v2(plist, complex, mesh, tc.eval, connections_v2);
-        // Dedup v2 connections
-        {
-            std::set<std::pair<int,int>> seen;
-            std::vector<PunctureConnection> unique;
-            for (auto& c : connections_v2) {
-                auto key = std::make_pair(std::min(c.puncture1_idx, c.puncture2_idx),
-                                          std::max(c.puncture1_idx, c.puncture2_idx));
-                if (seen.insert(key).second)
-                    unique.push_back(c);
-            }
-            connections_v2 = std::move(unique);
-        }
-        // Compare
-        std::set<std::pair<int,int>> v1_set, v2_set;
-        for (auto& c : connections)
-            v1_set.insert({std::min(c.puncture1_idx, c.puncture2_idx),
-                           std::max(c.puncture1_idx, c.puncture2_idx)});
-        for (auto& c : connections_v2)
-            v2_set.insert({std::min(c.puncture1_idx, c.puncture2_idx),
-                           std::max(c.puncture1_idx, c.puncture2_idx)});
-        if (v1_set == v2_set)
-            std::cout << "  [MATCH] v1 and v2 produce identical connections (" << v1_set.size() << ")\n";
-        else {
-            std::cout << "  [MISMATCH] v1=" << v1_set.size() << " v2=" << v2_set.size() << " connections\n";
-            // Show differences
-            for (auto& p : v1_set) if (!v2_set.count(p))
-                std::cout << "    v1 only: (" << p.first << "," << p.second << ")\n";
-            for (auto& p : v2_set) if (!v1_set.count(p))
-                std::cout << "    v2 only: (" << p.first << "," << p.second << ")\n";
-        }
-    }
-
-    std::cout << "  Tet histogram: ";
-    for (auto& [n,c] : tet_hist) std::cout << c << "×" << n << "  ";
-    std::cout << "\n";
-    std::cout << "  " << n2 << " tets with 2, " << n_more << " tets with >2 punctures\n";
     std::cout << "  " << connections.size() << " connections (before dedup)\n";
 
     // Deduplicate connections: shared-face tets may both produce the same pair
@@ -596,17 +340,7 @@ static void run_test_case(const TestCase& tc, int N)
 // ─── Main ─────────────────────────────────────────────────────────────────────
 int main(int argc, char** argv)
 {
-    // Parse --pv-version flag
-    for (int i = 1; i < argc; i++) {
-        if (std::string(argv[i]) == "--pv-version" && i + 1 < argc) {
-            std::string val = argv[++i];
-            if (val == "1") g_pv_version = 1;
-            else if (val == "2") g_pv_version = 2;
-            else if (val == "both") g_pv_version = 3;
-            else { std::cerr << "Unknown --pv-version: " << val << "\n"; return 1; }
-        }
-    }
-    std::cout << "PV version: " << (g_pv_version == 1 ? "v1" : g_pv_version == 2 ? "v2" : "both") << "\n";
+    (void)argc; (void)argv;
 
     const int N = 16;
     const double cx = N/2.0, cy = N/2.0;

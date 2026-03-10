@@ -84,10 +84,6 @@ if (CMAKE_CUDA_COMPILER)
         message(STATUS "Building streaming CUDA example (requires yaml-cpp)")
     endif()
 
-    # Exact PV CUDA example - standalone GPU extraction + CPU stitching
-    add_executable(ftk2_exact_pv_cuda exact_pv_cuda.cu)
-    target_link_libraries(ftk2_exact_pv_cuda PRIVATE ftk2)
-
     # PV tet case finder - GPU random tet search + CPU classification
     add_executable(ftk2_pv_tet_case_finder pv_tet_case_finder.cu)
     target_link_libraries(ftk2_pv_tet_case_finder PRIVATE ftk2)
