@@ -809,7 +809,7 @@ void test_constructed_cases() {
     {  int V[4][3] = {{1,2,1},{-2,-2,-2},{1,1,1},{3,-2,3}};
        int W[4][3] = {{2,2,-3},{3,-3,0},{-2,-3,3},{-2,-2,-3}};
        RUN(V, W, 3, 2, 1); }
-    // T2_(1,1)_Q3+_SR_ISR (R=3 brute: both SR and ISR shared roots)
+    // T2_(1,1)_Q3+_SR (R=3 brute: SR inside tet, ISR outside tet → ISR dropped)
     {  int V[4][3] = {{0,-1,0},{2,-2,0},{0,0,-3},{0,2,-1}};
        int W[4][3] = {{0,0,-3},{2,1,-1},{0,-1,-3},{2,-2,-3}};
        RUN(V, W, 4, 2, 1); }
@@ -837,6 +837,54 @@ void test_constructed_cases() {
     {  int V[4][3] = {{12,15,-6},{-16,-9,-3},{8,-16,-20},{1,-1,-3}};
        int W[4][3] = {{12,8,-19},{-16,-9,-10},{8,16,11},{1,3,11}};
        RUN(V, W, 101980, 4, 2); }
+
+    #undef RUN
+}
+
+// ============================================================================
+// New structural cases (figures_v20): T10, Cw2, missing T-distributions
+// ============================================================================
+
+void test_structural_cases_v20() {
+    std::cout << "  6 new structural cases (figures_v20)" << std::endl;
+    #define RUN(V, W, seed, exp_np, exp_npairs) do { \
+        __int128 Q[4], P[4][4]; \
+        compute_tet_QP_i128(V, W, Q, P); \
+        ExactPV2Result result = solve_pv_tet_v2(Q, P); \
+        total_tests++; \
+        if (result.n_punctures != (exp_np) || result.n_pairs != (exp_npairs)) { \
+            failed_tests++; \
+            std::cerr << "FAILED: seed " << seed \
+                      << " n_punctures=" << result.n_punctures << " (exp " << (exp_np) << ")" \
+                      << " n_pairs=" << result.n_pairs << " (exp " << (exp_npairs) << ")" \
+                      << std::endl; \
+        } else { passed_tests++; } \
+    } while(0)
+
+    // T10_(3,7)_Q3-_Cv_Cw (GPU R=50 seed 394695: proven maximum T-count)
+    {  int V[4][3] = {{-25,11,-6},{-44,24,16},{-17,-29,6},{41,3,3}};
+       int W[4][3] = {{-40,-34,31},{10,-2,1},{-13,8,-4},{33,-40,-43}};
+       RUN(V, W, 394695, 10, 5); }
+    // T8_(3,5)_Q3-_Cw (R=20 seed 8090: new T8 distribution)
+    {  int V[4][3] = {{-6,-10,19},{-19,18,10},{-18,-7,10},{10,-9,-6}};
+       int W[4][3] = {{-14,1,-8},{-17,11,0},{18,-13,20},{17,17,-9}};
+       RUN(V, W, 8090, 8, 4); }
+    // T6_(1,1,2,2)_Q3+_Cv_Cw (R=20 seed 11073: 4-interval T6)
+    {  int V[4][3] = {{-1,-15,-11},{2,16,17},{16,20,-10},{-7,13,1}};
+       int W[4][3] = {{-10,19,16},{18,-19,-14},{-16,18,12},{-19,6,2}};
+       RUN(V, W, 11073, 6, 3); }
+    // T6_(1,2,3)_Q3+_Cv_Cw (R=20 seed 13599: asymmetric 3-interval T6)
+    {  int V[4][3] = {{-17,-5,-9},{4,-19,6},{18,11,9},{-5,-9,-2}};
+       int W[4][3] = {{-16,10,19},{9,-17,2},{4,14,14},{-4,-8,-14}};
+       RUN(V, W, 13599, 6, 3); }
+    // T6_(1,1,4)_Q3+_Cv_Cw (R=20 seed 21181: T6 with 1+1+4 split)
+    {  int V[4][3] = {{-6,-20,16},{-13,13,-16},{10,0,20},{-1,5,-12}};
+       int W[4][3] = {{-3,-19,7},{-19,14,6},{-5,3,-13},{17,20,-8}};
+       RUN(V, W, 21181, 6, 3); }
+    // T2_Q3+_Cw2 (R=3 seed 52919: w-critical point on face)
+    {  int V[4][3] = {{-7,6,15},{-8,20,13},{-12,17,-11},{2,7,-11}};
+       int W[4][3] = {{18,0,-6},{10,4,9},{8,-8,8},{-13,1,3}};
+       RUN(V, W, 52919, 2, 1); }
 
     #undef RUN
 }
@@ -889,6 +937,9 @@ int main() {
 
     std::cout << "\n=== constructed degenerate cases (figures_v19) ===" << std::endl;
     test_constructed_cases();
+
+    std::cout << "\n=== new structural cases (figures_v20) ===" << std::endl;
+    test_structural_cases_v20();
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "Total: " << total_tests << ", Passed: " << passed_tests
