@@ -1311,14 +1311,27 @@ def visualize_case(case_data, output_path=None):
     ax3d = fig.add_subplot(gs[0, 0], projection='3d')
     draw_tet_wireframe(ax3d)
 
-    # D22: highlight degenerate face
-    d22_face = case_data.get('d22_face')
-    if d22_face is not None and 'D22' in case_data.get('category', ''):
-        d22_poly = [[TET_VERTS[v] for v in FACE_VERTS[d22_face]]]
-        d22_col = Poly3DCollection(d22_poly,
+    # D33: highlight all faces (entire tet is PV)
+    cat = case_data.get('category', '')
+    if 'D33' in cat:
+        d33_polys = [[TET_VERTS[v] for v in FACE_VERTS[f]] for f in range(4)]
+        d33_col = Poly3DCollection(d33_polys,
                                    facecolors='#ffcc00', edgecolors='#cc9900',
                                    alpha=0.35, linewidths=2.0, zorder=2)
-        ax3d.add_collection3d(d22_col)
+        ax3d.add_collection3d(d33_col)
+        for i, j in TET_EDGES:
+            ax3d.plot3D(*zip(TET_VERTS[i], TET_VERTS[j]),
+                        color='#cc9900', linewidth=3.0, alpha=0.9, zorder=10)
+
+    # D22: highlight degenerate face
+    elif 'D22' in cat:
+        d22_face = case_data.get('d22_face')
+        if d22_face is not None:
+            d22_poly = [[TET_VERTS[v] for v in FACE_VERTS[d22_face]]]
+            d22_col = Poly3DCollection(d22_poly,
+                                       facecolors='#ffcc00', edgecolors='#cc9900',
+                                       alpha=0.35, linewidths=2.0, zorder=2)
+            ax3d.add_collection3d(d22_col)
 
     draw_vector_arrows(ax3d, case_data)
     draw_pv_curves(ax3d, segments)
