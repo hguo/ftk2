@@ -809,7 +809,7 @@ void test_constructed_cases() {
     {  int V[4][3] = {{1,2,1},{-2,-2,-2},{1,1,1},{3,-2,3}};
        int W[4][3] = {{2,2,-3},{3,-3,0},{-2,-3,3},{-2,-2,-3}};
        RUN(V, W, 3, 2, 1); }
-    // T2_(1,1)_Q3+_SR (R=3 brute: SR inside tet, ISR outside tet → ISR dropped)
+    // T2_(1,1)_Q3+_ISR (R=3 brute: isolated SR inside tet, no arc crosses through)
     {  int V[4][3] = {{0,-1,0},{2,-2,0},{0,0,-3},{0,2,-1}};
        int W[4][3] = {{0,0,-3},{2,1,-1},{0,-1,-3},{2,-2,-3}};
        RUN(V, W, 4, 2, 1); }

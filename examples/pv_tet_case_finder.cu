@@ -1032,10 +1032,7 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             }
         }
 
-        if (any_sr) tags.push_back("SR");
-        if (!any_sr) cc.has_shared_root = false;
-
-        // Filter sr_q_root_idx to only include inside-tet SR roots
+        // Filter sr_q_root_idx to only include inside-tet roots
         if (!any_sr) {
             cc.n_sr_roots = 0;
         } else if (any_isr && n_inside_sr > 0) {
@@ -1044,6 +1041,32 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             for (int i = 0; i < n_inside_sr && i < 3; i++)
                 cc.sr_q_root_idx[cc.n_sr_roots++] = inside_tet_sr_pos[i];
         }
+
+        // Classify inside-tet roots: SR (arc crosses through) vs ISR (isolated)
+        bool has_connecting_sr = false, has_isolated_sr = false;
+        for (int i = 0; i < n_inside_sr; i++) {
+            int pos = inside_tet_sr_pos[i];
+            bool crossed = false;
+            for (size_t pi = 0; pi < cc.pairs.size() && !crossed; pi++) {
+                const auto& pp = cc.pairs[pi];
+                if (pp.pi_a < 0 || pp.pi_b < 0) continue;
+                int iv_a = cc.punctures[pp.pi_a].interval_idx;
+                int iv_b = cc.punctures[pp.pi_b].interval_idx;
+                int lo = std::min(iv_a, iv_b);
+                int hi = std::max(iv_a, iv_b);
+                if (!pp.is_cross) {
+                    if (pos >= lo && pos < hi) crossed = true;
+                } else {
+                    if (pos < lo || pos >= hi) crossed = true;
+                }
+            }
+            if (crossed) has_connecting_sr = true;
+            else has_isolated_sr = true;
+        }
+
+        if (has_connecting_sr) tags.push_back("SR");
+        if (has_isolated_sr) { tags.push_back("ISR"); cc.has_non_isolated_sr = true; }
+        if (!has_connecting_sr && !has_isolated_sr) cc.has_shared_root = false;
     }
 
     // ── Cv/Cw: critical-point degeneracies ──
