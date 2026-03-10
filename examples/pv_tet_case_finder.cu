@@ -610,6 +610,127 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
         }
     }
 
+    // ─── Step 5b: D12 pairing (PV curve on face) ────────────────────
+    // When P[k] ≡ 0 for some face k, the PV curve lies on face k.
+    // Find endpoints where the curve touches face-k edges (roots of
+    // P_red[j] for face vertices j, with non-negative bary coords).
+    // Pair non-isolated endpoints to form D12 curve segments.
+    for (int d12k = 0; d12k < 4; d12k++) {
+        if (P_i128[d12k][0] != 0 || P_i128[d12k][1] != 0 ||
+            P_i128[d12k][2] != 0 || P_i128[d12k][3] != 0) continue;
+
+        int fv[3], nfv = 0;
+        for (int j = 0; j < 4; j++) if (j != d12k) fv[nfv++] = j;
+
+        __int128 Qr_d12[4] = {};
+        int dQr_d12;
+        if (v2.h_deg >= 1) {
+            dQr_d12 = ftk2::poly_exact_div_i128(Q_i128,
+                ftk2::effective_degree_i128(Q_i128, 3), v2.h, v2.h_deg, Qr_d12);
+        } else {
+            for (int i = 0; i < 4; i++) Qr_d12[i] = Q_i128[i];
+            dQr_d12 = ftk2::effective_degree_i128(Q_i128, 3);
+        }
+
+        struct D12EP { int src_vert, root_idx, edge[2], pi_idx; };
+        std::vector<D12EP> d12_eps;
+
+        for (int mi = 0; mi < 3; mi++) {
+            int m = fv[mi];
+            int dPm = cc.degP_red[m], n_rm = cc.n_distinct_red[m];
+            if (dPm <= 0 || n_rm <= 0) continue;
+            int o1 = fv[(mi+1)%3], o2 = fv[(mi+2)%3];
+
+            int s_o1[4] = {}, s_o2[4] = {}, s_qr[4] = {};
+            bool o1z = (cc.degP_red[o1] <= 0 && cc.P_red[o1][0] == 0);
+            bool o2z = (cc.degP_red[o2] <= 0 && cc.P_red[o2][0] == 0);
+            if (!o1z) ftk2::signs_at_roots_i128(cc.P_red[m], dPm,
+                          cc.P_red[o1], cc.degP_red[o1], s_o1, 4);
+            if (!o2z) ftk2::signs_at_roots_i128(cc.P_red[m], dPm,
+                          cc.P_red[o2], cc.degP_red[o2], s_o2, 4);
+            ftk2::signs_at_roots_i128(cc.P_red[m], dPm, Qr_d12, dQr_d12, s_qr, 4);
+
+            for (int ri = 0; ri < n_rm; ri++) {
+                if (s_qr[ri] == 0) continue;
+                bool ok1 = o1z || s_o1[ri] == 0 || s_o1[ri] * s_qr[ri] > 0;
+                bool ok2 = o2z || s_o2[ri] == 0 || s_o2[ri] * s_qr[ri] > 0;
+                if (!ok1 || !ok2) continue;
+
+                D12EP ep;
+                ep.src_vert = m; ep.root_idx = ri;
+                ep.edge[0] = std::min(o1, o2);
+                ep.edge[1] = std::max(o1, o2);
+                ep.pi_idx = -1;
+                // Match existing puncture
+                for (int pi = 0; pi < (int)cc.punctures.size(); pi++) {
+                    auto& p = cc.punctures[pi];
+                    if (p.is_edge && p.tet_edge[0] == ep.edge[0] &&
+                        p.tet_edge[1] == ep.edge[1] &&
+                        p.face == m && p.root_idx == ri) {
+                        ep.pi_idx = pi; break;
+                    }
+                }
+                d12_eps.push_back(ep);
+            }
+        }
+
+        if (d12_eps.size() < 2) continue;
+
+        // Sort by λ
+        std::sort(d12_eps.begin(), d12_eps.end(), [&](const D12EP& a, const D12EP& b) {
+            return ftk2::compare_roots_i128(
+                cc.P_red[a.src_vert], cc.degP_red[a.src_vert],
+                cc.n_distinct_red[a.src_vert], a.root_idx,
+                cc.P_red[b.src_vert], cc.degP_red[b.src_vert],
+                cc.n_distinct_red[b.src_vert], b.root_idx) < 0;
+        });
+
+        // Helper: get or create puncture for D12 endpoint
+        auto get_or_create_pi = [&](D12EP& ep) -> int {
+            if (ep.pi_idx >= 0) return ep.pi_idx;
+            ClassifiedCase::PunctureInfo np = {};
+            np.face = ep.src_vert;
+            np.root_idx = ep.root_idx;
+            np.is_edge = true;
+            np.is_D01 = true;
+            np.tet_edge[0] = ep.edge[0];
+            np.tet_edge[1] = ep.edge[1];
+            np.edge_faces[0] = std::min(ep.src_vert, d12k);
+            np.edge_faces[1] = std::max(ep.src_vert, d12k);
+            // Interval: count h-roots and Q_red roots below this root
+            int h_below = 0;
+            for (int hi = 0; hi < v2.h_n_roots; hi++) {
+                int cmp = ftk2::compare_roots_i128(
+                    cc.P_red[ep.src_vert], cc.degP_red[ep.src_vert],
+                    cc.n_distinct_red[ep.src_vert], ep.root_idx,
+                    v2.h, v2.h_deg, v2.h_n_roots, hi);
+                if (cmp > 0) h_below++;
+            }
+            int qr_below = 0;
+            if (v2.n_qr_roots > 0) {
+                for (int qi = 0; qi < v2.n_qr_roots; qi++) {
+                    int cmp = ftk2::compare_roots_i128(
+                        cc.P_red[ep.src_vert], cc.degP_red[ep.src_vert],
+                        cc.n_distinct_red[ep.src_vert], ep.root_idx,
+                        Qr_d12, dQr_d12, v2.n_qr_roots, qi);
+                    if (cmp > 0) qr_below++;
+                }
+            }
+            np.q_interval = qr_below;
+            np.interval_idx = qr_below + h_below;
+            cc.punctures.push_back(np);
+            return (int)cc.punctures.size() - 1;
+        };
+
+        // Pair consecutive D12 endpoints
+        for (int i = 0; i + 1 < (int)d12_eps.size(); i += 2) {
+            int pi_a = get_or_create_pi(d12_eps[i]);
+            int pi_b = get_or_create_pi(d12_eps[i + 1]);
+            int iv_idx = cc.punctures[pi_a].interval_idx;
+            cc.pairs.push_back({pi_a, pi_b, false, iv_idx});
+        }
+    }
+
     // ─── Step 6: D00/D01 detection and marking on punctures ──────────
     struct PVVertInfo {
         bool is_pv;
