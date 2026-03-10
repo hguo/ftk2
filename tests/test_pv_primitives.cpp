@@ -778,6 +778,70 @@ void test_paper_cases_v18() {
 }
 
 // ============================================================================
+// Constructed degenerate cases (figures_v19): B, SR, ISR, TN, D01, D11, D12, D22
+// ============================================================================
+
+void test_constructed_cases() {
+    std::cout << "  10 constructed degenerate cases (figures_v19)" << std::endl;
+    #define RUN(V, W, seed, exp_np, exp_npairs) do { \
+        __int128 Q[4], P[4][4]; \
+        compute_tet_QP_i128(V, W, Q, P); \
+        ExactPV2Result result = solve_pv_tet_v2(Q, P); \
+        total_tests++; \
+        if (result.n_punctures != (exp_np) || result.n_pairs != (exp_npairs)) { \
+            failed_tests++; \
+            std::cerr << "FAILED: seed " << seed \
+                      << " n_punctures=" << result.n_punctures << " (exp " << (exp_np) << ")" \
+                      << " n_pairs=" << result.n_pairs << " (exp " << (exp_npairs) << ")" \
+                      << std::endl; \
+        } else { passed_tests++; } \
+    } while(0)
+
+    // T4_Q3-_TN (curated: non-isolated tangency, face 3 double root at λ=1)
+    {  int V[4][3] = {{2,-1,3},{-1,2,-2},{-2,2,0},{-1,1,-3}};
+       int W[4][3] = {{0,2,2},{-2,1,-1},{3,2,-2},{-3,-1,2}};
+       RUN(V, W, 1, 4, 2); }
+    // T0_Q3o_D22 (constructed: 3 D00 vertices at λ=1, PV surface on face)
+    {  int V[4][3] = {{2,0,0},{0,3,0},{0,0,5},{7,-8,4}};
+       int W[4][3] = {{-2,0,0},{0,-3,0},{0,0,-5},{1,2,-3}};
+       RUN(V, W, 2, 0, 0); }
+    // T2_(1,1)_Q3+_SR (R=3 brute: shared root between Q and P)
+    {  int V[4][3] = {{1,2,1},{-2,-2,-2},{1,1,1},{3,-2,3}};
+       int W[4][3] = {{2,2,-3},{3,-3,0},{-2,-3,3},{-2,-2,-3}};
+       RUN(V, W, 3, 2, 1); }
+    // T2_(1,1)_Q3+_ISR (R=3 brute: non-isolated shared root, gcd(Q,P)≥2)
+    {  int V[4][3] = {{0,-1,0},{2,-2,0},{0,0,-3},{0,2,-1}};
+       int W[4][3] = {{0,0,-3},{2,1,-1},{0,-1,-3},{2,-2,-3}};
+       RUN(V, W, 4, 2, 1); }
+    // T0_Q2-_Cv_B (R=3 brute: bubble — closed PV loop inside tet)
+    {  int V[4][3] = {{-1,-2,1},{-3,2,-1},{3,1,0},{-1,-3,0}};
+       int W[4][3] = {{2,-1,1},{-1,-1,1},{0,2,-2},{-2,-1,1}};
+       RUN(V, W, 5, 0, 0); }
+    // T0_Q3-_D01 (R=3 brute: edge puncture, gcd(P[k1],P[k2])≠1)
+    {  int V[4][3] = {{-3,-1,2},{1,1,1},{-2,-2,0},{2,-2,0}};
+       int W[4][3] = {{1,1,-2},{1,-1,-1},{0,2,-3},{0,1,-3}};
+       RUN(V, W, 6, 1, 0); }
+    // T2_Q3+_D11 (R=3 brute: PV curve on tet edge, 2 D00 at same λ)
+    {  int V[4][3] = {{-3,-3,2},{1,-1,1},{-2,2,-1},{3,3,-1}};
+       int W[4][3] = {{0,-2,2},{-3,1,-1},{2,-2,1},{-3,-3,1}};
+       RUN(V, W, 7, 2, 1); }
+    // T0_Q3-_D12 (R=3 brute: PV curve on tet face, P[k]≡0)
+    {  int V[4][3] = {{-2,-2,2},{-3,0,3},{1,2,-1},{3,-3,-2}};
+       int W[4][3] = {{2,0,-2},{0,-2,0},{0,-1,0},{1,1,1}};
+       RUN(V, W, 8, 1, 0); }
+    // T2_Q3+_TN_D00 (R=3 brute: tangency + D00 vertex)
+    {  int V[4][3] = {{2,2,-2},{0,0,3},{2,-1,2},{1,0,1}};
+       int W[4][3] = {{2,1,-2},{-3,1,-3},{-2,1,-2},{3,-2,3}};
+       RUN(V, W, 9, 2, 1); }
+    // T4_(1,1,2)_Q3+_SR (GPU R=20 seed 101980: shared root)
+    {  int V[4][3] = {{12,15,-6},{-16,-9,-3},{8,-16,-20},{1,-1,-3}};
+       int W[4][3] = {{12,8,-19},{-16,-9,-10},{8,16,11},{1,3,11}};
+       RUN(V, W, 101980, 4, 2); }
+
+    #undef RUN
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -822,6 +886,9 @@ int main() {
 
     std::cout << "\n=== paper cases (figures_v18) ===" << std::endl;
     test_paper_cases_v18();
+
+    std::cout << "\n=== constructed degenerate cases (figures_v19) ===" << std::endl;
+    test_constructed_cases();
 
     std::cout << "\n========================================" << std::endl;
     std::cout << "Total: " << total_tests << ", Passed: " << passed_tests
