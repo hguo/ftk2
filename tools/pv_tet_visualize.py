@@ -1310,6 +1310,16 @@ def visualize_case(case_data, output_path=None):
     # Panel (a): 3D tet
     ax3d = fig.add_subplot(gs[0, 0], projection='3d')
     draw_tet_wireframe(ax3d)
+
+    # D22: highlight degenerate face
+    d22_face = case_data.get('d22_face')
+    if d22_face is not None and 'D22' in case_data.get('category', ''):
+        d22_poly = [[TET_VERTS[v] for v in FACE_VERTS[d22_face]]]
+        d22_col = Poly3DCollection(d22_poly,
+                                   facecolors='#ffcc00', edgecolors='#cc9900',
+                                   alpha=0.35, linewidths=2.0, zorder=2)
+        ax3d.add_collection3d(d22_col)
+
     draw_vector_arrows(ax3d, case_data)
     draw_pv_curves(ax3d, segments)
 

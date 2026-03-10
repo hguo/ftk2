@@ -161,6 +161,8 @@ struct ClassifiedCase {
 
     bool has_B;
 
+    int d22_face;   // face index with D22 degeneracy (-1 if none)
+
     struct PunctureInfo {
         int face;
         int root_idx;         // index into P_red roots (or -1 for infinity)
@@ -354,6 +356,7 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
     cc.has_non_isolated_sr = false;
     cc.n_sr_roots = 0;
     cc.has_B = false;
+    cc.d22_face = -1;
     cc.has_Cv_pos = false;
     cc.has_Cw_pos = false;
     cc.Cv_den = 0;
@@ -876,7 +879,7 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
     static const int tf[4][3] = {{1,2,3},{0,2,3},{0,1,3},{0,1,2}};
     for (int f = 0; f < 4; f++)
         if (lam_compat(tf[f][0], tf[f][1]) && lam_compat(tf[f][1], tf[f][2]))
-            { has_D22 = true; break; }
+            { has_D22 = true; cc.d22_face = f; break; }
 
     int n_total_punctures = (int)cc.punctures.size();
 
@@ -1449,6 +1452,8 @@ static void print_json(const ClassifiedCase& cc) {
     }
     printf("],");
     printf("\"has_B\":%s,", cc.has_B ? "true" : "false");
+    if (cc.d22_face >= 0)
+        printf("\"d22_face\":%d,", cc.d22_face);
 
     // TN points (integer: h_tn coefficients)
     printf("\"tn_points\":[");
