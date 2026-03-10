@@ -812,7 +812,8 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             for (int i = 0; i < 4; i++) g[i] = g2[i];
         }
 
-        bool any_in_tet = false;
+        bool any_sr = false;   // any shared root inside tet → "SR"
+        bool any_isr = false;  // any shared root outside tet → "ISR"
         cc.has_non_isolated_sr = false;
 
         if (dg >= 1) {
@@ -853,9 +854,16 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                         int sp = eval_at_root(Pr[k], dPr[k]);
                         if (sp * sq < 0) { in_tet = false; break; }
                     }
-                    if (in_tet) any_in_tet = true;
+                    if (in_tet) any_sr = true;
+                    else any_isr = true;
                 }
             } else {
+                // Pre-compute signs of P_red[k] at all roots of h
+                int spk_all[4][4] = {};
+                for (int k = 0; k < 4; k++) {
+                    if (dPr[k] == 0 && Pr[k][0] == 0) continue;
+                    ftk2::signs_at_roots_i128(g, dg, Pr[k], dPr[k], spk_all[k], 4);
+                }
                 int sq[4] = {};
                 int nrg = ftk2::signs_at_roots_i128(g, dg, Qr, dQr, sq, 4);
                 if (nrg > 0) {
@@ -864,22 +872,19 @@ static ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                         bool in_tet = true;
                         for (int k = 0; k < 4; k++) {
                             if (dPr[k] == 0 && Pr[k][0] == 0) continue;
-                            int spk[4] = {};
-                            ftk2::signs_at_roots_i128(g, dg, Pr[k], dPr[k], spk, 4);
-                            if (spk[ri] * sq[ri] < 0) { in_tet = false; break; }
+                            if (spk_all[k][ri] * sq[ri] < 0) { in_tet = false; break; }
                         }
-                        if (in_tet) { any_in_tet = true; break; }
+                        if (in_tet) any_sr = true;
+                        else any_isr = true;
                     }
                 }
             }
-            if (dg >= 2) cc.has_non_isolated_sr = true;
+            cc.has_non_isolated_sr = any_isr;
         }
 
-        if (any_in_tet) {
-            tags.push_back(cc.has_non_isolated_sr ? "ISR" : "SR");
-        } else {
-            cc.has_shared_root = false;
-        }
+        if (any_sr) tags.push_back("SR");
+        if (any_isr) tags.push_back("ISR");
+        if (!any_sr && !any_isr) cc.has_shared_root = false;
     }
 
     // ── Cv/Cw: critical-point degeneracies ──

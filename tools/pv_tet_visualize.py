@@ -624,18 +624,17 @@ def draw_special_points(ax, case_data, segments=None):
     #    marker, marker_size, marker_color) ──
     annots = []
 
-    # D01: punctures on tet edge
-    if 'D01' in category:
-        for pi in case_data['punctures']:
-            if not pi.get('is_edge', False):
-                continue
-            pos = bary_to_3d(pi['bary'], pi['face'])
-            lam = pi['lambda']
-            lam_str = (f'$\\lambda={lam:.2f}$' if lam is not None
-                       else r'$\lambda\!\to\!\infty$')
-            annots.append(dict(pos=pos, tag='D01', lam_str=lam_str,
-                               color='#dd5500', bg='#fff4ee',
-                               marker='v', ms=80, mc='#dd5500'))
+    # D01: punctures on tet edge (check per-puncture flags, not category)
+    for pi in case_data['punctures']:
+        if not (pi.get('is_D01', False) or pi.get('is_edge', False)):
+            continue
+        pos = bary_to_3d(pi['bary'], pi['face'])
+        lam = pi['lambda']
+        lam_str = (f'$\\lambda={lam:.2f}$' if lam is not None
+                   else r'$\lambda\!\to\!\infty$')
+        annots.append(dict(pos=pos, tag='D01', lam_str=lam_str,
+                           color='#dd5500', bg='#fff4ee',
+                           marker='v', ms=80, mc='#dd5500'))
 
     # D00: vertices where V x W = 0
     if 'D00' in category:
@@ -836,9 +835,9 @@ def _find_special_punctures(case_data):
     skip_marker = set()
     skip_label = set()
     for i, pi in enumerate(case_data['punctures']):
-        if 'D01' in category and pi.get('is_edge', False):
+        if pi.get('is_D01', False) or pi.get('is_edge', False):
             skip_marker.add(i)
-        if 'D00' in category and pi.get('is_vertex', False):
+        if pi.get('is_D00', False) or pi.get('is_vertex', False):
             skip_marker.add(i)
         # Cv/Cw waypoint: keep marker (it's a real boundary crossing), skip label only
         if 'Cv' in category and pi.get('lambda') is not None and pi['lambda'] == 0.0:
