@@ -142,6 +142,75 @@ inline bool check_field_zero_in_tet(const int F[4][3],
     return true;
 }
 
+// Check if field=0 is inside tet for D23 (coplanar) case.
+// Projects 4 coplanar 3D integer points to 2D and checks if origin
+// is in convex hull via triangle-based point-in-polygon.
+// Pure integer, no floats.
+inline bool check_field_zero_coplanar(const int F[4][3]) {
+    // Find two non-parallel vectors for normal computation
+    int64_t nx = 0, ny = 0, nz = 0;
+    bool found_pair = false;
+    for (int i = 0; i < 4 && !found_pair; i++)
+        for (int j = i + 1; j < 4 && !found_pair; j++) {
+            nx = (int64_t)F[i][1]*F[j][2] - (int64_t)F[i][2]*F[j][1];
+            ny = (int64_t)F[i][2]*F[j][0] - (int64_t)F[i][0]*F[j][2];
+            nz = (int64_t)F[i][0]*F[j][1] - (int64_t)F[i][1]*F[j][0];
+            if (nx != 0 || ny != 0 || nz != 0) found_pair = true;
+        }
+
+    if (!found_pair) {
+        // All vectors parallel or zero: 1D case
+        int ui = -1;
+        for (int i = 0; i < 4; i++)
+            if (F[i][0] != 0 || F[i][1] != 0 || F[i][2] != 0)
+                { ui = i; break; }
+        if (ui < 0) return true; // all zero → origin is in hull
+
+        // Origin in hull iff some projections ≤ 0 and some ≥ 0
+        bool has_nonpos = false, has_nonneg = false;
+        for (int i = 0; i < 4; i++) {
+            int64_t dot = (int64_t)F[i][0]*F[ui][0]
+                        + (int64_t)F[i][1]*F[ui][1]
+                        + (int64_t)F[i][2]*F[ui][2];
+            if (dot <= 0) has_nonpos = true;
+            if (dot >= 0) has_nonneg = true;
+        }
+        return has_nonpos && has_nonneg;
+    }
+
+    // Project to 2D: drop coordinate with largest |normal component|
+    int64_t anx = nx < 0 ? -nx : nx;
+    int64_t any = ny < 0 ? -ny : ny;
+    int64_t anz = nz < 0 ? -nz : nz;
+    int c0, c1;
+    if (anx >= any && anx >= anz) { c0 = 1; c1 = 2; }
+    else if (any >= anz) { c0 = 0; c1 = 2; }
+    else { c0 = 0; c1 = 1; }
+
+    int64_t px[4], py[4];
+    for (int i = 0; i < 4; i++) {
+        px[i] = F[i][c0];
+        py[i] = F[i][c1];
+    }
+
+    // Check if origin is inside any triangle formed by 3 of 4 points
+    // (Carathéodory: convex hull = union of all such triangles)
+    static const int tri[4][3] = {{0,1,2},{0,1,3},{0,2,3},{1,2,3}};
+    for (int t = 0; t < 4; t++) {
+        int a = tri[t][0], b = tri[t][1], c = tri[t][2];
+        // 2D cross products: s1 = A×B, s2 = B×C, s3 = C×A
+        int64_t s1 = px[a]*py[b] - py[a]*px[b];
+        int64_t s2 = px[b]*py[c] - py[b]*px[c];
+        int64_t s3 = px[c]*py[a] - py[c]*px[a];
+        // Skip degenerate triangle (collinear)
+        if (s1 == 0 && s2 == 0 && s3 == 0) continue;
+        // Origin inside (including boundary) if all signs agree
+        if (s1 >= 0 && s2 >= 0 && s3 >= 0) return true;
+        if (s1 <= 0 && s2 <= 0 && s3 <= 0) return true;
+    }
+    return false;
+}
+
 // Exact shared-root detection: Resultant(Q, P_k) = 0 iff they share a root.
 // Q and P_k are degree-3 polynomials with __int128 coefficients.
 // The 6x6 Sylvester determinant is computed exactly.
@@ -1028,6 +1097,65 @@ inline ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
                     if (nz == 2) has_C0w = true;
                     else if (nz == 1) has_C1w = true;
                     else has_C2w = true;
+                }
+            }
+        }
+    }
+
+    // D23 fallback for Cv/Cw: coplanar vectors make det=0, so
+    // check_field_zero_in_tet fails. Use 2D projection instead.
+    if (has_D23) {
+        if (!has_Cv) {
+            has_Cv = check_field_zero_coplanar(gpu_v2.V);
+            cc.has_Cv_pos = has_Cv;
+            if (has_Cv) {
+                // Cv0: any V[i] = (0,0,0)
+                for (int i = 0; i < 4; i++)
+                    if (gpu_v2.V[i][0]==0 && gpu_v2.V[i][1]==0 && gpu_v2.V[i][2]==0)
+                        { has_C0v = true; break; }
+                // Cv1: origin on edge (antiparallel pair)
+                if (!has_C0v) {
+                    for (int i = 0; i < 4 && !has_C1v; i++)
+                        for (int j = i+1; j < 4 && !has_C1v; j++) {
+                            int64_t cx = (int64_t)gpu_v2.V[i][1]*gpu_v2.V[j][2]
+                                       - (int64_t)gpu_v2.V[i][2]*gpu_v2.V[j][1];
+                            int64_t cy = (int64_t)gpu_v2.V[i][2]*gpu_v2.V[j][0]
+                                       - (int64_t)gpu_v2.V[i][0]*gpu_v2.V[j][2];
+                            int64_t cz = (int64_t)gpu_v2.V[i][0]*gpu_v2.V[j][1]
+                                       - (int64_t)gpu_v2.V[i][1]*gpu_v2.V[j][0];
+                            if (cx==0 && cy==0 && cz==0) {
+                                int64_t dot = (int64_t)gpu_v2.V[i][0]*gpu_v2.V[j][0]
+                                            + (int64_t)gpu_v2.V[i][1]*gpu_v2.V[j][1]
+                                            + (int64_t)gpu_v2.V[i][2]*gpu_v2.V[j][2];
+                                if (dot < 0) has_C1v = true;
+                            }
+                        }
+                }
+            }
+        }
+        if (!has_Cw) {
+            has_Cw = check_field_zero_coplanar(gpu_v2.W);
+            cc.has_Cw_pos = has_Cw;
+            if (has_Cw) {
+                for (int i = 0; i < 4; i++)
+                    if (gpu_v2.W[i][0]==0 && gpu_v2.W[i][1]==0 && gpu_v2.W[i][2]==0)
+                        { has_C0w = true; break; }
+                if (!has_C0w) {
+                    for (int i = 0; i < 4 && !has_C1w; i++)
+                        for (int j = i+1; j < 4 && !has_C1w; j++) {
+                            int64_t cx = (int64_t)gpu_v2.W[i][1]*gpu_v2.W[j][2]
+                                       - (int64_t)gpu_v2.W[i][2]*gpu_v2.W[j][1];
+                            int64_t cy = (int64_t)gpu_v2.W[i][2]*gpu_v2.W[j][0]
+                                       - (int64_t)gpu_v2.W[i][0]*gpu_v2.W[j][2];
+                            int64_t cz = (int64_t)gpu_v2.W[i][0]*gpu_v2.W[j][1]
+                                       - (int64_t)gpu_v2.W[i][1]*gpu_v2.W[j][0];
+                            if (cx==0 && cy==0 && cz==0) {
+                                int64_t dot = (int64_t)gpu_v2.W[i][0]*gpu_v2.W[j][0]
+                                            + (int64_t)gpu_v2.W[i][1]*gpu_v2.W[j][1]
+                                            + (int64_t)gpu_v2.W[i][2]*gpu_v2.W[j][2];
+                                if (dot < 0) has_C1w = true;
+                            }
+                        }
                 }
             }
         }

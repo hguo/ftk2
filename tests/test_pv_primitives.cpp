@@ -811,7 +811,7 @@ void test_constructed_cases() {
 // ============================================================================
 
 void test_structural_cases_v20() {
-    std::cout << "  8 new structural cases (figures_v20)" << std::endl;
+    std::cout << "  11 new structural cases (figures_v20)" << std::endl;
     #define RUNTAG(V, W, sd, exp_np, exp_npairs, exp_cat) do { \
         __int128 Q[4], P[4][4]; \
         compute_tet_QP_i128(V, W, Q, P); \
@@ -863,7 +863,19 @@ void test_structural_cases_v20() {
        RUNTAG(V, W, 997, 0, 0, "T0_Q3o_Cv_Cw_D33"); }
     {  int V[4][3] = {{1,2,0},{-1,3,0},{2,-1,0},{-2,1,0}};
        int W[4][3] = {{3,-1,0},{1,2,0},{-1,3,0},{2,-2,0}};
-       RUNTAG(V, W, 990, 0, 0, "T0_Qz_D23"); }
+       RUNTAG(V, W, 990, 0, 0, "T0_Qz_Cv1_D23"); }
+    // D23 + Cv + Cw: origin strictly inside both V and W hulls
+    {  int V[4][3] = {{3,1,0},{-1,3,0},{-2,-1,0},{0,-3,0}};
+       int W[4][3] = {{2,3,0},{-3,1,0},{-1,-2,0},{1,-1,0}};
+       RUNTAG(V, W, 991, 0, 0, "T0_Qz_Cv_Cw_D23"); }
+    // D23 + Cv only: origin inside V hull, W all first quadrant
+    {  int V[4][3] = {{3,1,0},{-1,3,0},{-2,-1,0},{0,-3,0}};
+       int W[4][3] = {{1,1,0},{2,1,0},{1,2,0},{3,2,0}};
+       RUNTAG(V, W, 992, 0, 0, "T0_Qz_Cv_D23"); }
+    // D23 + Cw only: V all first quadrant, origin inside W hull
+    {  int V[4][3] = {{1,1,0},{2,1,0},{1,2,0},{3,2,0}};
+       int W[4][3] = {{2,3,0},{-3,1,0},{-1,-2,0},{1,-1,0}};
+       RUNTAG(V, W, 993, 0, 0, "T0_Qz_Cw_D23"); }
 
     #undef RUNTAG
 }

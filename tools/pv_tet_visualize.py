@@ -550,9 +550,80 @@ def find_d11_edges(case_data):
     return d11_edges
 
 
+def _origin_bary_coplanar(F):
+    """Compute tet barycentric coords of origin in convex hull of 4 coplanar
+    3D integer field vectors F[0..3].  Returns mu (4-array) or None."""
+    pts = np.array(F, dtype=float)
+    # Find normal via cross product of first non-parallel pair
+    normal = None
+    for i in range(4):
+        for j in range(i + 1, 4):
+            n = np.cross(pts[i], pts[j])
+            if np.linalg.norm(n) > 1e-10:
+                normal = n
+                break
+        if normal is not None:
+            break
+
+    if normal is None:
+        # All parallel or zero — 1D case
+        ui = None
+        for i in range(4):
+            if np.linalg.norm(pts[i]) > 1e-10:
+                ui = i
+                break
+        if ui is None:
+            return np.array([0.25, 0.25, 0.25, 0.25])  # all zero
+        d = pts[ui]
+        projs = [np.dot(pts[i], d) for i in range(4)]
+        if min(projs) <= 0 <= max(projs):
+            neg_idx = min(range(4), key=lambda k: projs[k])
+            pos_idx = max(range(4), key=lambda k: projs[k])
+            denom = projs[pos_idx] - projs[neg_idx]
+            if abs(denom) < 1e-14:
+                return np.array([0.25, 0.25, 0.25, 0.25])
+            t = -projs[neg_idx] / denom
+            mu = np.zeros(4)
+            mu[neg_idx] = 1 - t
+            mu[pos_idx] = t
+            return mu
+        return None
+
+    # Project to 2D: drop coordinate with largest |normal component|
+    drop = int(np.argmax(np.abs(normal)))
+    keep = [i for i in range(3) if i != drop]
+    pts2d = pts[:, keep]
+
+    # Check each triangle (3 of 4 points) for containing origin
+    tris = [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)]
+    for a, b, c in tris:
+        A, B, C = pts2d[a], pts2d[b], pts2d[c]
+        M = np.column_stack([A - C, B - C])
+        det = M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0]
+        if abs(det) < 1e-14:
+            continue
+        rhs = -C
+        t1 = (rhs[0] * M[1, 1] - rhs[1] * M[0, 1]) / det
+        t2 = (M[0, 0] * rhs[1] - M[1, 0] * rhs[0]) / det
+        t3 = 1 - t1 - t2
+        if t1 >= -1e-10 and t2 >= -1e-10 and t3 >= -1e-10:
+            mu = np.zeros(4)
+            mu[a] = max(t1, 0)
+            mu[b] = max(t2, 0)
+            mu[c] = max(t3, 0)
+            s = mu.sum()
+            if s > 0:
+                mu /= s
+            return mu
+    return None
+
+
 def compute_cv_position(case_data):
-    """Read Cv position from C++ JSON (tet barycentric coords)."""
+    """Read Cv position from C++ JSON (tet barycentric coords).
+    Falls back to 2D projection for D23 (coplanar) cases."""
     mu = case_data.get('Cv_mu')
+    if mu is None and 'D23' in case_data.get('category', ''):
+        mu = _origin_bary_coplanar(case_data['V'])
     if mu is None:
         return None
     mu = np.clip(mu, 0, 1)
@@ -560,8 +631,11 @@ def compute_cv_position(case_data):
 
 
 def compute_cw_position(case_data):
-    """Read Cw position from C++ JSON (tet barycentric coords)."""
+    """Read Cw position from C++ JSON (tet barycentric coords).
+    Falls back to 2D projection for D23 (coplanar) cases."""
     mu = case_data.get('Cw_mu')
+    if mu is None and 'D23' in case_data.get('category', ''):
+        mu = _origin_bary_coplanar(case_data['W'])
     if mu is None:
         return None
     mu = np.clip(mu, 0, 1)
@@ -1322,6 +1396,94 @@ def visualize_case(case_data, output_path=None):
         for i, j in TET_EDGES:
             ax3d.plot3D(*zip(TET_VERTS[i], TET_VERTS[j]),
                         color='#cc9900', linewidth=3.0, alpha=0.9, zorder=10)
+
+    # D23: PV surface (quadric) in tet interior — all V,W coplanar
+    elif 'D23' in cat:
+        V_data = np.array(case_data['V'], dtype=float)
+        W_data = np.array(case_data['W'], dtype=float)
+        tv = np.array(TET_VERTS, dtype=float)
+
+        # Find coplanarity normal: n = first nonzero cross product of V,W vectors
+        all_vecs = np.vstack([V_data, W_data])
+        normal = None
+        for i in range(8):
+            for j in range(i + 1, 8):
+                c = np.cross(all_vecs[i], all_vecs[j])
+                if np.linalg.norm(c) > 1e-10:
+                    normal = c / np.linalg.norm(c)
+                    break
+            if normal is not None:
+                break
+
+        if normal is not None:
+            # Draw quadric zero-contour on each face via marching triangles
+            all_zero_pts = []
+            Ng = 60
+            for fi, fv in enumerate(FACE_VERTS):
+                gv = {}   # grid values
+                gp = {}   # grid 3D points
+                for i in range(Ng + 1):
+                    for j in range(Ng + 1 - i):
+                        s, t = i / Ng, j / Ng
+                        mu = np.zeros(4)
+                        mu[fv[0]] = 1 - s - t
+                        mu[fv[1]] = s
+                        mu[fv[2]] = t
+                        Vm = V_data.T @ mu
+                        Wm = W_data.T @ mu
+                        gv[(i, j)] = np.dot(np.cross(Vm, Wm), normal)
+                        gp[(i, j)] = tv.T @ mu
+
+                def _zero_cross(tri_keys):
+                    pts = []
+                    for e in range(3):
+                        a, b = tri_keys[e], tri_keys[(e + 1) % 3]
+                        fa, fb = gv.get(a, 0), gv.get(b, 0)
+                        if fa * fb < 0:
+                            alpha = fa / (fa - fb)
+                            pts.append(gp[a] * (1 - alpha) + gp[b] * alpha)
+                    return pts
+
+                for i in range(Ng):
+                    for j in range(Ng - i):
+                        zp = _zero_cross([(i, j), (i + 1, j), (i, j + 1)])
+                        if len(zp) == 2:
+                            p = np.array(zp)
+                            ax3d.plot3D(p[:, 0], p[:, 1], p[:, 2],
+                                        color='#cc3333', linewidth=2.0,
+                                        alpha=0.9, zorder=15)
+                            all_zero_pts.extend(zp)
+                        if i + j + 1 < Ng:
+                            zp2 = _zero_cross([(i+1, j), (i+1, j+1), (i, j+1)])
+                            if len(zp2) == 2:
+                                p2 = np.array(zp2)
+                                ax3d.plot3D(p2[:, 0], p2[:, 1], p2[:, 2],
+                                            color='#cc3333', linewidth=2.0,
+                                            alpha=0.9, zorder=15)
+                                all_zero_pts.extend(zp2)
+
+            # Fill the quadric surface through interior via collected boundary points
+            if len(all_zero_pts) > 3:
+                zp_arr = np.array(all_zero_pts)
+                centroid = zp_arr.mean(axis=0)
+                d = zp_arr - centroid
+                _, _, vh = np.linalg.svd(d, full_matrices=False)
+                e1, e2 = vh[0], vh[1]
+                angles = np.arctan2(d @ e2, d @ e1)
+                order = np.argsort(angles)
+                # Deduplicate close points
+                sorted_pts = zp_arr[order]
+                keep = [0]
+                for k in range(1, len(sorted_pts)):
+                    if np.linalg.norm(sorted_pts[k] - sorted_pts[keep[-1]]) > 1e-6:
+                        keep.append(k)
+                hull_pts = sorted_pts[keep]
+                if len(hull_pts) >= 3:
+                    surf_col = Poly3DCollection([hull_pts],
+                                                facecolors='#66cccc',
+                                                edgecolors='none',
+                                                alpha=0.25, zorder=3)
+                    ax3d.add_collection3d(surf_col)
 
     # D22: highlight degenerate face
     elif 'D22' in cat:
