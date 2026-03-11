@@ -881,14 +881,645 @@ void test_structural_cases_v20() {
 }
 
 // ============================================================================
+// content_reduce_i128 tests
+// ============================================================================
+
+void test_content_reduce_basic() {
+    std::cout << "  content_reduce_basic" << std::endl;
+    __int128 p[4] = {6, 10, 4};
+    content_reduce_i128(p, 2);
+    ASSERT_EQ(p[0], (__int128)3);
+    ASSERT_EQ(p[1], (__int128)5);
+    ASSERT_EQ(p[2], (__int128)2);
+}
+
+void test_content_reduce_already_primitive() {
+    std::cout << "  content_reduce_already_primitive" << std::endl;
+    __int128 p[4] = {3, 5, 7};
+    content_reduce_i128(p, 2);
+    ASSERT_EQ(p[0], (__int128)3);
+    ASSERT_EQ(p[1], (__int128)5);
+    ASSERT_EQ(p[2], (__int128)7);
+}
+
+void test_content_reduce_with_zero() {
+    std::cout << "  content_reduce_with_zero" << std::endl;
+    __int128 p[4] = {0, 6, 9};
+    content_reduce_i128(p, 2);
+    ASSERT_EQ(p[0], (__int128)0);
+    ASSERT_EQ(p[1], (__int128)2);
+    ASSERT_EQ(p[2], (__int128)3);
+}
+
+void test_content_reduce_negative() {
+    std::cout << "  content_reduce_negative" << std::endl;
+    __int128 p[4] = {-12, 18, -6};
+    content_reduce_i128(p, 2);
+    ASSERT_EQ(p[0], (__int128)-2);
+    ASSERT_EQ(p[1], (__int128)3);
+    ASSERT_EQ(p[2], (__int128)-1);
+}
+
+void test_content_reduce_degree_zero() {
+    std::cout << "  content_reduce_degree_zero" << std::endl;
+    __int128 p[1] = {42};
+    content_reduce_i128(p, 0);
+    ASSERT_EQ(p[0], (__int128)1);
+}
+
+void test_content_reduce_neg_degree() {
+    std::cout << "  content_reduce_neg_degree" << std::endl;
+    __int128 p[1] = {99};
+    content_reduce_i128(p, -1);
+    ASSERT_EQ(p[0], (__int128)99);
+}
+
+// ============================================================================
+// effective_degree_i128 tests
+// ============================================================================
+
+void test_effective_degree() {
+    std::cout << "  effective_degree" << std::endl;
+    __int128 p1[4] = {1, 2, 3, 0};
+    ASSERT_EQ(effective_degree_i128(p1, 3), 2);
+
+    __int128 p2[4] = {5, 0, 0, 0};
+    ASSERT_EQ(effective_degree_i128(p2, 3), 0);
+
+    __int128 p3[4] = {0, 0, 0, 0};
+    ASSERT_EQ(effective_degree_i128(p3, 3), 0);
+
+    __int128 p4[4] = {1, 2, 3, 4};
+    ASSERT_EQ(effective_degree_i128(p4, 3), 3);
+}
+
+// ============================================================================
+// discriminant_sign_i128 tests
+// ============================================================================
+
+void test_discriminant_sign_three_roots() {
+    std::cout << "  discriminant_sign_three_roots" << std::endl;
+    __int128 P[4] = {-6, 11, -6, 1};  // (x-1)(x-2)(x-3), disc > 0
+    ASSERT_EQ(discriminant_sign_i128(P), 1);
+}
+
+void test_discriminant_sign_one_root() {
+    std::cout << "  discriminant_sign_one_root" << std::endl;
+    __int128 P[4] = {2, 1, 0, 1};  // x^3+x+2, disc < 0
+    ASSERT_EQ(discriminant_sign_i128(P), -1);
+}
+
+void test_discriminant_sign_repeated() {
+    std::cout << "  discriminant_sign_repeated" << std::endl;
+    __int128 P[4] = {2, -3, 0, 1};  // (x-1)^2(x+2), disc = 0
+    ASSERT_EQ(discriminant_sign_i128(P), 0);
+}
+
+void test_discriminant_sign_triple_root() {
+    std::cout << "  discriminant_sign_triple_root" << std::endl;
+    __int128 P[4] = {-8, 12, -6, 1};  // (x-2)^3, disc = 0
+    ASSERT_EQ(discriminant_sign_i128(P), 0);
+}
+
+void test_discriminant_sign_not_cubic() {
+    std::cout << "  discriminant_sign_not_cubic" << std::endl;
+    __int128 P[4] = {1, 2, 3, 0};
+    ASSERT_EQ(discriminant_sign_i128(P), 0);
+}
+
+void test_discriminant_sign_neg_leading() {
+    std::cout << "  discriminant_sign_neg_leading" << std::endl;
+    __int128 P[4] = {6, -11, 6, -1};  // -(x-1)(x-2)(x-3), disc > 0
+    ASSERT_EQ(discriminant_sign_i128(P), 1);
+}
+
+// ============================================================================
+// poly_exact_div_i128 tests
+// ============================================================================
+
+void test_poly_exact_div_linear() {
+    std::cout << "  poly_exact_div_linear" << std::endl;
+    // (x-1)(x-2)(x-3) / (x-1) = (x-2)(x-3) = x^2-5x+6
+    __int128 f[8] = {-6, 11, -6, 1};
+    __int128 g[8] = {-1, 1};
+    __int128 q[8] = {};
+    int dq = poly_exact_div_i128(f, 3, g, 1, q);
+    ASSERT_EQ(dq, 2);
+    ASSERT_EQ(q[0], (__int128)6);
+    ASSERT_EQ(q[1], (__int128)-5);
+    ASSERT_EQ(q[2], (__int128)1);
+}
+
+void test_poly_exact_div_quadratic() {
+    std::cout << "  poly_exact_div_quadratic" << std::endl;
+    // (x^2-1)(x-3) = x^3-3x^2-x+3, divided by x^2-1 = x-3
+    __int128 f[8] = {3, -1, -3, 1};
+    __int128 g[8] = {-1, 0, 1};
+    __int128 q[8] = {};
+    int dq = poly_exact_div_i128(f, 3, g, 2, q);
+    ASSERT_EQ(dq, 1);
+    ASSERT_EQ(q[0], (__int128)-3);
+    ASSERT_EQ(q[1], (__int128)1);
+}
+
+void test_poly_exact_div_equal_degree() {
+    std::cout << "  poly_exact_div_equal_degree" << std::endl;
+    // 2x^2+4x+2 / (x^2+2x+1) = 2
+    __int128 f[8] = {2, 4, 2};
+    __int128 g[8] = {1, 2, 1};
+    __int128 q[8] = {};
+    int dq = poly_exact_div_i128(f, 2, g, 2, q);
+    ASSERT_EQ(dq, 0);
+    ASSERT_EQ(q[0], (__int128)2);
+}
+
+void test_poly_exact_div_neg_leading() {
+    std::cout << "  poly_exact_div_neg_leading" << std::endl;
+    // (x+1)(-2x+6) = -2x^2+4x+6, divided by (-2x+6) = x+1
+    __int128 f[8] = {6, 4, -2};
+    __int128 g[8] = {6, -2};
+    __int128 q[8] = {};
+    int dq = poly_exact_div_i128(f, 2, g, 1, q);
+    ASSERT_EQ(dq, 1);
+    ASSERT_EQ(q[0], (__int128)1);
+    ASSERT_EQ(q[1], (__int128)1);
+}
+
+// ============================================================================
+// poly_sqfree_i128 tests
+// ============================================================================
+
+void test_sqfree_already() {
+    std::cout << "  sqfree_already_squarefree" << std::endl;
+    __int128 f[8] = {-6, 11, -6, 1};  // (x-1)(x-2)(x-3)
+    __int128 sf[8] = {};
+    int dsf = poly_sqfree_i128(f, 3, sf);
+    ASSERT_EQ(dsf, 3);
+}
+
+void test_sqfree_double_root() {
+    std::cout << "  sqfree_double_root" << std::endl;
+    // (x-1)^2(x+2) = x^3-3x+2
+    __int128 f[8] = {2, -3, 0, 1};
+    __int128 sf[8] = {};
+    int dsf = poly_sqfree_i128(f, 3, sf);
+    ASSERT_EQ(dsf, 2);
+    // sf should vanish at x=1: sf[0]+sf[1]+sf[2] = 0
+    ASSERT_EQ(sf[0]+sf[1]+sf[2], (__int128)0);
+}
+
+void test_sqfree_triple_root() {
+    std::cout << "  sqfree_triple_root" << std::endl;
+    // (x-2)^3 = x^3-6x^2+12x-8
+    __int128 f[8] = {-8, 12, -6, 1};
+    __int128 sf[8] = {};
+    int dsf = poly_sqfree_i128(f, 3, sf);
+    ASSERT_EQ(dsf, 1);
+}
+
+void test_sqfree_quadratic_double() {
+    std::cout << "  sqfree_quadratic_double" << std::endl;
+    // (x-3)^2 = x^2-6x+9
+    __int128 f[8] = {9, -6, 1};
+    __int128 sf[8] = {};
+    int dsf = poly_sqfree_i128(f, 2, sf);
+    ASSERT_EQ(dsf, 1);
+}
+
+void test_sqfree_linear() {
+    std::cout << "  sqfree_linear" << std::endl;
+    __int128 f[8] = {-5, 1};
+    __int128 sf[8] = {};
+    int dsf = poly_sqfree_i128(f, 1, sf);
+    ASSERT_EQ(dsf, 1);
+    ASSERT_EQ(sf[0], (__int128)-5);
+    ASSERT_EQ(sf[1], (__int128)1);
+}
+
+// ============================================================================
+// sign_at_unique_root_i128 tests
+// ============================================================================
+
+void test_sign_unique_root_positive() {
+    std::cout << "  sign_unique_root_positive" << std::endl;
+    // f = x^3+x+2 (1 real root at -1), g = x+3 => g(-1) = 2 > 0
+    __int128 f[8] = {2, 1, 0, 1};
+    __int128 g[8] = {3, 1};
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g, 1), 1);
+}
+
+void test_sign_unique_root_negative() {
+    std::cout << "  sign_unique_root_negative" << std::endl;
+    __int128 f[8] = {2, 1, 0, 1};
+    __int128 g[8] = {0, 1};  // g = x, g(-1) = -1
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g, 1), -1);
+}
+
+void test_sign_unique_root_shared() {
+    std::cout << "  sign_unique_root_shared" << std::endl;
+    __int128 f[8] = {1, 1, 1, 1};  // (x+1)(x^2+1)
+    __int128 g[8] = {1, 1};        // x+1, g(-1) = 0
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g, 1), 0);
+}
+
+void test_sign_unique_root_constant_g() {
+    std::cout << "  sign_unique_root_constant_g" << std::endl;
+    __int128 f[8] = {2, 1, 0, 1};
+    __int128 g_pos[8] = {5};
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g_pos, 0), 1);
+    __int128 g_neg[8] = {-3};
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g_neg, 0), -1);
+    __int128 g_zero[8] = {0};
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g_zero, 0), 0);
+}
+
+void test_sign_unique_root_neg_lc() {
+    std::cout << "  sign_unique_root_neg_lc" << std::endl;
+    // f = -x^3-x-2 (1 real root at -1), g = x+3 => g(-1)=2>0
+    __int128 f[8] = {-2, -1, 0, -1};
+    __int128 g[8] = {3, 1};
+    ASSERT_EQ(sign_at_unique_root_i128(f, 3, g, 1), 1);
+}
+
+// ============================================================================
+// compare_roots_i128 tests
+// ============================================================================
+
+void test_compare_roots_disjoint() {
+    std::cout << "  compare_roots_disjoint" << std::endl;
+    __int128 f[8] = {-1, 1};  // root at 1
+    __int128 g[8] = {-3, 1};  // root at 3
+    ASSERT_EQ(compare_roots_i128(f, 1, 1, 0, g, 1, 1, 0), -1);  // 1 < 3
+    ASSERT_EQ(compare_roots_i128(g, 1, 1, 0, f, 1, 1, 0), 1);   // 3 > 1
+}
+
+void test_compare_roots_equal() {
+    std::cout << "  compare_roots_equal" << std::endl;
+    __int128 f[8] = {-2, 1};           // root at 2
+    __int128 g[8] = {10, -7, 1};       // (x-2)(x-5), roots at 2, 5
+    ASSERT_EQ(compare_roots_i128(f, 1, 1, 0, g, 2, 2, 0), 0);  // both at 2
+}
+
+void test_compare_roots_3root_cubic() {
+    std::cout << "  compare_roots_3root_cubic" << std::endl;
+    __int128 f[8] = {-15, 23, -9, 1};   // (x-1)(x-3)(x-5)
+    __int128 g[8] = {-48, 44, -12, 1};  // (x-2)(x-4)(x-6)
+    ASSERT_EQ(compare_roots_i128(f, 3, 3, 0, g, 3, 3, 0), -1);  // 1 < 2
+    ASSERT_EQ(compare_roots_i128(f, 3, 3, 1, g, 3, 3, 1), -1);  // 3 < 4
+    ASSERT_EQ(compare_roots_i128(f, 3, 3, 2, g, 3, 3, 1), 1);   // 5 > 4
+}
+
+void test_compare_roots_degenerate() {
+    std::cout << "  compare_roots_degenerate" << std::endl;
+    __int128 f[8] = {5};  // constant, no roots
+    __int128 g[8] = {-1, 1};
+    ASSERT_EQ(compare_roots_i128(f, 0, 0, 0, g, 1, 1, 0), 0);
+}
+
+// ============================================================================
+// compute_tet_QP_i128 tests
+// ============================================================================
+
+void test_compute_tet_QP_identity() {
+    std::cout << "  compute_tet_QP_identity" << std::endl;
+    // Q = P[0] + P[1] + P[2] + P[3] must hold exactly
+    int V[4][3] = {{1,2,3},{-1,0,2},{3,-1,1},{0,1,-1}};
+    int W[4][3] = {{0,1,-1},{2,-1,0},{-1,2,1},{1,0,2}};
+    __int128 Q[4], P[4][4];
+    compute_tet_QP_i128(V, W, Q, P);
+    for (int i = 0; i < 4; i++) {
+        __int128 sum = P[0][i] + P[1][i] + P[2][i] + P[3][i];
+        ASSERT_EQ(sum, Q[i]);
+    }
+}
+
+void test_compute_tet_QP_coplanar_zero() {
+    std::cout << "  compute_tet_QP_coplanar_zero" << std::endl;
+    // All V,W in z=0 plane => Q ≡ 0, P ≡ 0 (D23)
+    int V[4][3] = {{1,0,0},{0,1,0},{-1,0,0},{0,-1,0}};
+    int W[4][3] = {{0,1,0},{-1,0,0},{0,-1,0},{1,0,0}};
+    __int128 Q[4], P[4][4];
+    compute_tet_QP_i128(V, W, Q, P);
+    for (int i = 0; i < 4; i++) {
+        ASSERT_EQ(Q[i], (__int128)0);
+        for (int k = 0; k < 4; k++) {
+            ASSERT_EQ(P[k][i], (__int128)0);
+        }
+    }
+}
+
+// ============================================================================
+// check_field_zero_in_tet tests
+// ============================================================================
+
+void test_field_zero_inside() {
+    std::cout << "  field_zero_inside" << std::endl;
+    // Origin in convex hull of (1,0,0),(0,1,0),(0,0,1),(-1,-1,-1)
+    int F[4][3] = {{1,0,0},{0,1,0},{0,0,1},{-1,-1,-1}};
+    int64_t num[4]; int64_t den;
+    ASSERT_TRUE(check_field_zero_in_tet(F, num, &den));
+    ASSERT_TRUE(den != 0);
+}
+
+void test_field_zero_outside() {
+    std::cout << "  field_zero_outside" << std::endl;
+    // All same direction — origin not inside
+    int F[4][3] = {{1,1,1},{2,2,2},{3,3,3},{4,4,4}};
+    ASSERT_TRUE(!check_field_zero_in_tet(F));
+}
+
+void test_field_zero_at_vertex() {
+    std::cout << "  field_zero_at_vertex" << std::endl;
+    // F[3] = (0,0,0), so origin is at vertex 3
+    int F[4][3] = {{1,0,0},{0,1,0},{0,0,1},{0,0,0}};
+    ASSERT_TRUE(check_field_zero_in_tet(F));
+}
+
+void test_field_zero_coplanar_det0() {
+    std::cout << "  field_zero_coplanar_det0" << std::endl;
+    // Coplanar vectors: det = 0 → returns false
+    int F[4][3] = {{1,0,0},{0,1,0},{-1,-1,0},{2,3,0}};
+    ASSERT_TRUE(!check_field_zero_in_tet(F));
+}
+
+// ============================================================================
+// check_field_zero_coplanar tests
+// ============================================================================
+
+void test_coplanar_inside() {
+    std::cout << "  coplanar_inside" << std::endl;
+    int F[4][3] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0}};
+    ASSERT_TRUE(check_field_zero_coplanar(F));
+}
+
+void test_coplanar_outside() {
+    std::cout << "  coplanar_outside" << std::endl;
+    int F[4][3] = {{1,1,0},{2,1,0},{1,2,0},{2,2,0}};
+    ASSERT_TRUE(!check_field_zero_coplanar(F));
+}
+
+void test_coplanar_all_zero() {
+    std::cout << "  coplanar_all_zero" << std::endl;
+    int F[4][3] = {{0,0,0},{0,0,0},{0,0,0},{0,0,0}};
+    ASSERT_TRUE(check_field_zero_coplanar(F));
+}
+
+void test_coplanar_1d_inside() {
+    std::cout << "  coplanar_1d_inside" << std::endl;
+    int F[4][3] = {{1,0,0},{2,0,0},{-1,0,0},{3,0,0}};
+    ASSERT_TRUE(check_field_zero_coplanar(F));
+}
+
+void test_coplanar_1d_outside() {
+    std::cout << "  coplanar_1d_outside" << std::endl;
+    int F[4][3] = {{1,0,0},{2,0,0},{3,0,0},{4,0,0}};
+    ASSERT_TRUE(!check_field_zero_coplanar(F));
+}
+
+void test_coplanar_3d_plane() {
+    std::cout << "  coplanar_3d_plane (non-axis-aligned)" << std::endl;
+    // Points in plane x+y+z=0: (1,-1,0),(0,1,-1),(-1,0,1),(1,0,-1)
+    // Origin: does it lie in convex hull?
+    // Triangle (1,-1,0),(0,1,-1),(-1,0,1): project dropping max |n|
+    // n = (1,-1,0)×(0,1,-1) = (1,1,1), drop any coord, say z
+    // 2D: (1,-1),(0,1),(-1,0)
+    // s1 = 1*1-(-1)*0 = 1, s2 = 0*0-1*(-1) = 1, s3 = (-1)*(-1)-0*1 = 1
+    // All positive → origin inside
+    int F[4][3] = {{1,-1,0},{0,1,-1},{-1,0,1},{1,0,-1}};
+    ASSERT_TRUE(check_field_zero_coplanar(F));
+}
+
+// ============================================================================
+// Additional prem_i128 tests
+// ============================================================================
+
+void test_prem_equal_degree() {
+    std::cout << "  prem_equal_degree" << std::endl;
+    __int128 f[8] = {2, 0, 1};  // x^2+2
+    __int128 g[8] = {1, 0, 1};  // x^2+1
+    __int128 r[8] = {};
+    int exp;
+    int dr = prem_i128(f, 2, g, 2, r, &exp);
+    ASSERT_EQ(dr, 0);
+    ASSERT_TRUE(r[0] > 0);  // prem = g[2]^1*(f-g) = 1 > 0
+}
+
+void test_prem_exact_division() {
+    std::cout << "  prem_exact_division" << std::endl;
+    // f = x^2-1, g = x-1 (divides f), prem = 0
+    __int128 f[8] = {-1, 0, 1};
+    __int128 g[8] = {-1, 1};
+    __int128 r[8] = {};
+    int exp;
+    int dr = prem_i128(f, 2, g, 1, r, &exp);
+    // Content-reduced result should be 0
+    ASSERT_EQ(r[0], (__int128)0);
+}
+
+void test_prem_neg_leading() {
+    std::cout << "  prem_neg_leading" << std::endl;
+    __int128 f[8] = {1, 0, 1};  // x^2+1
+    __int128 g[8] = {3, -1};    // -x+3
+    __int128 r[8] = {};
+    int exp;
+    int dr = prem_i128(f, 2, g, 1, r, &exp);
+    ASSERT_EQ(dr, 0);
+    ASSERT_EQ(exp, 2);
+    // prem should evaluate to f(3) = 10, content-reduced
+    ASSERT_TRUE(r[0] > 0);
+}
+
+// ============================================================================
+// Additional signs_at_roots_i128 tests
+// ============================================================================
+
+void test_signs_quadratic_linear_shared() {
+    std::cout << "  signs_quadratic_linear_shared" << std::endl;
+    // f = (x-2)(x-5) = x^2-7x+10, g = x-2 => g(2)=0, g(5)=3
+    __int128 f[8] = {10, -7, 1};
+    __int128 g[8] = {-2, 1};
+    int signs[3] = {};
+    int nr = signs_at_roots_i128(f, 2, g, 1, signs, 3);
+    ASSERT_EQ(nr, 2);
+    ASSERT_EQ(signs[0], 0);
+    ASSERT_EQ(signs[1], 1);
+}
+
+void test_signs_quadratic_both_negative() {
+    std::cout << "  signs_quadratic_both_negative" << std::endl;
+    // f = (x-2)(x-5), g = x-10 => g(2)=-8, g(5)=-5
+    __int128 f[8] = {10, -7, 1};
+    __int128 g[8] = {-10, 1};
+    int signs[3] = {};
+    int nr = signs_at_roots_i128(f, 2, g, 1, signs, 3);
+    ASSERT_EQ(nr, 2);
+    ASSERT_EQ(signs[0], -1);
+    ASSERT_EQ(signs[1], -1);
+}
+
+void test_signs_cubic_3roots_shared_middle() {
+    std::cout << "  signs_cubic_3roots_shared_middle" << std::endl;
+    // f = (x-1)(x-3)(x-5), g = x-3 => g(1)=-2, g(3)=0, g(5)=2
+    __int128 f[8] = {-15, 23, -9, 1};
+    __int128 g[8] = {-3, 1};
+    int signs[3] = {};
+    int nr = signs_at_roots_i128(f, 3, g, 1, signs, 3);
+    ASSERT_EQ(nr, 3);
+    ASSERT_EQ(signs[0], -1);
+    ASSERT_EQ(signs[1], 0);
+    ASSERT_EQ(signs[2], 1);
+}
+
+void test_signs_cubic_1root_quadratic_g() {
+    std::cout << "  signs_cubic_1root_quadratic_g" << std::endl;
+    // f = x^3+x+2 (root at -1), g = x^2+x+2 (no real roots)
+    // g(-1) = 1-1+2 = 2 > 0
+    __int128 f[8] = {2, 1, 0, 1};
+    __int128 g[8] = {2, 1, 1};
+    int signs[3] = {};
+    int nr = signs_at_roots_i128(f, 3, g, 2, signs, 3);
+    ASSERT_EQ(nr, 1);
+    ASSERT_EQ(signs[0], 1);
+}
+
+void test_signs_quadratic_prem_reduction() {
+    std::cout << "  signs_quadratic_prem_reduction" << std::endl;
+    // f = (x-1)(x-4) = x^2-5x+4, g = (x-2)(x+3) = x^2+x-6
+    // g(1) = -4, g(4) = 14
+    __int128 f[8] = {4, -5, 1};
+    __int128 g[8] = {-6, 1, 1};
+    int signs[3] = {};
+    int nr = signs_at_roots_i128(f, 2, g, 2, signs, 3);
+    ASSERT_EQ(nr, 2);
+    ASSERT_EQ(signs[0], -1);
+    ASSERT_EQ(signs[1], 1);
+}
+
+void test_signs_zero_polynomial() {
+    std::cout << "  signs_zero_polynomial" << std::endl;
+    __int128 f[8] = {0, 0, 0, 0};
+    __int128 g[8] = {1, 1};
+    int signs[3] = {};
+    int nr = signs_at_roots_i128(f, 3, g, 1, signs, 3);
+    ASSERT_EQ(nr, 0);
+}
+
+// ============================================================================
+// Additional resultant_sign_i128 tests
+// ============================================================================
+
+void test_resultant_constant_f() {
+    std::cout << "  resultant_constant_f" << std::endl;
+    __int128 f[8] = {5};
+    __int128 g[8] = {-3, 1};
+    int res = resultant_sign_i128(f, 0, g, 1);
+    ASSERT_EQ(res, 1);  // 5^1 = 5 > 0
+}
+
+void test_resultant_constant_f_neg() {
+    std::cout << "  resultant_constant_f_neg" << std::endl;
+    __int128 f[8] = {-5};
+    __int128 g[8] = {-3, 1};
+    int res = resultant_sign_i128(f, 0, g, 1);
+    ASSERT_EQ(res, -1);  // (-5)^1 = -5 < 0
+}
+
+void test_resultant_constant_f_zero() {
+    std::cout << "  resultant_constant_f_zero" << std::endl;
+    __int128 f[8] = {0};
+    __int128 g[8] = {-3, 1};
+    int res = resultant_sign_i128(f, 0, g, 1);
+    ASSERT_EQ(res, 0);
+}
+
+void test_resultant_both_constants() {
+    std::cout << "  resultant_both_constants" << std::endl;
+    __int128 f[8] = {3};
+    __int128 g[8] = {7};
+    int res = resultant_sign_i128(f, 0, g, 0);
+    ASSERT_EQ(res, 1);
+}
+
+// ============================================================================
+// Additional poly_gcd_full_i128 tests
+// ============================================================================
+
+void test_gcd_f_zero() {
+    std::cout << "  gcd_f_zero" << std::endl;
+    __int128 f[8] = {0, 0, 0};
+    __int128 g[8] = {-2, 1};
+    __int128 h[8] = {};
+    int dh = poly_gcd_full_i128(f, 2, g, 1, h);
+    ASSERT_EQ(dh, 1);
+    ASSERT_TRUE(h[1] != 0);
+}
+
+void test_gcd_quadratic_factor() {
+    std::cout << "  gcd_quadratic_factor" << std::endl;
+    // (x^2+1)(x-1), (x^2+1)(x+2) → gcd = x^2+1
+    __int128 f[8] = {-1, 1, -1, 1};
+    __int128 g[8] = {2, 1, 2, 1};
+    __int128 h[8] = {};
+    int dh = poly_gcd_full_i128(f, 3, g, 3, h);
+    ASSERT_EQ(dh, 2);
+    ASSERT_EQ(h[1], (__int128)0);  // no linear term in x^2+1
+}
+
+void test_gcd_swap_degrees() {
+    std::cout << "  gcd_swap_degrees" << std::endl;
+    // f has lower degree → triggers swap
+    __int128 f[8] = {-1, 1};       // x-1
+    __int128 g[8] = {-2, 1, 1};    // (x-1)(x+2) = x^2+x-2
+    __int128 h[8] = {};
+    int dh = poly_gcd_full_i128(f, 1, g, 2, h);
+    ASSERT_EQ(dh, 1);
+    ASSERT_EQ(h[0] + h[1], (__int128)0);  // h(1) = 0
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
 int main() {
-    std::cout << "=== prem_i128 ===" << std::endl;
+    std::cout << "=== content_reduce_i128 ===" << std::endl;
+    test_content_reduce_basic();
+    test_content_reduce_already_primitive();
+    test_content_reduce_with_zero();
+    test_content_reduce_negative();
+    test_content_reduce_degree_zero();
+    test_content_reduce_neg_degree();
+
+    std::cout << "\n=== effective_degree_i128 ===" << std::endl;
+    test_effective_degree();
+
+    std::cout << "\n=== discriminant_sign_i128 ===" << std::endl;
+    test_discriminant_sign_three_roots();
+    test_discriminant_sign_one_root();
+    test_discriminant_sign_repeated();
+    test_discriminant_sign_triple_root();
+    test_discriminant_sign_not_cubic();
+    test_discriminant_sign_neg_leading();
+
+    std::cout << "\n=== prem_i128 ===" << std::endl;
     test_prem_basic();
     test_prem_zero_skip();
     test_prem_seed2520();
+    test_prem_equal_degree();
+    test_prem_exact_division();
+    test_prem_neg_leading();
+
+    std::cout << "\n=== poly_exact_div_i128 ===" << std::endl;
+    test_poly_exact_div_linear();
+    test_poly_exact_div_quadratic();
+    test_poly_exact_div_equal_degree();
+    test_poly_exact_div_neg_leading();
+
+    std::cout << "\n=== poly_sqfree_i128 ===" << std::endl;
+    test_sqfree_already();
+    test_sqfree_double_root();
+    test_sqfree_triple_root();
+    test_sqfree_quadratic_double();
+    test_sqfree_linear();
 
     std::cout << "\n=== signs_at_roots_i128 ===" << std::endl;
     test_signs_linear();
@@ -903,17 +1534,61 @@ int main() {
     test_signs_g_higher_degree();
     test_signs_negative_leading_coeff();
     test_signs_seed91502_edge_product();
+    test_signs_quadratic_linear_shared();
+    test_signs_quadratic_both_negative();
+    test_signs_cubic_3roots_shared_middle();
+    test_signs_cubic_1root_quadratic_g();
+    test_signs_quadratic_prem_reduction();
+    test_signs_zero_polynomial();
+
+    std::cout << "\n=== sign_at_unique_root_i128 ===" << std::endl;
+    test_sign_unique_root_positive();
+    test_sign_unique_root_negative();
+    test_sign_unique_root_shared();
+    test_sign_unique_root_constant_g();
+    test_sign_unique_root_neg_lc();
 
     std::cout << "\n=== resultant_sign_i128 ===" << std::endl;
     test_resultant_shared_root();
     test_resultant_no_shared_root();
     test_resultant_cubic_shared();
     test_resultant_mixed_degree();
+    test_resultant_constant_f();
+    test_resultant_constant_f_neg();
+    test_resultant_constant_f_zero();
+    test_resultant_both_constants();
 
     std::cout << "\n=== poly_gcd_full_i128 ===" << std::endl;
     test_gcd_shared_factor();
     test_gcd_no_shared_factor();
     test_gcd_four_polys();
+    test_gcd_f_zero();
+    test_gcd_quadratic_factor();
+    test_gcd_swap_degrees();
+
+    std::cout << "\n=== compare_roots_i128 ===" << std::endl;
+    test_compare_roots_disjoint();
+    test_compare_roots_equal();
+    test_compare_roots_3root_cubic();
+    test_compare_roots_degenerate();
+
+    std::cout << "\n=== compute_tet_QP_i128 ===" << std::endl;
+    test_compute_tet_QP_identity();
+    test_compute_tet_QP_coplanar_zero();
+
+    std::cout << "\n=== check_field_zero_in_tet ===" << std::endl;
+    test_field_zero_inside();
+    test_field_zero_outside();
+    test_field_zero_at_vertex();
+    test_field_zero_coplanar_det0();
+
+    std::cout << "\n=== check_field_zero_coplanar ===" << std::endl;
+    test_coplanar_inside();
+    test_coplanar_outside();
+    test_coplanar_all_zero();
+    test_coplanar_1d_inside();
+    test_coplanar_1d_outside();
+    test_coplanar_3d_plane();
 
     std::cout << "\n=== solve_pv_tet_v2 regressions ===" << std::endl;
     test_solve_v2_seed91502();
