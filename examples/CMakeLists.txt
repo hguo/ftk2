@@ -87,6 +87,10 @@ if (CMAKE_CUDA_COMPILER)
     # PV tet case finder - GPU random tet search + CPU classification
     add_executable(ftk2_pv_tet_case_finder pv_tet_case_finder.cu)
     target_link_libraries(ftk2_pv_tet_case_finder PRIVATE ftk2)
+
+    # 2D PV triangle case finder - GPU random triangle search + CPU classification
+    add_executable(ftk2_pv_tri_case_finder_2d pv_tri_case_finder_2d.cu)
+    target_link_libraries(ftk2_pv_tri_case_finder_2d PRIVATE ftk2)
 endif()
 
 # High-level API demo (Layer 2)
@@ -112,3 +116,6 @@ target_link_libraries(ftk2_check_punctures ftk2)
 
 add_executable(ftk2_exact_pv_stitching exact_pv_stitching.cpp)
 target_link_libraries(ftk2_exact_pv_stitching ftk2)
+
+add_executable(ftk2_exact_pv_stitching_2d exact_pv_stitching_2d.cpp)
+target_link_libraries(ftk2_exact_pv_stitching_2d ftk2)

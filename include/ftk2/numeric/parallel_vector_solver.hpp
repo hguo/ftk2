@@ -3872,8 +3872,7 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                 // Check if this is an edge or vertex puncture
                 int n_zero = 0;
                 int zero_faces[3] = {};
-                int pj_s[3] = {};
-                int pj_idx = 0;
+                (void)zero_faces;
                 bool redo_valid = true;
                 int redo_first = 0;
                 for (int j = 0; j < 4; j++) {
@@ -3887,7 +3886,6 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
                         if (redo_first == 0) redo_first = s;
                         else if (s != redo_first) redo_valid = false;
                     }
-                    pj_idx++;
                 }
                 // Edge: exactly 1 zero, remaining 2 same sign → valid
                 // Vertex: 2 zeros → valid (only non-k, non-zero face has some sign)
@@ -4474,6 +4472,864 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
     // P_red and n_distinct_red (P[k] is already P_red after Step 1)
     for (int k = 0; k < 4; k++) {
         for (int i = 0; i < 4; i++) result.P_red[k][i] = P[k][i];
+        result.degP_red[k] = degP[k];
+        result.n_distinct_red[k] = n_distinct[k];
+    }
+
+    return result;
+}
+
+// ============================================================================
+// 2D Parallel Vector Pipeline — ExactPV2 for 2D Vector Fields
+// ============================================================================
+//
+// Extracts PV curves from 2D triangulated meshes with two 2D vector fields
+// V(x) and W(x).  PV condition: det(V, W) = 0 (codim-1 → curves in 2D).
+//
+// Structure mirrors the 3D pipeline:
+//   3D: triangle solver → tet stitcher (cubic, 4 faces)
+//   2D: edge solver → triangle stitcher (quadratic, 3 edges)
+//
+// All arithmetic is pure __int128 — NO floats in any topological decision.
+
+// ============================================================================
+// 2D Quantization
+// ============================================================================
+// For 2D fields with 3 vertices × 2 components:
+//   Q coefficients: products of two 2D determinants of quantized values
+//   With QUANT_BITS=20: vertex values ~2^20, det ~2^40, Q coeff ~2^40
+//   Discriminant b²-4ac: ~2^80 → fits __int128
+//   Sylvester 4×4 for resultant: Bareiss with GCD factoring → __int128 ok
+// No need for a separate QUANT_BITS_2D — reuse QUANT_BITS=20.
+
+template <typename T>
+FTK_HOST_DEVICE void quantize_field_3x2(const T V[3][2], int64_t Vq[3][2]) {
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 2; ++j)
+            Vq[i][j] = quant(static_cast<double>(V[i][j]));
+}
+
+template <typename T>
+FTK_HOST_DEVICE void quantize_field_2x2(const T V[2][2], int64_t Vq[2][2]) {
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 2; ++j)
+            Vq[i][j] = quant(static_cast<double>(V[i][j]));
+}
+
+// ============================================================================
+// 2D Edge Q Polynomial
+// ============================================================================
+// On edge with vertices v₀, v₁ with 2D fields V_k, W_k:
+//   U_k(λ) = V_k + λW_k
+//   Q_edge(λ) = det(U₀, U₁) = det([V₀+λW₀, V₁+λW₁])
+//             = q₀ + q₁λ + q₂λ²
+// where:
+//   q₀ = V₀⁰V₁¹ - V₀¹V₁⁰           (det of V's)
+//   q₂ = W₀⁰W₁¹ - W₀¹W₁⁰           (det of W's)
+//   q₁ = V₀⁰W₁¹ + W₀⁰V₁¹ - V₀¹W₁⁰ - W₀¹V₁⁰  (cross terms)
+
+FTK_HOST_DEVICE inline void compute_edge_Q_2d(
+    const __int128 V[2][2], const __int128 W[2][2],
+    __int128 Q[3])
+{
+    Q[0] = V[0][0]*V[1][1] - V[0][1]*V[1][0];
+    Q[2] = W[0][0]*W[1][1] - W[0][1]*W[1][0];
+    Q[1] = V[0][0]*W[1][1] + W[0][0]*V[1][1]
+         - V[0][1]*W[1][0] - W[0][1]*V[1][0];
+}
+
+// ============================================================================
+// 2D Triangle Q + P Polynomials
+// ============================================================================
+// On triangle with vertices v₀, v₁, v₂ with 2D fields V_k, W_k:
+//   U_k(λ) = V_k + λW_k
+//   Q_tri(λ) = det(U₀-U₂, U₁-U₂) = det(A - λB)  (degree 2)
+//   P[0] = det(U₁, U₂), P[1] = det(U₂, U₀), P[2] = det(U₀, U₁)
+//   Key property: P[0]+P[1]+P[2] = Q_tri
+//
+// This is the 2D analogue of characteristic_polynomials_pv_tetrahedron.
+
+FTK_HOST_DEVICE inline void compute_tri_QP_2d(
+    const __int128 V[3][2], const __int128 W[3][2],
+    __int128 Q[3], __int128 P[3][3])
+{
+    // A = [V₀-V₂, V₁-V₂]  (2×2)
+    // B = [W₀-W₂, W₁-W₂]  (2×2)
+    // Q = det(A - λB) via characteristic_polynomial_2x2
+    __int128 a00 = V[0][0] - V[2][0], a01 = V[1][0] - V[2][0];
+    __int128 a10 = V[0][1] - V[2][1], a11 = V[1][1] - V[2][1];
+    __int128 b00 = W[0][0] - W[2][0], b01 = W[1][0] - W[2][0];
+    __int128 b10 = W[0][1] - W[2][1], b11 = W[1][1] - W[2][1];
+
+    // Q = det(A + λB)  (physical convention, matching P[k] = det(U_j, U_l))
+    // det(A + λB) = det(A) + λ·(mixed terms) + λ²·det(B)
+    // Note: uses det(A+λB), NOT det(A-λB), so P[0]+P[1]+P[2] = Q holds.
+    Q[0] = a00*a11 - a10*a01;
+    Q[2] = b00*b11 - b10*b01;
+    Q[1] = a00*b11 + b00*a11 - a01*b10 - b01*a10;
+
+    // P[k] = det(U_j, U_l) where (j,l) are the other two vertices (edge opposite k)
+    // P[0] = det(U₁, U₂) — edge between v₁ and v₂ (opposite v₀)
+    P[0][0] = V[1][0]*V[2][1] - V[1][1]*V[2][0];
+    P[0][2] = W[1][0]*W[2][1] - W[1][1]*W[2][0];
+    P[0][1] = V[1][0]*W[2][1] + W[1][0]*V[2][1]
+            - V[1][1]*W[2][0] - W[1][1]*V[2][0];
+
+    // P[1] = det(U₂, U₀) — edge between v₂ and v₀ (opposite v₁)
+    P[1][0] = V[2][0]*V[0][1] - V[2][1]*V[0][0];
+    P[1][2] = W[2][0]*W[0][1] - W[2][1]*W[0][0];
+    P[1][1] = V[2][0]*W[0][1] + W[2][0]*V[0][1]
+            - V[2][1]*W[0][0] - W[2][1]*V[0][0];
+
+    // P[2] = det(U₀, U₁) — edge between v₀ and v₁ (opposite v₂)
+    P[2][0] = V[0][0]*V[1][1] - V[0][1]*V[1][0];
+    P[2][2] = W[0][0]*W[1][1] - W[0][1]*W[1][0];
+    P[2][1] = V[0][0]*W[1][1] + W[0][0]*V[1][1]
+            - V[0][1]*W[1][0] - W[0][1]*V[1][0];
+}
+
+// Convenience: quantize + compute Q,P for a 2D triangle
+template <typename T>
+FTK_HOST_DEVICE void compute_tri_QP_2d_from_fields(
+    const T V[3][2], const T W[3][2],
+    __int128 Q[3], __int128 P[3][3])
+{
+    int64_t Vq[3][2], Wq[3][2];
+    quantize_field_3x2(V, Vq);
+    quantize_field_3x2(W, Wq);
+    __int128 V128[3][2], W128[3][2];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 2; ++j) {
+            V128[i][j] = (__int128)Vq[i][j];
+            W128[i][j] = (__int128)Wq[i][j];
+        }
+    compute_tri_QP_2d(V128, W128, Q, P);
+}
+
+// ============================================================================
+// 2D Edge Solver Result
+// ============================================================================
+struct PunctureResult2D {
+    int count;                // 0..2
+    // Integer-only output: which root of Q_edge (0=smaller, 1=larger)
+    int root_idx[2];
+};
+
+// ============================================================================
+// 2D Edge Solver: solve_pv_edge_2d
+// ============================================================================
+// Finds puncture points on an edge where det(V+λW) = 0.
+// Q_edge is quadratic; each real root is checked for interior validity.
+// Interior check: at root λ*, U₀(λ*) and U₁(λ*) must have opposite signs
+// in at least one component.  Equivalently, for the root to be in edge
+// interior, U₀ⁱ(λ*) must be nonzero (otherwise vertex) and U₀⁰·U₁⁰ ≤ 0
+// (since bary coords are μ₀ = -U₁/det'...).
+//
+// Actually for a 2D edge with vertices v₀, v₁:
+//   PV point at λ* iff det(V₀+λ*W₀, V₁+λ*W₁) = 0
+//   Position: μ₀·v₀ + μ₁·v₁ where μ₀+μ₁=1
+//   From U(λ*) = V+λ*W: μ₀·U₀ + μ₁·U₁ = 0 (since det=0, they're parallel)
+//   Interior iff μ₀,μ₁ > 0 iff U₀(λ*) and U₁(λ*) point in opposite dirs
+//   i.e., U₀ⁱ(λ*)·U₁ⁱ(λ*) < 0 for both components (when both nonzero)
+//
+// We check: sign(U₀⁰(λ*))·sign(U₁⁰(λ*)) < 0 (component 0 opposite)
+// using signs_at_roots_i128.
+
+FTK_HOST_DEVICE inline PunctureResult2D solve_pv_edge_2d(
+    const __int128 V[2][2], const __int128 W[2][2])
+{
+    PunctureResult2D result;
+    result.count = 0;
+    result.root_idx[0] = result.root_idx[1] = -1;
+
+    __int128 Q[3];
+    compute_edge_Q_2d(V, W, Q);
+
+    int degQ = effective_degree_i128(Q, 2);
+    if (degQ <= 0) return result;  // constant or zero → no roots
+
+    // Determine number of distinct real roots
+    int n_roots = 0;
+    if (degQ == 1) {
+        n_roots = 1;
+    } else {
+        // degQ == 2: discriminant = Q[1]²-4Q[2]Q[0]
+        __int128 disc = Q[1]*Q[1] - 4*Q[2]*Q[0];
+        if (disc > 0) n_roots = 2;
+        else if (disc == 0) n_roots = 1;
+        else return result;  // disc < 0: no real roots
+    }
+
+    // For each root, check if puncture is in edge interior
+    // U₀(λ) = [V[0][0]+λW[0][0], V[0][1]+λW[0][1]] — linear in λ
+    // U₁(λ) = [V[1][0]+λW[1][0], V[1][1]+λW[1][1]] — linear in λ
+    // Interior: U₀⁰·U₁⁰ < 0 (opposite signs in component 0)
+    // Build polynomial U₀⁰·U₁⁰ = (V₀⁰+λW₀⁰)(V₁⁰+λW₁⁰) (degree 2)
+    __int128 prod0[3];
+    prod0[0] = V[0][0]*V[1][0];
+    prod0[1] = V[0][0]*W[1][0] + W[0][0]*V[1][0];
+    prod0[2] = W[0][0]*W[1][0];
+    int deg_prod0 = effective_degree_i128(prod0, 2);
+
+    // Also component 1: U₀¹·U₁¹
+    __int128 prod1[3];
+    prod1[0] = V[0][1]*V[1][1];
+    prod1[1] = V[0][1]*W[1][1] + W[0][1]*V[1][1];
+    prod1[2] = W[0][1]*W[1][1];
+    int deg_prod1 = effective_degree_i128(prod1, 2);
+
+    for (int ri = 0; ri < n_roots; ri++) {
+        // sign(U₀⁰·U₁⁰) at ri-th root of Q
+        int signs0[2] = {};
+        signs_at_roots_i128(Q, degQ, prod0, deg_prod0, signs0, 2);
+        int s0 = (ri < 2) ? signs0[ri] : 0;
+
+        if (s0 < 0) {
+            // Opposite signs in component 0 → interior puncture
+            result.root_idx[result.count] = ri;
+            result.count++;
+            continue;
+        }
+        if (s0 == 0) {
+            // Component 0: one or both U's are zero → vertex or check comp 1
+            int signs1[2] = {};
+            signs_at_roots_i128(Q, degQ, prod1, deg_prod1, signs1, 2);
+            int s1 = (ri < 2) ? signs1[ri] : 0;
+            if (s1 < 0) {
+                result.root_idx[result.count] = ri;
+                result.count++;
+                continue;
+            }
+            // s1 == 0: both components zero at both vertices → vertex degeneracy
+            // s1 > 0: same sign → not interior
+        }
+        // s0 > 0: same sign in component 0 → not interior (skip)
+    }
+    return result;
+}
+
+// ============================================================================
+// 2D ExactPV2Result
+// ============================================================================
+struct ExactPV2Result2D {
+    static constexpr int MAX_PUNCTURES = 8;   // T6 is theoretical max
+    static constexpr int MAX_PAIRS = 4;
+
+    int n_punctures = 0;
+    struct Puncture {
+        int face;            // which edge (0-2), or "face" in tet terminology
+        int root_idx;        // which root of P_face (0=smallest, 1=larger; -1=infinity)
+        int q_interval;      // Q_red-interval index
+        bool is_edge;        // on mesh vertex (shared by 2 edges)
+        bool is_vertex;      // should not occur in 2D (vertex shared by 2 edges = is_edge)
+        int edge_faces[2];   // for edge: which two faces share the puncture
+    } punctures[MAX_PUNCTURES];
+
+    int n_pairs = 0;
+    struct Pair { int a, b; } pairs[MAX_PAIRS];
+
+    bool has_passthrough = false;
+    int passthrough_deg = 0;
+
+    bool merge_infinity = false;
+    int n_qr_roots = 0;
+
+    __int128 h[3] = {};        // pass-through polynomial h = gcd(P_0, P_1, P_2)
+    int h_deg = 0;
+    int h_n_roots = 0;
+
+    __int128 P_red[3][3] = {}; // P_red[k] = P[k] / h
+    int degP_red[3] = {};
+    int n_distinct_red[3] = {};
+};
+
+// ============================================================================
+// 2D Triangle Stitcher: solve_pv_tri_2d
+// ============================================================================
+// Exact analogue of solve_pv_tet_v2 for 2D:
+//   - Q is degree ≤ 2 (quadratic), P[k] each degree ≤ 2
+//   - 3 faces instead of 4
+//   - Sylvester resultant is 4×4 instead of 6×6
+//   - P'' is constant (= 2·P[k][2])
+//
+// All steps follow the 3D solver exactly, with degree bounds reduced.
+
+FTK_HOST_DEVICE inline ExactPV2Result2D solve_pv_tri_2d(
+    const __int128 Q_raw[3], const __int128 P_raw[3][3])
+{
+    ExactPV2Result2D result;
+
+    // --- Step 0: Copy and determine effective degrees ---
+    __int128 P[3][3], Q[3];
+    for (int k = 0; k < 3; k++)
+        for (int i = 0; i < 3; i++) P[k][i] = P_raw[k][i];
+    for (int i = 0; i < 3; i++) Q[i] = Q_raw[i];
+
+    int degP[3], degQ;
+    for (int k = 0; k < 3; k++)
+        degP[k] = effective_degree_i128(P[k], 2);
+    degQ = effective_degree_i128(Q, 2);
+
+    // --- Step 1: Pass-through factoring ---
+    // h = gcd(P_0, P_1, P_2)
+    __int128 h[3] = {};
+    int dh = poly_gcd_full_i128(P[0], degP[0], P[1], degP[1], h);
+    {
+        __int128 h2[3] = {};
+        int dh2 = poly_gcd_full_i128(h, dh, P[2], degP[2], h2);
+        dh = dh2;
+        for (int i = 0; i < 3; i++) h[i] = h2[i];
+    }
+
+    __int128 Q_red[3] = {};
+    int degQ_red = degQ;
+    if (dh >= 1) {
+        result.has_passthrough = true;
+        result.passthrough_deg = dh;
+        __int128 q_div[3] = {};
+        degQ_red = poly_exact_div_i128(Q, degQ, h, dh, q_div);
+        for (int i = 0; i <= degQ_red; i++) Q_red[i] = q_div[i];
+        for (int k = 0; k < 3; k++) {
+            __int128 p_div[3] = {};
+            int dp = poly_exact_div_i128(P[k], degP[k], h, dh, p_div);
+            for (int i = 0; i < 3; i++) P[k][i] = (i <= dp) ? p_div[i] : 0;
+            degP[k] = dp;
+        }
+    } else {
+        for (int i = 0; i <= degQ; i++) Q_red[i] = Q[i];
+    }
+
+    // --- Step 2: Per-face root validity ---
+    struct RootInfo {
+        int face;
+        int root_idx;
+        int q_interval;
+        bool valid;
+        bool is_edge;
+        bool is_vertex;
+        bool is_infinity;
+        int edge_faces[2];
+    };
+    RootInfo all_roots[8];
+    int n_all = 0;
+
+    int n_distinct[3] = {};
+
+    for (int k = 0; k < 3; k++) {
+        if (degP[k] <= 0) continue;  // skip constant or identically-zero P[k]
+
+        // Determine number of distinct roots (degree ≤ 2)
+        if (degP[k] == 1) {
+            n_distinct[k] = 1;
+        } else {
+            // degP[k] == 2
+            __int128 d2 = P[k][1]*P[k][1] - 4*P[k][2]*P[k][0];
+            if (d2 > 0) n_distinct[k] = 2;
+            else if (d2 == 0) n_distinct[k] = 1;
+            else n_distinct[k] = 0;
+        }
+
+        for (int ri = 0; ri < n_distinct[k]; ri++) {
+            bool valid = true;
+            int first_sign = 0;
+
+            for (int j = 0; j < 3; j++) {
+                if (j == k) continue;
+                int signs_j[2] = {};
+                signs_at_roots_i128(P[k], degP[k], P[j], degP[j], signs_j, 2);
+                int s = (ri < 2) ? signs_j[ri] : 0;
+                if (s == 0) { valid = false; break; }
+                if (first_sign == 0) first_sign = s;
+                else if (s != first_sign) { valid = false; break; }
+            }
+
+            // Re-check for edge punctures (exactly 1 zero P_j)
+            if (!valid) {
+                int n_zero = 0;
+                bool redo_valid = true;
+                int redo_first = 0;
+                for (int j = 0; j < 3; j++) {
+                    if (j == k) continue;
+                    int signs_j[2] = {};
+                    signs_at_roots_i128(P[k], degP[k], P[j], degP[j], signs_j, 2);
+                    int s = (ri < 2) ? signs_j[ri] : 0;
+                    if (s == 0) {
+                        n_zero++;
+                    } else {
+                        if (redo_first == 0) redo_first = s;
+                        else if (s != redo_first) redo_valid = false;
+                    }
+                }
+                if (n_zero >= 1 && redo_valid) valid = true;
+            }
+
+            if (!valid) continue;
+
+            if (n_all >= ExactPV2Result2D::MAX_PUNCTURES) break;
+            RootInfo& ri_info = all_roots[n_all];
+            ri_info.face = k;
+            ri_info.root_idx = ri;
+            ri_info.q_interval = -1;
+            ri_info.valid = true;
+            ri_info.is_edge = false;
+            ri_info.is_vertex = false;
+            ri_info.is_infinity = false;
+            ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
+            n_all++;
+        }
+    }
+
+    // --- Step 2b: Infinity punctures ---
+    {
+        int d_Q = degQ_red;
+        __int128 Q_lead = (d_Q >= 0 && d_Q <= 2) ? Q_red[d_Q] : 0;
+        if (d_Q >= 1 && Q_lead != 0) {
+            bool all_p_bounded = true;
+            for (int kb = 0; kb < 3; kb++)
+                if (degP[kb] > d_Q) { all_p_bounded = false; break; }
+
+            if (all_p_bounded) {
+                for (int k = 0; k < 3; k++) {
+                    if (degP[k] >= d_Q) continue;
+
+                    int first_sign3 = 0;
+                    bool valid_inf = true;
+                    int n_zero3 = 0;
+                    for (int j = 0; j < 3; j++) {
+                        if (j == k) continue;
+                        __int128 pj_lead = P[j][d_Q];
+                        if (pj_lead == 0) {
+                            n_zero3++;
+                        } else {
+                            int s = (pj_lead > 0) ? 1 : -1;
+                            if (first_sign3 == 0) first_sign3 = s;
+                            else if (s != first_sign3) { valid_inf = false; break; }
+                        }
+                    }
+                    if (!valid_inf || first_sign3 == 0) continue;
+
+                    // In 2D: n_zero3 >= 1 means Cw0 (vertex at ∞) — only 2 other faces
+                    if (n_zero3 >= 1) {
+                        // Cw1 (edge at ∞)
+                        int j_zero = -1;
+                        for (int j = 0; j < 3; j++) {
+                            if (j == k) continue;
+                            if (P[j][d_Q] == 0) { j_zero = j; break; }
+                        }
+                        if (j_zero < 0) continue;
+                        if (k > j_zero) continue;  // dedup
+
+                        __int128 pk_sub = (d_Q >= 1) ? P[k][d_Q - 1] : 0;
+                        __int128 pj_sub = (d_Q >= 1) ? P[j_zero][d_Q - 1] : 0;
+                        if (pk_sub * pj_sub < 0) continue;  // opposite signs → isolated touch
+                        if (pk_sub == 0 && pj_sub == 0) continue;  // both zero → symmetric → no crossing
+                        // When exactly one sub-leading is zero: check if μ_k > 0 on at
+                        // least one side of λ→±∞.  μ_k ≈ P[k][0]/(Q_lead·λ²) when pk_sub=0,
+                        // so inside iff P[k][0]·Q_lead > 0.
+                        if (pk_sub == 0 && P[k][0] * Q_lead <= 0) continue;
+                        if (pj_sub == 0 && P[j_zero][0] * Q_lead <= 0) continue;
+
+                        if (n_all >= ExactPV2Result2D::MAX_PUNCTURES) break;
+                        RootInfo& ri_info = all_roots[n_all];
+                        ri_info.face = k;
+                        ri_info.root_idx = -1;
+                        ri_info.q_interval = -1;
+                        ri_info.valid = true;
+                        ri_info.is_edge = true;
+                        ri_info.is_vertex = false;
+                        ri_info.is_infinity = true;
+                        ri_info.edge_faces[0] = k < j_zero ? k : j_zero;
+                        ri_info.edge_faces[1] = k < j_zero ? j_zero : k;
+                        n_all++;
+                        continue;
+                    }
+
+                    // Face-interior at ∞ (Cw2 in 3D)
+                    int d_k = degP[k];
+                    while (d_k > 0 && P[k][d_k] == 0) d_k--;
+                    int gap = d_Q - d_k;
+                    int n_inf_punc = 1;
+                    if (gap >= 2 && gap % 2 == 0) {
+                        __int128 sign_prod = P[k][d_k] * Q_lead;
+                        if (sign_prod < 0) n_inf_punc = 0;
+                        else if (sign_prod > 0) n_inf_punc = 2;
+                    }
+
+                    for (int ip = 0; ip < n_inf_punc; ip++) {
+                        if (n_all >= ExactPV2Result2D::MAX_PUNCTURES) break;
+                        RootInfo& ri_info = all_roots[n_all];
+                        ri_info.face = k;
+                        ri_info.root_idx = -1;
+                        ri_info.q_interval = -1;
+                        ri_info.valid = true;
+                        ri_info.is_edge = false;
+                        ri_info.is_vertex = false;
+                        ri_info.is_infinity = true;
+                        ri_info.edge_faces[0] = ri_info.edge_faces[1] = -1;
+                        n_all++;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Step 3: Edge detection (vertex in 2D mesh) ---
+    // In 2D: "edge" detection means the puncture is at a mesh vertex
+    // (shared by 2 triangle edges = 2 faces in our terminology).
+    // For each pair (i,j) with i<j: if Res(P_i, P_j) == 0 → shared root
+    for (int i = 0; i < 3; i++) {
+        for (int j = i + 1; j < 3; j++) {
+            if (degP[i] == 0 || degP[j] == 0) continue;
+            int res = resultant_sign_i128(P[i], degP[i], P[j], degP[j]);
+            if (res == 0) {
+                int owner = (i < j) ? i : j;
+                for (int r = 0; r < n_all; r++) {
+                    if (all_roots[r].is_infinity) continue;
+                    if (all_roots[r].face == i || all_roots[r].face == j) {
+                        if (all_roots[r].face == i) {
+                            int signs_j[2] = {};
+                            signs_at_roots_i128(P[i], degP[i], P[j], degP[j], signs_j, 2);
+                            if (all_roots[r].root_idx < 2 && signs_j[all_roots[r].root_idx] == 0) {
+                                all_roots[r].is_edge = true;
+                                all_roots[r].edge_faces[0] = i;
+                                all_roots[r].edge_faces[1] = j;
+                                if (all_roots[r].face != owner) all_roots[r].valid = false;
+                            }
+                        } else {
+                            int signs_i[2] = {};
+                            signs_at_roots_i128(P[j], degP[j], P[i], degP[i], signs_i, 2);
+                            if (all_roots[r].root_idx < 2 && signs_i[all_roots[r].root_idx] == 0) {
+                                all_roots[r].is_edge = true;
+                                all_roots[r].edge_faces[0] = i;
+                                all_roots[r].edge_faces[1] = j;
+                                if (all_roots[r].face != owner) all_roots[r].valid = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Step 4: Vertex detection (3-way shared root) ---
+    // In 2D triangle: all 3 faces share a root → D00 (mesh vertex)
+    {
+        if (degP[0] > 0 && degP[1] > 0 && degP[2] > 0) {
+            int r01 = resultant_sign_i128(P[0], degP[0], P[1], degP[1]);
+            if (r01 == 0) {
+                int r12 = resultant_sign_i128(P[1], degP[1], P[2], degP[2]);
+                if (r12 == 0) {
+                    int r02 = resultant_sign_i128(P[0], degP[0], P[2], degP[2]);
+                    if (r02 == 0) {
+                        for (int r = 0; r < n_all; r++) {
+                            if (all_roots[r].is_infinity) continue;
+                            bool is_shared = true;
+                            int f = all_roots[r].face;
+                            for (int j = 0; j < 3; j++) {
+                                if (j == f) continue;
+                                int signs_o[2] = {};
+                                signs_at_roots_i128(P[f], degP[f], P[j], degP[j], signs_o, 2);
+                                if (all_roots[r].root_idx < 2 && signs_o[all_roots[r].root_idx] != 0)
+                                    is_shared = false;
+                            }
+                            if (is_shared) {
+                                all_roots[r].is_vertex = true;
+                                all_roots[r].is_edge = false;
+                                if (all_roots[r].face != 0) all_roots[r].valid = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Step 4b: Cv waypoint exclusion ---
+    // In 2D, Cv0/Cv1 at λ=0 are on the triangle BOUNDARY (vertex/edge),
+    // NOT interior waypoints. Do NOT exclude them here.
+    // The pass-through check in Step 4c will handle them correctly:
+    // if P'[k1]·P'[k2] < 0 → pass-through → exclude; else → keep.
+    // (Removing the 3D-style unconditional Cv exclusion fixes odd-T bugs.)
+
+    // --- Step 4c: Edge/vertex pass-through exclusion ---
+    // Precompute P'[k] (degree ≤ 1 for quadratic P)
+    __int128 dP[3][2];
+    for (int k = 0; k < 3; k++) {
+        dP[k][0] = P[k][1];
+        dP[k][1] = 2 * P[k][2];
+    }
+
+    {
+        for (int r = 0; r < n_all; r++) {
+            if (!all_roots[r].valid) continue;
+            if (all_roots[r].is_infinity) continue;
+
+            if (all_roots[r].is_edge) {
+                int k1 = all_roots[r].edge_faces[0];
+                int k2 = all_roots[r].edge_faces[1];
+                // Product P'[k1]·P'[k2] (degree ≤ 2)
+                __int128 prod[3] = {};
+                for (int i = 0; i <= 1; i++)
+                    for (int j = 0; j <= 1; j++)
+                        prod[i + j] += dP[k1][i] * dP[k2][j];
+                int dp = 2;
+                while (dp > 0 && prod[dp] == 0) dp--;
+
+                int face = all_roots[r].face;
+                int signs_prod[2] = {};
+                signs_at_roots_i128(P[face], degP[face], prod, dp, signs_prod, 2);
+                int ri = all_roots[r].root_idx;
+                if (ri < 2 && signs_prod[ri] < 0) {
+                    all_roots[r].valid = false;
+                } else if (ri < 2 && signs_prod[ri] == 0) {
+                    // One derivative is 0 → tangency at edge
+                    for (int ki = 0; ki < 2; ki++) {
+                        int kf = all_roots[r].edge_faces[ki];
+                        int deg_dk = effective_degree_i128(dP[kf], 1);
+                        if (deg_dk < 0) continue;
+                        int signs_dk[2] = {};
+                        signs_at_roots_i128(P[face], degP[face], dP[kf], deg_dk, signs_dk, 2);
+                        if (signs_dk[ri] != 0) continue;
+                        // P''[kf] = 2·P[kf][2] (constant)
+                        __int128 pp = 2 * P[kf][2];
+                        // P''·Q product
+                        __int128 pq_prod[4] = {};
+                        for (int jj = 0; jj <= degQ_red; jj++)
+                            pq_prod[jj] += pp * Q_red[jj];
+                        int dpq = degQ_red;
+                        while (dpq > 0 && pq_prod[dpq] == 0) dpq--;
+                        int signs_pq[2] = {};
+                        signs_at_roots_i128(P[face], degP[face], pq_prod, dpq, signs_pq, 2);
+                        if (signs_pq[ri] < 0) {
+                            all_roots[r].valid = false;
+                            break;
+                        }
+                    }
+                }
+            } else if (all_roots[r].is_vertex) {
+                int f = all_roots[r].face;
+                int other_faces[2];
+                int nof = 0;
+                for (int j = 0; j < 3; j++) {
+                    if (j == f || nof >= 2) continue;
+                    if (degP[j] == 0) continue;
+                    int signs_j[2] = {};
+                    int nrj = signs_at_roots_i128(P[f], degP[f], P[j], degP[j], signs_j, 2);
+                    if (all_roots[r].root_idx < nrj && signs_j[all_roots[r].root_idx] == 0)
+                        other_faces[nof++] = j;
+                }
+                if (nof == 2) {
+                    int k1 = other_faces[0], k2 = other_faces[1];
+                    __int128 prod1[3] = {};
+                    for (int i = 0; i <= 1; i++)
+                        for (int j = 0; j <= 1; j++)
+                            prod1[i + j] += dP[f][i] * dP[k1][j];
+                    int dp1 = 2;
+                    while (dp1 > 0 && prod1[dp1] == 0) dp1--;
+                    __int128 prod2[3] = {};
+                    for (int i = 0; i <= 1; i++)
+                        for (int j = 0; j <= 1; j++)
+                            prod2[i + j] += dP[f][i] * dP[k2][j];
+                    int dp2 = 2;
+                    while (dp2 > 0 && prod2[dp2] == 0) dp2--;
+                    int signs1[2] = {}, signs2[2] = {};
+                    signs_at_roots_i128(P[f], degP[f], prod1, dp1, signs1, 2);
+                    signs_at_roots_i128(P[f], degP[f], prod2, dp2, signs2, 2);
+                    int ri = all_roots[r].root_idx;
+                    if (ri < 2 && (signs1[ri] < 0 || signs2[ri] < 0))
+                        all_roots[r].valid = false;
+                }
+            }
+        }
+    }
+
+    // --- Step 4d: TN face-interior handling ---
+    // P''[k] = 2·P[k][2] (constant for quadratic)
+    {
+        const int n_all_orig = n_all;
+        for (int r = 0; r < n_all_orig; r++) {
+            if (!all_roots[r].valid) continue;
+            if (all_roots[r].is_infinity) continue;
+            if (all_roots[r].is_edge || all_roots[r].is_vertex) continue;
+
+            int face = all_roots[r].face;
+            int ri = all_roots[r].root_idx;
+            if (ri >= 2 || degP[face] < 2) continue;
+
+            // Check P'[face](α) = 0
+            int deg_dp = effective_degree_i128(dP[face], 1);
+            if (deg_dp == 0 && dP[face][0] == 0) continue;
+            int signs_dp[2] = {};
+            signs_at_roots_i128(P[face], degP[face], dP[face], deg_dp, signs_dp, 2);
+
+            if (signs_dp[ri] != 0) continue;
+
+            // TN: P'' = 2·P[face][2] (constant)
+            __int128 P_pp = 2 * P[face][2];
+            if (P_pp == 0) {
+                all_roots[r].valid = false;
+                result.has_passthrough = true;
+                continue;
+            }
+
+            // sign(P''·Q) at root: P'' is constant, check sign(Q) at root
+            int signs_q[2] = {};
+            signs_at_roots_i128(P[face], degP[face], Q, degQ, signs_q, 2);
+
+            __int128 pp_sign = (P_pp > 0) ? 1 : -1;
+            __int128 q_sign = signs_q[ri];
+
+            if (pp_sign * q_sign < 0) {
+                all_roots[r].valid = false;
+                result.has_passthrough = true;
+            } else if (pp_sign * q_sign > 0) {
+                // Non-isolated TN → 2 punctures
+                if (n_all < ExactPV2Result2D::MAX_PUNCTURES) {
+                    all_roots[n_all] = all_roots[r];
+                    n_all++;
+                }
+            }
+        }
+    }
+
+    // --- Step 5: Collect valid punctures ---
+    int valid_indices[8];
+    int n_valid = 0;
+    for (int r = 0; r < n_all; r++) {
+        if (all_roots[r].valid && n_valid < ExactPV2Result2D::MAX_PUNCTURES)
+            valid_indices[n_valid++] = r;
+    }
+
+    if (n_valid == 0) return result;
+
+    // --- Step 6: Sort valid punctures by λ ---
+    for (int i = 0; i < n_valid - 1; i++) {
+        for (int j = i + 1; j < n_valid; j++) {
+            RootInfo& a = all_roots[valid_indices[i]];
+            RootInfo& b = all_roots[valid_indices[j]];
+            int cmp;
+            if (a.is_infinity && b.is_infinity) {
+                cmp = 0;
+            } else if (a.is_infinity) {
+                cmp = 1;
+            } else if (b.is_infinity) {
+                cmp = -1;
+            } else if (a.face == b.face) {
+                cmp = (a.root_idx < b.root_idx) ? -1 : (a.root_idx > b.root_idx) ? 1 : 0;
+            } else {
+                cmp = compare_roots_i128(P[a.face], degP[a.face], n_distinct[a.face], a.root_idx,
+                                         P[b.face], degP[b.face], n_distinct[b.face], b.root_idx);
+            }
+            if (cmp > 0) {
+                int t = valid_indices[i]; valid_indices[i] = valid_indices[j]; valid_indices[j] = t;
+            }
+        }
+    }
+
+    // --- Step 7: Q_red-interval assignment ---
+    degQ_red = effective_degree_i128(Q_red, degQ_red);
+    int n_qr_roots = 0;
+    if (degQ_red >= 1) {
+        if (degQ_red == 1) {
+            n_qr_roots = 1;
+        } else {
+            // degQ_red == 2
+            __int128 d2 = Q_red[1]*Q_red[1] - 4*Q_red[2]*Q_red[0];
+            n_qr_roots = (d2 > 0) ? 2 : (d2 == 0) ? 1 : 0;
+        }
+    }
+
+    for (int vi = 0; vi < n_valid; vi++) {
+        RootInfo& ri = all_roots[valid_indices[vi]];
+
+        if (ri.is_infinity) {
+            ri.q_interval = n_qr_roots;
+            continue;
+        }
+
+        if (n_qr_roots == 0 || degQ_red == 0) {
+            ri.q_interval = 0;
+            continue;
+        }
+
+        int count_below = 0;
+        for (int qi = 0; qi < n_qr_roots; qi++) {
+            int cmp = compare_roots_i128(P[ri.face], degP[ri.face],
+                                         n_distinct[ri.face], ri.root_idx,
+                                         Q_red, degQ_red, n_qr_roots, qi);
+            if (cmp > 0) count_below++;
+        }
+        ri.q_interval = count_below;
+    }
+
+    // --- Step 8: Fill result ---
+    for (int vi = 0; vi < n_valid; vi++) {
+        RootInfo& ri = all_roots[valid_indices[vi]];
+        ExactPV2Result2D::Puncture& p = result.punctures[result.n_punctures];
+        p.face = ri.face;
+        p.root_idx = ri.root_idx;
+        p.q_interval = ri.q_interval;
+        p.is_edge = ri.is_edge;
+        p.is_vertex = ri.is_vertex;
+        p.edge_faces[0] = ri.edge_faces[0];
+        p.edge_faces[1] = ri.edge_faces[1];
+        result.n_punctures++;
+    }
+
+    // --- Step 9: Pairing ---
+    bool merge_infinity = false;
+    if (Q[2] == 0) {
+        merge_infinity = true;
+    } else {
+        merge_infinity = true;
+        for (int k = 0; k < 3; k++) {
+            if ((P[k][2] > 0 && Q[2] < 0) || (P[k][2] < 0 && Q[2] > 0)) {
+                merge_infinity = false;
+                break;
+            }
+        }
+    }
+
+    for (int qi = 0; qi <= n_qr_roots; qi++) {
+        if (merge_infinity && qi == n_qr_roots && n_qr_roots > 0)
+            continue;
+
+        int group[8];
+        int ng = 0;
+        if (merge_infinity && qi == 0 && n_qr_roots > 0) {
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].q_interval == n_qr_roots)
+                    group[ng++] = i;
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].q_interval == 0)
+                    group[ng++] = i;
+        } else {
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].q_interval == qi)
+                    group[ng++] = i;
+        }
+        for (int i = 0; i + 1 < ng; i += 2) {
+            if (result.n_pairs < ExactPV2Result2D::MAX_PAIRS) {
+                result.pairs[result.n_pairs].a = group[i];
+                result.pairs[result.n_pairs].b = group[i + 1];
+                result.n_pairs++;
+            }
+        }
+    }
+
+    // --- Fill integer infrastructure ---
+    result.merge_infinity = merge_infinity;
+    result.n_qr_roots = n_qr_roots;
+    for (int i = 0; i < 3; i++) result.h[i] = h[i];
+    result.h_deg = dh;
+    if (dh == 0) result.h_n_roots = 0;
+    else if (dh == 1) result.h_n_roots = 1;
+    else {
+        __int128 d2h = h[1]*h[1] - 4*h[2]*h[0];
+        result.h_n_roots = (d2h > 0) ? 2 : (d2h == 0) ? 1 : 0;
+    }
+    for (int k = 0; k < 3; k++) {
+        for (int i = 0; i < 3; i++) result.P_red[k][i] = P[k][i];
         result.degP_red[k] = degP[k];
         result.n_distinct_red[k] = n_distinct[k];
     }
