@@ -63,6 +63,7 @@ struct ClassifiedCase2D {
     int Cw_type;
 
     bool has_B;
+    bool has_vertex_d00;  // det(V[i],W[i])=0 at any vertex
     int d11_edge;   // edge with D11 degeneracy (-1 if none)
 
     struct PunctureInfo {
@@ -172,6 +173,7 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
     cc.has_non_isolated_sr = false;
     cc.n_sr_roots = 0;
     cc.has_B = false;
+    cc.has_vertex_d00 = false;
     cc.d11_edge = -1;
     cc.has_Cv = false;
     cc.has_Cw = false;
@@ -275,6 +277,7 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
     }
 
     // ─── Step 4: SR detection + interval assignment ──────────────────
+    // Detect SR, then suppress if L'Hôpital bary is outside triangle.
     if (degQ > 0) {
         int degQ_i = effective_degree_i128(cc.Q_i128, 2);
         for (int k = 0; k < 3; k++) {
@@ -285,6 +288,56 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
                 break;
             }
         }
+    }
+    // Suppress SR if ALL shared roots have L'Hôpital bary outside triangle.
+    // For each face k with resultant(Q,P[k])=0, compute g=gcd(Q,P[k]).
+    // If g is linear, check bary at g's root. Pure integer.
+    if (cc.has_shared_root) {
+        int degQ_i = effective_degree_i128(cc.Q_i128, 2);
+        bool any_inside = false;
+        for (int k = 0; k < 3; k++) {
+            int degPk = effective_degree_i128(cc.P_i128[k], 2);
+            if (degPk <= 0) continue;
+            if (resultant_sign_i128(cc.Q_i128, degQ_i, cc.P_i128[k], degPk) != 0)
+                continue;
+            // Shared root on face k. Compute gcd(Q, P[k]).
+            __int128 g[3] = {};
+            int dg = poly_gcd_full_i128(cc.Q_i128, degQ_i, cc.P_i128[k], degPk, g);
+            if (dg == 1) {
+                __int128 g0 = g[0], g1 = g[1];
+                // L'Hôpital at root -g0/g1:
+                // denom = g1·Q[1] - 2·Q[2]·g0
+                __int128 denom = g1 * cc.Q_i128[1] - (__int128)2 * cc.Q_i128[2] * g0;
+                if (denom != 0) {
+                    bool inside = true;
+                    for (int j = 0; j < 3; j++) {
+                        __int128 mu_j = g1 * cc.P_i128[j][1]
+                                      - (__int128)2 * cc.P_i128[j][2] * g0;
+                        if (mu_j * denom < 0) { inside = false; break; }
+                    }
+                    if (inside) any_inside = true;
+                }
+            } else if (dg >= 2) {
+                any_inside = true; // conservatively keep SR for higher-degree GCD
+            }
+        }
+        // Also check h roots (gcd of all P's)
+        if (v2.h_deg == 1) {
+            __int128 h0 = v2.h[0], h1 = v2.h[1];
+            __int128 denom = h1 * cc.Q_i128[1] - (__int128)2 * cc.Q_i128[2] * h0;
+            if (denom != 0) {
+                bool inside = true;
+                for (int j = 0; j < 3; j++) {
+                    __int128 mu_j = h1 * cc.P_i128[j][1]
+                                  - (__int128)2 * cc.P_i128[j][2] * h0;
+                    if (mu_j * denom < 0) { inside = false; break; }
+                }
+                if (inside) any_inside = true;
+            }
+        } else if (v2.h_deg >= 2) {
+            any_inside = true;
+        }
+        if (!any_inside) cc.has_shared_root = false;
     }
 
     for (int pi = 0; pi < (int)cc.punctures.size(); pi++) {
@@ -366,53 +419,155 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
         }
     }
 
-    // ─── Step 7: D00 detection (vertex puncture) ─────────────────────
+    // ─── Step 7: D00 detection (vertex puncture + vertex det=0) ──────
     for (int pi = 0; pi < (int)cc.punctures.size(); pi++) {
         auto& punc = cc.punctures[pi];
         if (punc.is_edge) {
             punc.is_D00 = true;
         }
     }
+    // Also detect D00 from vertex field degeneracy: det(V[i], W[i]) = 0
+    cc.has_vertex_d00 = false;
+    for (int i = 0; i < 3; i++) {
+        int64_t det = (int64_t)gpu_v2.V[i][0] * gpu_v2.W[i][1]
+                    - (int64_t)gpu_v2.V[i][1] * gpu_v2.W[i][0];
+        if (det == 0) cc.has_vertex_d00 = true;
+    }
 
-    // ─── Step 8: TN detection ────────────────────────────────────────
+    // ─── Step 8: TN detection (with inside-triangle check) ──────────
     for (int k = 0; k < 3; k++) {
         int degPk = effective_degree_i128(cc.P_i128[k], 2);
         if (degPk < 2) continue;
-        __int128 disc_pk = cc.P_i128[k][1]*cc.P_i128[k][1]
-                         - (__int128)4*cc.P_i128[k][0]*cc.P_i128[k][2];
+        __int128 a = cc.P_i128[k][2], b = cc.P_i128[k][1];
+        __int128 disc_pk = b*b - (__int128)4*cc.P_i128[k][0]*a;
         if (disc_pk != 0) continue;
-        // Double root → TN candidate
+        // Double root → TN candidate at λ = -b/(2a)
+        // Check bary coords at tangency point: mu_j = P[j](-b/(2a)) / Q(-b/(2a))
+        // Multiply through by (2a)²: q4a2 = 4a²Q[0] - 2abQ[1] + b²Q[2]
+        //                             mu_j_num = 4a²P[j][0] - 2abP[j][1] + b²P[j][2]
+        __int128 a2_4 = (__int128)4*a*a;
+        __int128 ab_2 = (__int128)2*a*b;
+        __int128 b2 = b*b;
+        __int128 q4a2 = a2_4*cc.Q_i128[0] - ab_2*cc.Q_i128[1] + b2*cc.Q_i128[2];
+        if (q4a2 == 0) {
+            // SR+TN: Q also zero at tangency → skip (handled by SR logic)
+            continue;
+        }
+        bool inside = true;
+        int n_zero = 0;
+        for (int j = 0; j < 3; j++) {
+            if (j == k) continue;  // P[k] is zero at its own double root
+            __int128 mu_j = a2_4*cc.P_i128[j][0] - ab_2*cc.P_i128[j][1]
+                          + b2*cc.P_i128[j][2];
+            __int128 prod = mu_j * q4a2;
+            if (prod < 0) { inside = false; break; }
+            if (mu_j == 0) n_zero++;
+        }
+        if (!inside) continue;
+        // mu[k] is always 0 (P[k] at its own double root), so total zeros = n_zero + 1
+        if (n_zero + 1 >= 2) continue;  // at vertex → D00, skip TN
+
         if (cc.n_tn < 3) {
             cc.tn_points[cc.n_tn].face = k;
-            // Linear factor of sqfree part: P[k] = a(λ-r)² → sqfree = a(λ-r)
-            // r = -P[k][1]/(2·P[k][2]), store as polynomial [-P[1], 2·P[2]]
-            cc.tn_points[cc.n_tn].h_tn[0] = -cc.P_i128[k][1];
-            cc.tn_points[cc.n_tn].h_tn[1] = 2*cc.P_i128[k][2];
+            cc.tn_points[cc.n_tn].h_tn[0] = -b;
+            cc.tn_points[cc.n_tn].h_tn[1] = (__int128)2*a;
             cc.n_tn++;
         }
     }
 
-    // ─── Step 9: Cv/Cw detection ─────────────────────────────────────
+    // ─── Step 9: Cv/Cw detection (PV-curve limit) ──────────────────
+    // Cv: bary = P[k](0)/Q(0).  L'Hôpital when Q(0)=0.
+    // Only tag if bary is inside triangle (all same sign as denom).
     {
-        int cv_res = check_field_zero_in_tri_2d(gpu_v2.V);
-        if (cv_res > 0) {
-            cc.has_Cv = true;
-            cc.Cv_type = cv_res;
+        __int128 denom = cc.Q_i128[0];
+        __int128 mu[3];
+        if (denom == 0) {
+            denom = cc.Q_i128[1];
+            for (int k = 0; k < 3; k++) mu[k] = cc.P_i128[k][1];
+        } else {
+            for (int k = 0; k < 3; k++) mu[k] = cc.P_i128[k][0];
         }
-        int cw_res = check_field_zero_in_tri_2d(gpu_v2.W);
-        if (cw_res > 0) {
-            cc.has_Cw = true;
-            cc.Cw_type = cw_res;
+        if (denom != 0) {
+            bool inside = true;
+            int n_zero = 0;
+            for (int k = 0; k < 3; k++) {
+                if (mu[k] * denom < 0) { inside = false; break; }
+                if (mu[k] == 0) n_zero++;
+            }
+            if (inside) {
+                cc.has_Cv = true;
+                if (n_zero >= 2) cc.Cv_type = 3;
+                else if (n_zero == 1) cc.Cv_type = 2;
+                else cc.Cv_type = 1;
+            }
+        } else {
+            // Q≡0 (Qz): fall back to geometric check
+            int cv_res = check_field_zero_in_tri_2d(gpu_v2.V);
+            if (cv_res > 0) { cc.has_Cv = true; cc.Cv_type = cv_res; }
+        }
+    }
+    // Cw: PV-curve limit — bary = P[k][d]/Q[d] where d=deg(Q).
+    // Geometric check gives false positives (W=0 but PV curve diverges).
+    {
+        int dQ = effective_degree_i128(cc.Q_i128, 2);
+        bool cw_valid = (dQ > 0);
+        if (cw_valid) {
+            for (int k = 0; k < 3; k++) {
+                int dPk = effective_degree_i128(cc.P_i128[k], 2);
+                if (dPk > dQ) { cw_valid = false; break; }
+            }
+        }
+        if (cw_valid) {
+            __int128 denom = cc.Q_i128[dQ];
+            bool inside = true;
+            int n_zero = 0;
+            for (int k = 0; k < 3; k++) {
+                __int128 mu_k = (effective_degree_i128(cc.P_i128[k], 2) == dQ)
+                                ? cc.P_i128[k][dQ] : (__int128)0;
+                __int128 prod = mu_k * denom;
+                if (prod < 0) { inside = false; break; }
+                if (mu_k == 0) n_zero++;
+            }
+            if (inside) {
+                cc.has_Cw = true;
+                if (n_zero >= 2) cc.Cw_type = 3;       // vertex (Cw0)
+                else if (n_zero == 1) cc.Cw_type = 2;   // edge (Cw1)
+                else cc.Cw_type = 1;                     // interior (Cw)
+            }
         }
     }
 
     // ─── Step 10: Bubble detection (B) ───────────────────────────────
-    // T0, no Q_tri real roots, all P[k]·Q same sign → closed curve inside
+    // T0, no Q roots, degQ>0, all bary coords positive everywhere → closed curve
     if (v2.n_punctures == 0 && cc.n_Q_roots == 0 && degQ > 0) {
-        // Check if all P[k] leading coefficients same sign as Q
-        // (meaning P[k](λ)/Q(λ) > 0 for all λ → bary coords always positive)
-        // This is a simplified check; full check needs sign at some point
-        cc.has_B = false;  // conservative; bubble detection needs more analysis
+        bool bounded = true;
+        for (int k = 0; k < 3; k++) {
+            if (effective_degree_i128(cc.P_i128[k], 2) > degQ) {
+                bounded = false;
+                break;
+            }
+        }
+        if (bounded) {
+            // Check at λ=0: P[k][0] * Q[0] > 0 for all k
+            bool at_zero = true;
+            for (int k = 0; k < 3; k++) {
+                if (cc.P_i128[k][0] * cc.Q_i128[0] <= 0) {
+                    at_zero = false;
+                    break;
+                }
+            }
+            // Check leading: P[k][degQ] * Q[degQ] > 0 for all k
+            bool at_inf = true;
+            for (int k = 0; k < 3; k++) {
+                __int128 pk_lead = (effective_degree_i128(cc.P_i128[k], 2) == degQ)
+                                   ? cc.P_i128[k][degQ] : (__int128)0;
+                if (pk_lead * cc.Q_i128[degQ] <= 0) {
+                    at_inf = false;
+                    break;
+                }
+            }
+            cc.has_B = at_zero && at_inf;
+        }
     }
 
     // ─── Step 11: ISR detection ──────────────────────────────────────
@@ -459,8 +614,8 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
         else cat += "_Cw";
     }
 
-    // D00 (vertex puncture)
-    bool has_d00 = false;
+    // D00 (vertex puncture OR vertex det(V,W)=0)
+    bool has_d00 = cc.has_vertex_d00;
     for (const auto& p : cc.punctures)
         if (p.is_D00) has_d00 = true;
     if (has_d00) cat += "_D00";

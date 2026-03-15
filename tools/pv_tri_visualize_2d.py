@@ -93,6 +93,239 @@ def edge_bary_to_2d(bary, edge_idx):
     return bary[0] * TRI_VERTS[ev[0]] + bary[1] * TRI_VERTS[ev[1]]
 
 
+# ─── Integer polynomial helpers (threshold-free) ─────────────────────────
+
+def _ipoly_deg(p):
+    d = len(p) - 1
+    while d > 0 and p[d] == 0:
+        d -= 1
+    return d
+
+
+def _isign(x):
+    return 1 if x > 0 else (-1 if x < 0 else 0)
+
+
+def _sign_A_plus_Bs_sqrtD(A, Bs, D):
+    """Sign of A + Bs*sqrt(D), all integers, D >= 0. Pure integer."""
+    if Bs == 0:
+        return _isign(A)
+    if Bs > 0:
+        if A >= 0:
+            return 1
+        return _isign(Bs * Bs * D - A * A)
+    else:  # Bs < 0
+        if A <= 0:
+            return -1
+        return _isign(A * A - Bs * Bs * D)
+
+
+def _eval_sign_at_root_int(pj, pk, root_idx):
+    """Sign of polynomial pj evaluated at root root_idx of polynomial pk.
+    Both are integer-coefficient lists [c0, c1, ...]. Pure integer arithmetic.
+    pk must have degree 1 or 2 with real roots. Returns +1, -1, or 0."""
+    dk = _ipoly_deg(pk)
+    dj = _ipoly_deg(pj)
+    if dj == 0:
+        return _isign(pj[0])
+
+    if dk == 1:
+        # root = -pk[0]/pk[1]. Evaluate pj(-pk[0]/pk[1]) * pk[1]^dj
+        a, b = pk[0], pk[1]
+        # val = sum(pj[i] * (-a)^i * b^(dj-i))
+        val = 0
+        neg_a_pow = 1  # (-a)^i
+        b_pow = b ** dj  # b^(dj-i) starts at b^dj
+        for i in range(dj + 1):
+            val += pj[i] * neg_a_pow * b_pow
+            neg_a_pow *= -a
+            if i < dj:
+                b_pow //= b
+        # sign(pj(root)) = sign(val) * sign(b^dj)
+        # b^dj sign: if dj even, always +1. If dj odd, sign(b).
+        b_dj_sign = 1 if (dj % 2 == 0) else _isign(b)
+        return _isign(val) * b_dj_sign
+
+    if dk == 2:
+        a, b, c = pk[0], pk[1], pk[2]
+        D = b * b - 4 * a * c  # discriminant, >= 0
+        s = -1 if root_idx == 0 else 1  # smaller/larger root
+
+        if dj == 1:
+            d, e = pj[0], pj[1]
+            # pj(root) * 2c = (2cd - eb) + e*s*sqrt(D)
+            A = 2 * c * d - e * b
+            Bs = e * s
+            return _sign_A_plus_Bs_sqrtD(A, Bs, D) * _isign(c)
+
+        if dj == 2:
+            d, e, f = pj[0], pj[1], pj[2]
+            # pj(root) * 4c² = A + B*s*sqrt(D)
+            A = 4*c*c*d - 2*b*c*e + 2*f*b*b - 4*a*c*f
+            B = 2 * (c * e - b * f)
+            Bs = B * s
+            return _sign_A_plus_Bs_sqrtD(A, Bs, D)
+
+    return 0  # fallback
+
+
+def _compare_roots_int(P_red_int, fA, rA, fB, rB):
+    """Compare λ_A (root rA of P_red[fA]) with λ_B (root rB of P_red[fB]).
+    Returns +1 if λ_A > λ_B, -1 if λ_A < λ_B, 0 if equal. Pure integer."""
+    if fA == fB:
+        if rA == rB:
+            return 0
+        return -1 if rA < rB else 1
+    pkB = P_red_int[fB]
+    dB = _ipoly_deg(pkB)
+    sign_B = _eval_sign_at_root_int(pkB, P_red_int[fA], rA)
+    if sign_B == 0:
+        return 0
+    if dB == 1:
+        # Linear: monotonic. sign_B * sign(leading) gives comparison.
+        return sign_B * _isign(pkB[1])
+    if dB == 2:
+        c = pkB[2]
+        # Between roots: sign_B opposite to leading coeff c
+        if sign_B * c < 0:
+            # λ_A is between root_0 and root_1 of P_B
+            return 1 if rB == 0 else -1
+        else:
+            # λ_A is outside both roots. Use derivative to determine side.
+            # P_B'(x) = pkB[1] + 2*pkB[2]*x (linear)
+            deriv = [pkB[1], 2 * pkB[2]]
+            sign_d = _eval_sign_at_root_int(deriv, P_red_int[fA], rA)
+            if sign_d * c > 0:
+                # Right of root_1 → λ_A > root_1 ≥ root_0
+                return 1
+            else:
+                # Left of root_0 → λ_A < root_0 ≤ root_1
+                return -1
+    return 0
+
+def _ipoly_content(p, d):
+    from math import gcd as igcd
+    g = 0
+    for i in range(d + 1):
+        g = igcd(g, abs(p[i]))
+    return max(g, 1)
+
+def _ipoly_prem(A, dA, B, dB):
+    """Pseudo-remainder of A by B, integer arithmetic."""
+    from math import gcd as igcd
+    R = list(A[:dA + 1])
+    lc = B[dB]
+    d = dA
+    while d >= dB:
+        coeff = R[d]
+        if coeff == 0:
+            d -= 1
+            continue
+        R_new = [r * lc for r in R]
+        for j in range(dB + 1):
+            R_new[d - dB + j] -= coeff * B[j]
+        R = R_new
+        d -= 1
+    dR = len(R) - 1
+    while dR > 0 and R[dR] == 0:
+        dR -= 1
+    c = _ipoly_content(R, dR)
+    return [R[i] // c for i in range(dR + 1)], dR
+
+def _ipoly_gcd(A, dA, B, dB):
+    """GCD of two integer polynomials. Content-reduced, positive leading coeff."""
+    if dA == 0 and A[0] == 0:
+        if dB == 0 and B[0] == 0:
+            return [0], 0
+        c = _ipoly_content(B, dB)
+        h = [B[i] // c for i in range(dB + 1)]
+        if h[dB] < 0: h = [-x for x in h]
+        return h, dB
+    if dB == 0 and B[0] == 0:
+        c = _ipoly_content(A, dA)
+        h = [A[i] // c for i in range(dA + 1)]
+        if h[dA] < 0: h = [-x for x in h]
+        return h, dA
+    if dA < dB:
+        A, dA, B, dB = list(B[:dB + 1]), dB, list(A[:dA + 1]), dA
+    else:
+        A, B = list(A[:dA + 1]), list(B[:dB + 1])
+    while dB >= 1:
+        R, dR = _ipoly_prem(A, dA, B, dB)
+        if dR == 0 and R[0] == 0:
+            break
+        A, dA = B, dB
+        B, dB = R, dR
+    if dB < 1:
+        return [1], 0
+    c = _ipoly_content(B, dB)
+    h = [B[i] // c for i in range(dB + 1)]
+    if h[dB] < 0:
+        h = [-x for x in h]
+    return h, dB
+
+def _ipoly_exact_div(A, dA, B, dB):
+    """Exact polynomial division A/B. B must divide A."""
+    if dA < dB:
+        return [0]
+    if dB == 0:
+        b0 = B[0]
+        return [A[i] // b0 for i in range(dA + 1)]
+    A = list(A[:dA + 1])
+    dQ = dA - dB
+    Q = [0] * (dQ + 1)
+    for i in range(dQ, -1, -1):
+        Q[i] = A[i + dB] // B[dB]
+        for j in range(dB + 1):
+            A[i + j] -= Q[i] * B[j]
+    return Q
+
+
+# ─── Integer GCD reduction ────────────────────────────────────────────────
+
+def _poly_gcd_reduce_int(P_strs, Q_strs):
+    """Compute h = gcd(P[0], P[1], P[2]) and divide it out, pure integer.
+
+    The C++ solver factors out h from P and Q before finding face roots.
+    root_idx in the output refers to P_red = P/h roots, not original P roots.
+    This function replicates that reduction so the visualizer uses the
+    same reduced polynomials.
+
+    Returns (P_red_int, Q_red_int, h_int, h_deg).
+    """
+    P = [[int(x) for x in pk] for pk in P_strs]
+    Q = [int(x) for x in Q_strs]
+    for pk in P:
+        while len(pk) < 3:
+            pk.append(0)
+    while len(Q) < 3:
+        Q.append(0)
+
+    degP = [_ipoly_deg(pk) for pk in P]
+    degQ = _ipoly_deg(Q)
+
+    # h = gcd(P[0], P[1], P[2])
+    h, dh = _ipoly_gcd(P[0], degP[0], P[1], degP[1])
+    h, dh = _ipoly_gcd(h, dh, P[2], degP[2])
+
+    if dh == 0:
+        return P, Q, [1], 0
+
+    # Reduce
+    P_red = []
+    for k in range(3):
+        q = _ipoly_exact_div(P[k], degP[k], h, dh)
+        while len(q) < 3:
+            q.append(0)
+        P_red.append(q)
+
+    Q_red = _ipoly_exact_div(Q, degQ, h, dh)
+    while len(Q_red) < 3:
+        Q_red.append(0)
+
+    return P_red, Q_red, h, dh
+
+
 # ─── Integer-to-float reconstruction ──────────────────────────────────────
 
 def _solve_poly_roots(coeffs_float, degree, n_expected):
@@ -134,44 +367,82 @@ def ensure_float_fields(case_data):
     if 'Q_coeffs' in case_data:
         return
 
-    # ── 1. Q_coeffs and P_coeffs from i128 strings ──
+    # ── 1. Original P/Q from i128 strings ──
     Q_coeffs = [float(int(c)) for c in case_data['Q']]
     P_coeffs = [[float(int(c)) for c in row] for row in case_data['P']]
     case_data['Q_coeffs'] = Q_coeffs
     case_data['P_coeffs'] = P_coeffs
 
-    degQ = 2
-    while degQ > 0 and abs(Q_coeffs[degQ]) < 0.5:
-        degQ -= 1
-    case_data['degQ'] = degQ
+    # ── 2. GCD reduction (pure integer arithmetic) ──
+    # The C++ solver divides out h = gcd(P[0], P[1], P[2]) and uses
+    # P_red = P/h for face roots and Q_red = Q/h for interval boundaries.
+    # root_idx in JSON refers to P_red roots, NOT original P roots.
+    P_red_int, Q_red_int, h_int, h_deg = _poly_gcd_reduce_int(
+        case_data['P'], case_data['Q'])
+    P_red_f = [[float(c) for c in pk] for pk in P_red_int]
+    Q_red_f = [float(c) for c in Q_red_int]
+    case_data['P_red_coeffs'] = P_red_f
+    case_data['Q_red_coeffs'] = Q_red_f
+    case_data['h_deg'] = h_deg
 
-    # ── 2. Q_roots ──
-    expected_n = case_data.get('n_Q_roots', 0)
-    if degQ >= 1:
-        poly_np = [Q_coeffs[i] for i in range(degQ, -1, -1)]
-        all_roots = np.roots(poly_np)
-        Q_roots = sorted([r.real for r in all_roots
-                          if abs(r.imag) < 1e-6 * max(1.0, abs(r.real))])
-        if len(Q_roots) > expected_n:
-            deduped = [Q_roots[0]]
-            for r in Q_roots[1:]:
-                if abs(r - deduped[-1]) > 1e-8 * max(1.0, abs(deduped[-1])):
-                    deduped.append(r)
-                else:
-                    deduped[-1] = (deduped[-1] + r) / 2
-            Q_roots = deduped[:expected_n]
-        elif len(Q_roots) < expected_n:
-            Q_roots = sorted([r.real for r in all_roots
-                              if abs(r.imag) < 0.1 * max(1.0, abs(r.real))])
-            Q_roots = Q_roots[:expected_n]
+    # SR info: per-face integer GCD data for shared-root visualization.
+    # Stores integer gcd coefficients directly — no float matching needed.
+    Q_int = [int(c) for c in case_data['Q']]
+    P_int = [[int(c) for c in pk] for pk in case_data['P']]
+    degQ_orig = _ipoly_deg(Q_int)
+    sr_info = []
+    for k in range(3):
+        degPk = _ipoly_deg(P_int[k])
+        g, dg = _ipoly_gcd(Q_int, degQ_orig, P_int[k], degPk)
+        if dg == 1:
+            # Linear gcd: one root at -g[0]/g[1]
+            sr_info.append({'g': list(g), 'dg': 1,
+                            'lam': -g[0] / g[1]})
+        elif dg == 2:
+            disc_g = g[1] * g[1] - 4 * g[2] * g[0]
+            if disc_g > 0:
+                # Two distinct roots
+                g_f = [float(c) for c in g]
+                roots = sorted(np.roots([g_f[2], g_f[1], g_f[0]]).real.tolist())
+                for r in roots:
+                    sr_info.append({'g': list(g), 'dg': 2, 'lam': r})
+            elif disc_g == 0:
+                # Double root at -g[1]/(2*g[2])
+                sr_info.append({'g': list(g), 'dg': 2,
+                                'lam': -g[1] / (2.0 * g[2])})
+    # Deduplicate sr_info entries at the same lambda value
+    seen_lams = set()
+    deduped_sr = []
+    for si in sr_info:
+        lam_key = si['lam']
+        if lam_key not in seen_lams:
+            seen_lams.add(lam_key)
+            deduped_sr.append(si)
+    case_data['sr_info'] = deduped_sr
+
+    # ── 3. Q_red degree and roots (interval boundaries) ──
+    degQ_red = 2
+    while degQ_red > 0 and abs(Q_red_f[degQ_red]) < 0.5:
+        degQ_red -= 1
+    case_data['degQ'] = degQ_red
+
+    # Q_red roots define the interval boundaries
+    if degQ_red == 2:
+        disc_qr = Q_red_f[1]**2 - 4 * Q_red_f[2] * Q_red_f[0]
+        n_qr = 2 if disc_qr > 0 else (1 if disc_qr == 0 else 0)
+    elif degQ_red == 1:
+        n_qr = 1
     else:
-        Q_roots = []
+        n_qr = 0
+    Q_roots = _solve_poly_roots(Q_red_f, degQ_red, n_qr)
     case_data['Q_roots'] = Q_roots
+    # Override n_Q_roots with the Q_red root count (the solver uses Q_red)
+    case_data['n_Q_roots'] = n_qr
 
-    # ── 3. Compute P[k] roots (face roots) ──
+    # ── 4. P_red face roots (match C++ root_idx) ──
     face_roots = {}
     for k in range(3):
-        pk = P_coeffs[k]
+        pk = P_red_f[k]
         deg_pk = 2
         while deg_pk > 0 and abs(pk[deg_pk]) < 0.5:
             deg_pk -= 1
@@ -190,41 +461,39 @@ def ensure_float_fields(case_data):
         face_roots[k] = _solve_poly_roots(pk, deg_pk, n_exp)
     case_data['face_roots'] = face_roots
 
-    # ── 4. Puncture lambda and bary ──
-    n_qr = len(Q_roots)
+    # ── 5. Puncture lambda and bary ──
     for pi in case_data.get('punctures', []):
         f = pi['face']
         ri = pi['root_idx']
 
         if ri < 0:
-            # Infinity puncture
+            # Infinity puncture: bary from leading coefficients
             pi['lambda'] = None
-            if degQ >= 1 and abs(Q_coeffs[degQ]) > 0.5:
-                ev = EDGE_VERTS[f]
-                pi['bary_tri'] = [P_coeffs[ev[j]][degQ] / Q_coeffs[degQ]
-                                  for j in range(2)]
-                # Full triangle bary
-                mu = [P_coeffs[k][degQ] / Q_coeffs[degQ] for k in range(3)]
+            dQ = degQ_red
+            if dQ >= 1 and abs(Q_red_f[dQ]) > 0.5:
+                mu = [poly_eval(P_red_f[k2], 0) for k2 in range(3)]
+                # Use leading-coeff ratio: P_red[k][dQ] / Q_red[dQ]
+                mu = [P_red_f[k2][dQ] / Q_red_f[dQ] for k2 in range(3)]
                 pi['bary'] = mu
             else:
-                pi['bary_tri'] = [0.5, 0.5]
                 pi['bary'] = [0.33, 0.33, 0.34]
         elif ri < len(face_roots.get(f, [])):
             lam = face_roots[f][ri]
             pi['lambda'] = lam
-            Q_val = poly_eval(Q_coeffs, lam)
+            # Use Q_red/P_red for bary — no 0/0 at non-SR lambdas
+            Q_val = poly_eval(Q_red_f, lam)
             if abs(Q_val) > 1e-30:
-                mu = [poly_eval(P_coeffs[k], lam) / Q_val for k in range(3)]
+                mu = [poly_eval(P_red_f[k2], lam) / Q_val for k2 in range(3)]
                 pi['bary'] = mu
             else:
-                # At Q root (SR): L'Hopital
+                # Fallback: L'Hôpital on original P/Q
                 Q_prime = [Q_coeffs[j] * j for j in range(1, len(Q_coeffs))]
                 Qp_val = poly_eval(Q_prime, lam)
                 if abs(Qp_val) > 1e-30:
-                    mu = [poly_eval([P_coeffs[k][j] * j
-                                     for j in range(1, len(P_coeffs[k]))],
+                    mu = [poly_eval([P_coeffs[k2][j] * j
+                                     for j in range(1, len(P_coeffs[k2]))],
                                     lam) / Qp_val
-                          for k in range(3)]
+                          for k2 in range(3)]
                     pi['bary'] = mu
                 else:
                     pi['bary'] = [0.33, 0.33, 0.34]
@@ -232,7 +501,7 @@ def ensure_float_fields(case_data):
             pi['lambda'] = 0.0
             pi['bary'] = [0.33, 0.33, 0.34]
 
-    # ── 5. Build intervals from Q roots ──
+    # ── 6. Build intervals from Q_red roots ──
     intervals = []
     if n_qr == 0:
         intervals.append({'lb': None, 'ub': None, 'is_infinity': True})
@@ -250,7 +519,6 @@ def ensure_float_fields(case_data):
     elif n_qr == 0:
         intervals[0]['is_infinity'] = True
     elif n_qr == 1:
-        # Both intervals span to infinity
         intervals[0]['is_infinity'] = True
         intervals[1]['is_infinity'] = True
     else:
@@ -392,13 +660,18 @@ def _match_to_pair(lam_e, lam_x, pairs, punctures):
 
 def collect_segments(case_data):
     """Build segments from pre-computed puncture pairing."""
-    Q = case_data['Q_coeffs']
-    P = case_data['P_coeffs']
+    # Use reduced P_red/Q_red for curve sampling (avoids 0/0 near SR roots)
+    Q = case_data.get('Q_red_coeffs', case_data['Q_coeffs'])
+    P = case_data.get('P_red_coeffs', case_data['P_coeffs'])
     intervals = case_data['intervals']
     punctures = case_data['punctures']
     puncture_lambdas = [p.get('lambda') for p in punctures]
 
-    pairs = case_data.get('pairs', [])
+    pairs = list(case_data.get('pairs', []))
+    merge_inf = case_data.get('merge_infinity', False)
+    n_Q_roots = case_data.get('n_Q_roots', 0)
+
+    # Use C++ pairing directly — no override.
 
     all_subsegs = []
     for iv in intervals:
@@ -414,12 +687,78 @@ def collect_segments(case_data):
         else:
             pair_subsegs[0].append(pts)
 
+    # ── Determine infinity-spanning per INTERVAL, then per pair ──
+    # Step 1: each interval has is_infinity flag from ensure_float_fields.
+    # Step 2: group punctures by interval (qi).
+    # Step 3: for each pair, determine inf_span from its interval.
+    P_red_int = [[int(round(x)) for x in pk]
+                 for pk in case_data.get('P_red_coeffs', case_data['P_coeffs'])]
+
+    # Group puncture indices by q_interval
+    qi_punctures = defaultdict(list)
+    for pi_idx, p in enumerate(punctures):
+        qi_punctures[p.get('q_interval', 0)].append(pi_idx)
+
+    # For each infinity-spanning interval with multiple pairs,
+    # find the outermost pair (integer root comparison). Only it wraps.
+    wrap_pairs = set()  # pair indices that should be infinity-spanning
+    for qi, pi_list in qi_punctures.items():
+        iv_idx = qi if qi < len(intervals) else len(intervals) - 1
+        if not intervals[iv_idx].get('is_infinity', False):
+            continue  # non-infinity interval → all pairs direct
+        # Find pairs in this interval
+        pi_set = set(pi_list)
+        interval_pairs = []
+        for pair_idx, (pa, pb) in enumerate(pairs):
+            if pa in pi_set or pb in pi_set:
+                interval_pairs.append(pair_idx)
+        if len(interval_pairs) == 1:
+            # Single pair in infinity interval → wraps iff Cw tagged
+            if case_data.get('Cw', 0) > 0:
+                wrap_pairs.add(interval_pairs[0])
+        elif len(interval_pairs) >= 2:
+            # Multiple pairs: find outermost (contains all others)
+            for pair_idx in interval_pairs:
+                pa, pb = pairs[pair_idx]
+                fA = punctures[pa]['face']; rA = punctures[pa]['root_idx']
+                fB = punctures[pb]['face']; rB = punctures[pb]['root_idx']
+                others = [(punctures[pj]['face'], punctures[pj]['root_idx'])
+                          for pj in pi_set
+                          if pj != pa and pj != pb
+                          and punctures[pj].get('root_idx', -1) >= 0]
+                if not others:
+                    continue
+                all_between = True
+                for fC, rC in others:
+                    cmpCA = _compare_roots_int(P_red_int, fC, rC, fA, rA)
+                    cmpCB = _compare_roots_int(P_red_int, fC, rC, fB, rB)
+                    if cmpCA * cmpCB > 0:
+                        all_between = False
+                        break
+                if all_between:
+                    wrap_pairs.add(pair_idx)
+                    break  # at most one outermost per interval
+
     segments = []
     for idx, (pi1, pi2) in enumerate(pairs):
         color = SEGMENT_COLORS[idx % len(SEGMENT_COLORS)]
         l1 = punctures[pi1].get('lambda')
         l2 = punctures[pi2].get('lambda')
-        inf_span = case_data.get('merge_infinity', False) and (l1 is None or l2 is None)
+
+        # Infinity-spanning from interval analysis
+        inf_span = False
+        if merge_inf:
+            qi1 = punctures[pi1].get('q_interval', 0)
+            qi2 = punctures[pi2].get('q_interval', 0)
+            if qi1 != qi2:
+                # Cross-interval pair → always infinity-spanning
+                inf_span = True
+            elif l1 is None or l2 is None:
+                # One endpoint at ∞ → infinity-spanning
+                inf_span = True
+            elif idx in wrap_pairs:
+                inf_span = True
+
         segments.append({
             'pts_list': pair_subsegs.get(idx, []),
             'color': color,
@@ -430,11 +769,43 @@ def collect_segments(case_data):
             'infinity_spanning': inf_span,
         })
 
-    # Unpaired sub-segments: only create catch-all for bubble (T0 with curve)
+    # Connect infinity-spanning sub-segments through the λ→∞ point.
+    # When a curve wraps through ∞, sample_pv_curve produces two disjoint
+    # sub-segments (one going to +∞, one coming from -∞).  Stitch them
+    # together through the ∞ position so the curve is visually continuous.
+    Q_r = case_data.get('Q_red_coeffs', case_data.get('Q_coeffs'))
+    P_r = case_data.get('P_red_coeffs', case_data.get('P_coeffs'))
+    dQ = case_data.get('degQ', 2)
+    for seg in segments:
+        pts_list = seg.get('pts_list', [])
+        if not seg.get('infinity_spanning') or len(pts_list) < 2:
+            continue
+        if dQ < 1 or abs(Q_r[dQ]) < 0.5:
+            continue
+        mu_inf = np.array([P_r[k][dQ] / Q_r[dQ] for k in range(3)])
+        if np.any(mu_inf < -0.01):
+            continue
+        pos_inf = bary_to_2d(np.clip(mu_inf, 0, 1))
+        # Find sub-seg whose LAST point is closest to pos_inf (+∞ arm)
+        best_end = min(range(len(pts_list)),
+                       key=lambda i: np.linalg.norm(pts_list[i][-1] - pos_inf))
+        # Find sub-seg whose FIRST point is closest to pos_inf (-∞ arm)
+        best_start = min(range(len(pts_list)),
+                         key=lambda i: np.linalg.norm(pts_list[i][0] - pos_inf))
+        if best_end != best_start:
+            merged = np.vstack([pts_list[best_end], [pos_inf],
+                                pts_list[best_start]])
+            new_list = [merged]
+            for i in range(len(pts_list)):
+                if i != best_end and i != best_start:
+                    new_list.append(pts_list[i])
+            seg['pts_list'] = new_list
+
+    # Unpaired sub-segments: only create catch-all for genuine bubble (B tag).
     if not pairs and all_subsegs:
         n_punc = len(punctures)
-        if n_punc == 0:
-            # True bubble: closed curve inside triangle, no edge crossings
+        cat = case_data.get('category', '')
+        if n_punc == 0 and '_B' in cat:
             segments = [{
                 'pts_list': [pts for pts, _, _ in all_subsegs],
                 'color': SEGMENT_COLORS[0],
@@ -444,7 +815,6 @@ def collect_segments(case_data):
                 'lam_exit': None,
                 'infinity_spanning': True,
             }]
-        # else: unpaired punctures (T1/T3 waypoint cases) — no segments
 
     return segments
 
@@ -485,29 +855,31 @@ def poly_to_latex(coeffs, name='Q'):
 # ─── 2D Triangle panel ───────────────────────────────────────────────────────
 
 def find_d00_vertices(case_data):
-    """Find triangle vertices where det(V, W) = 0 (D00 degeneracy)."""
-    V = np.array(case_data['V'], dtype=float)
-    W = np.array(case_data['W'], dtype=float)
+    """Find triangle vertices where det(V, W) = 0 (D00 degeneracy).
+    Pure integer arithmetic — no float thresholds."""
+    V = [[int(v) for v in row] for row in case_data['V']]
+    W = [[int(w) for w in row] for row in case_data['W']]
     d00 = []
     for i in range(3):
         det = V[i][0] * W[i][1] - V[i][1] * W[i][0]
-        if abs(det) < 1e-10 * max(np.linalg.norm(V[i]) * np.linalg.norm(W[i]), 1e-30):
+        if det == 0:
             d00.append(i)
     return d00
 
 
 def find_d11_edges(case_data):
-    """Find triangle edges where both endpoints have det(V,W)=0 at the same lambda."""
-    V = np.array(case_data['V'], dtype=float)
-    W = np.array(case_data['W'], dtype=float)
+    """Find triangle edges where both endpoints have det(V,W)=0 at the same lambda.
+    Pure integer arithmetic — no float thresholds."""
+    V = [[int(v) for v in row] for row in case_data['V']]
+    W = [[int(w) for w in row] for row in case_data['W']]
 
     pv_info = {}
     for i in range(3):
         det = V[i][0] * W[i][1] - V[i][1] * W[i][0]
-        if abs(det) > 1e-10 * max(np.linalg.norm(V[i]) * np.linalg.norm(W[i]), 1e-30):
+        if det != 0:
             continue
-        v_zero = np.allclose(V[i], 0, atol=1e-15)
-        w_zero = np.allclose(W[i], 0, atol=1e-15)
+        v_zero = all(v == 0 for v in V[i])
+        w_zero = all(w == 0 for w in W[i])
         if v_zero and w_zero:
             pv_info[i] = (0, 0, True)
         elif v_zero:
@@ -516,7 +888,7 @@ def find_d11_edges(case_data):
             pv_info[i] = (1, 0, False)
         else:
             for k in range(2):
-                if abs(W[i][k]) > 1e-15:
+                if W[i][k] != 0:
                     pv_info[i] = (-V[i][k], W[i][k], False)
                     break
 
@@ -529,7 +901,7 @@ def find_d11_edges(case_data):
         if any1 or any2:
             lam = n2 / d2 if d2 != 0 and not any2 else (n1 / d1 if d1 != 0 else 0.0)
             d11_edges.append((vi, vj, edge_idx, lam))
-        elif d1 != 0 and d2 != 0 and abs(n1 * d2 - n2 * d1) < 1e-10:
+        elif d1 != 0 and d2 != 0 and n1 * d2 == n2 * d1:
             d11_edges.append((vi, vj, edge_idx, n1 / d1))
         elif d1 == 0 and d2 == 0:
             d11_edges.append((vi, vj, edge_idx, float('inf')))
@@ -575,45 +947,57 @@ def draw_tri_wireframe(ax):
 
 def _find_field_zero_2d(F):
     """Find where F(x) = mu_0*F_0 + mu_1*F_1 + mu_2*F_2 = 0 in triangle.
-    Handles degenerate cases (collinear/parallel vectors).
+    Pure integer arithmetic for all sign/zero checks.
+    Float only for final 2D position (display).
     Returns 2D position or None."""
-    F = np.array(F, dtype=float)
+    F_int = [[int(f) for f in row] for row in F]
 
-    # Check vertex zeros first
+    # Check vertex zeros first (exact integer)
     for i in range(3):
-        if np.allclose(F[i], 0, atol=0.5):
+        if all(f == 0 for f in F_int[i]):
             return bary_to_2d(np.eye(3)[i])
 
     # Cramer's rule: mu_0(F_0-F_2) + mu_1(F_1-F_2) = -F_2
-    A = np.column_stack([F[0] - F[2], F[1] - F[2]])
-    det = A[0, 0] * A[1, 1] - A[0, 1] * A[1, 0]
-    if abs(det) > 1e-14:
-        rhs = -F[2]
-        mu0 = (rhs[0] * A[1, 1] - rhs[1] * A[0, 1]) / det
-        mu1 = (A[0, 0] * rhs[1] - A[1, 0] * rhs[0]) / det
-        mu2 = 1 - mu0 - mu1
-        mu = np.array([mu0, mu1, mu2])
-        if np.all(mu >= -1e-6):
+    a00 = F_int[0][0] - F_int[2][0]
+    a01 = F_int[1][0] - F_int[2][0]
+    a10 = F_int[0][1] - F_int[2][1]
+    a11 = F_int[1][1] - F_int[2][1]
+    det = a00 * a11 - a01 * a10
+
+    if det != 0:
+        rhs_x = -F_int[2][0]
+        rhs_y = -F_int[2][1]
+        mu0_num = rhs_x * a11 - rhs_y * a01
+        mu1_num = a00 * rhs_y - a10 * rhs_x
+        mu2_num = det - mu0_num - mu1_num
+        # Inside triangle: all mu_i/det >= 0 (same sign as det)
+        if det > 0:
+            inside = mu0_num >= 0 and mu1_num >= 0 and mu2_num >= 0
+        else:
+            inside = mu0_num <= 0 and mu1_num <= 0 and mu2_num <= 0
+        if inside:
+            mu = np.array([mu0_num / det, mu1_num / det, mu2_num / det])
             return bary_to_2d(np.clip(mu, 0, 1))
         return None
 
     # Degenerate: all F vectors are parallel (det=0).
-    # Project onto the direction of any nonzero F vector.
-    d = None
+    # Project onto any nonzero F vector using integer dot products.
+    d_idx = None
     for i in range(3):
-        if np.linalg.norm(F[i]) > 1e-10:
-            d = F[i] / np.linalg.norm(F[i])
+        if any(f != 0 for f in F_int[i]):
+            d_idx = i
             break
-    if d is None:
+    if d_idx is None:
         # All F vectors are zero
         return bary_to_2d(np.array([1/3, 1/3, 1/3]))
 
-    projs = [np.dot(F[i], d) for i in range(3)]
-    # Check each edge for sign change (antiparallel endpoints)
+    d = F_int[d_idx]
+    projs = [F_int[i][0] * d[0] + F_int[i][1] * d[1] for i in range(3)]
+    # Check each edge for sign change (integer sign check)
     for edge_k, (vi, vj) in enumerate(EDGE_VERTS):
         if projs[vi] * projs[vj] < 0:
-            # Zero crossing on this edge
-            t = projs[vi] / (projs[vi] - projs[vj])
+            # Zero crossing on this edge (float for position only)
+            t = float(projs[vi]) / float(projs[vi] - projs[vj])
             mu = np.zeros(3)
             mu[vi] = 1 - t
             mu[vj] = t
@@ -622,13 +1006,49 @@ def _find_field_zero_2d(F):
 
 
 def compute_cv_position(case_data):
-    """Compute Cv position (V(x)=0) in triangle."""
-    return _find_field_zero_2d(case_data['V'])
+    """Compute Cv position on the PV curve at λ=0: bary = P[k](0)/Q(0).
+    When Q(0)=0 (SR at λ=0), L'Hôpital: bary = P[k][1]/Q[1].
+    When Q≡0 (Qz), fall back to geometric V=0 check.
+    Returns None if bary is outside triangle (integer sign check)."""
+    Q_int = [int(c) for c in case_data['Q']]
+    P_int = [[int(c) for c in pk] for pk in case_data['P']]
+    denom = Q_int[0]
+    if denom == 0:
+        denom = Q_int[1] if len(Q_int) > 1 else 0
+        mu_num = [P_int[k][1] if len(P_int[k]) > 1 else 0 for k in range(3)]
+    else:
+        mu_num = [P_int[k][0] for k in range(3)]
+    if denom == 0:
+        return _find_field_zero_2d(case_data['V'])
+    # Integer inside check: all mu_num same sign as denom
+    for m in mu_num:
+        if m * denom < 0:
+            return None
+    mu = np.array([float(m) / float(denom) for m in mu_num])
+    return bary_to_2d(mu)
 
 
 def compute_cw_position(case_data):
-    """Compute Cw position (W(x)=0) in triangle."""
-    return _find_field_zero_2d(case_data['W'])
+    """Compute Cw position: PV curve limit at λ→∞ → bary = P[k][d]/Q[d].
+    Returns None if bary is outside triangle (integer sign check)."""
+    Q_int = [int(c) for c in case_data['Q']]
+    P_int = [[int(c) for c in pk] for pk in case_data['P']]
+    d = _ipoly_deg(Q_int)
+    if d == 0:
+        return None
+    for k in range(3):
+        if _ipoly_deg(P_int[k]) > d:
+            return None
+    denom = Q_int[d]
+    if denom == 0:
+        return None
+    mu_num = [P_int[k][d] if len(P_int[k]) > d else 0 for k in range(3)]
+    # Integer inside check
+    for m in mu_num:
+        if m * denom < 0:
+            return None
+    mu = np.array([float(m) / float(denom) for m in mu_num])
+    return bary_to_2d(mu)
 
 
 def draw_vector_arrows(ax, case_data, arrow_scale=0.08):
@@ -682,35 +1102,70 @@ def draw_special_points(ax, case_data, segments=None):
                            marker='v', ms=80, mc='#dd5500'))
 
     # D00: vertices where det(V,W) = 0
-    # Skip vertices already tagged as Cv0 or Cw0 to avoid duplicate markers
+    # Position ON THE CURVE via L'Hôpital at D00 lambda.
     cv_type = case_data.get('Cv', 0)
     cw_type = case_data.get('Cw', 0)
     if 'D00' in category:
+        Q_int_d = [int(c) for c in case_data['Q']]
+        P_int_d = [[int(c) for c in pk] for pk in case_data['P']]
         for vi in find_d00_vertices(case_data):
-            # Skip if this vertex is a Cv0 or Cw0 (already drawn with its own marker)
-            Vi = np.array(case_data['V'][vi], dtype=float)
-            Wi = np.array(case_data['W'][vi], dtype=float)
-            v_zero = np.allclose(Vi, 0, atol=0.5)
-            w_zero = np.allclose(Wi, 0, atol=0.5)
+            Vi = [int(v) for v in case_data['V'][vi]]
+            Wi = [int(w) for w in case_data['W'][vi]]
+            v_zero = all(v == 0 for v in Vi)
+            w_zero = all(w == 0 for w in Wi)
+            # Skip if Cv0/Cw0 will draw its own marker at same position
             if v_zero and cv_type == 3:
-                continue  # Skip, Cv0 marker will be drawn
+                continue
             if w_zero and cw_type == 3:
-                continue  # Skip, Cw0 marker will be drawn
+                continue
 
-            p = TRI_VERTS[vi]
-            d00_lam = None
+            # Compute D00 lambda (integer: -V[k]/W[k])
+            d00_lam_num, d00_lam_den = 0, 1
             if w_zero:
                 lam_str = r'$\lambda\!\to\!\infty$'
+                # Position: Cw leading-coeff limit
+                p = compute_cw_position(case_data)
+                if p is None:
+                    p = TRI_VERTS[vi]
             elif v_zero:
-                d00_lam = 0.0
                 lam_str = r'$\lambda=0$'
+                # Position: Cv on-curve limit
+                p = compute_cv_position(case_data)
+                if p is None:
+                    p = TRI_VERTS[vi]
             else:
+                # D00 at finite nonzero λ = -V[k]/W[k]
                 for comp in range(2):
                     if Wi[comp] != 0:
-                        d00_lam = -Vi[comp] / Wi[comp]
+                        d00_lam_num = -Vi[comp]
+                        d00_lam_den = Wi[comp]
                         break
-                lam_str = (f'$\\lambda={d00_lam:.2f}$' if d00_lam is not None
-                           else r'$\lambda\!\to\!\infty$')
+                d00_lam = float(d00_lam_num) / float(d00_lam_den)
+                lam_str = f'$\\lambda={d00_lam:.2f}$'
+                # Position on curve: P(λ)/Q(λ), L'Hôpital if Q(λ)=0
+                # Evaluate Q at λ = num/den in integer: Q(n/d)*d² = Q[0]*d² + Q[1]*n*d + Q[2]*n²
+                n, d = d00_lam_num, d00_lam_den
+                q_nd2 = Q_int_d[0]*d*d + Q_int_d[1]*n*d + Q_int_d[2]*n*n
+                if q_nd2 != 0:
+                    mu_num = [P_int_d[k][0]*d*d + P_int_d[k][1]*n*d + P_int_d[k][2]*n*n
+                              for k in range(3)]
+                    denom_d00 = q_nd2
+                else:
+                    # L'Hôpital: Q'(λ) = Q[1] + 2*Q[2]*λ → Q'(n/d)*d = Q[1]*d + 2*Q[2]*n
+                    qp_d = Q_int_d[1]*d + 2*Q_int_d[2]*n
+                    if qp_d != 0:
+                        mu_num = [P_int_d[k][1]*d + 2*P_int_d[k][2]*n for k in range(3)]
+                        denom_d00 = qp_d
+                    else:
+                        continue  # can't compute position
+                # Inside check (integer): all mu same sign as denom
+                if any(m * denom_d00 < 0 for m in mu_num):
+                    # On-curve position is outside → fall back to vertex
+                    p = TRI_VERTS[vi]
+                else:
+                    mu = [float(m) / float(denom_d00) for m in mu_num]
+                    p = bary_to_2d(mu)
+
             annots.append(dict(pos=p, tag='D00', lam_str=lam_str,
                                color='#cc00cc', bg='white',
                                marker='s', ms=100, mc='#9900cc'))
@@ -749,37 +1204,60 @@ def draw_special_points(ax, case_data, segments=None):
                                color=cw_color, bg='#eeffee',
                                marker='*', ms=200, mc=cw_color))
 
-    # SR/ISR
-    sr_label = 'ISR' if 'ISR' in category else 'SR'
+    # SR/ISR — shared root visualization (pure integer arithmetic).
+    # Uses sr_info from ensure_float_fields: integer gcd coefficients stored
+    # directly — no float matching or recomputation needed.
     if 'SR' in category:
-        Q = case_data['Q_coeffs']
-        P = case_data['P_coeffs']
-        Q_roots = case_data.get('Q_roots', [])
-        for qi, qr in enumerate(Q_roots):
-            # Check if this is a shared root
-            for k in range(3):
-                pk_val = poly_eval(P[k], qr)
-                if abs(pk_val) < 1e-6 * max(1.0, abs(qr)):
-                    # Shared root — compute position via L'Hopital
-                    Q_prime = [Q[j] * j for j in range(1, len(Q))]
-                    Qp_val = poly_eval(Q_prime, qr)
-                    if abs(Qp_val) < 1e-20:
-                        break
-                    mu = np.array([
-                        poly_eval([P[k2][j] * j for j in range(1, len(P[k2]))],
-                                  qr) / Qp_val
-                        for k2 in range(3)
-                    ])
-                    mu_clip = np.clip(mu, 0, 1)
-                    s = mu_clip.sum()
-                    if s > 1e-10:
-                        mu_clip /= s
-                    pos = bary_to_2d(mu_clip)
+        P_int = [[int(c) for c in pk] for pk in case_data['P']]
+        Q_int = [int(c) for c in case_data['Q']]
+        sr_label = 'ISR' if 'ISR' in category else 'SR'
+        for si in case_data.get('sr_info', []):
+            g = si['g']
+            dg = si['dg']
+            lam_float = si['lam']
+
+            # SR at λ=0: use L'Hôpital on-curve position (colocated with Cv).
+            # Detect λ=0 root from integer gcd: g[0]==0 means λ divides g(λ).
+            if g[0] == 0:
+                pos = compute_cv_position(case_data)
+                if pos is not None:
                     annots.append(dict(pos=pos, tag=sr_label,
-                                       lam_str=f'$\\lambda={qr:.2f}$',
+                                       lam_str=r'$\lambda=0$',
                                        color='#ff8800', bg='#fff8ee',
                                        marker='D', ms=120, mc='#ff8800'))
-                    break
+                continue
+
+            if dg == 1:
+                g0, g1 = g[0], g[1]
+                # Integer L'Hôpital: denom = g1·Q'(λ) = g1·Q[1] - 2·Q[2]·g0
+                denom = g1 * Q_int[1] - 2 * Q_int[2] * g0
+                if denom == 0:
+                    continue
+                mu_num = [g1 * P_int[j][1] - 2 * P_int[j][2] * g0
+                          for j in range(3)]
+            elif dg == 2:
+                ga, gb = g[2], g[1]
+                if ga == 0:
+                    continue
+                # denom = 2ga·Q'(-gb/(2ga)) = 2ga·Q[1] - 2·Q[2]·gb
+                denom = 2 * ga * Q_int[1] - 2 * Q_int[2] * gb
+                if denom == 0:
+                    continue
+                mu_num = [2 * ga * P_int[j][1] - 2 * P_int[j][2] * gb
+                          for j in range(3)]
+            else:
+                continue
+
+            # Suppress if any mu_j opposite sign to denom (outside triangle)
+            outside = any((m > 0) != (denom > 0) and m != 0 for m in mu_num)
+            if outside:
+                continue
+            mu = [float(m) / float(denom) for m in mu_num]
+            pos = bary_to_2d(mu)
+            annots.append(dict(pos=pos, tag=sr_label,
+                               lam_str=f'$\\lambda={lam_float:.2f}$',
+                               color='#ff8800', bg='#fff8ee',
+                               marker='D', ms=120, mc='#ff8800'))
 
     # D11: curve on edge
     if 'D11' in category:
@@ -796,38 +1274,61 @@ def draw_special_points(ax, case_data, segments=None):
                                color=d11_color, bg='#fff4ee',
                                marker='h', ms=100, mc=d11_color))
 
-    # TN: tangency — compute from P[k] discriminant
+    # TN: tangency — pure integer arithmetic.
+    # TN at double root of P[k]: λ = -b/(2a) where a=P[k][2], b=P[k][1].
+    # Show "TN" from C++ category tag — NO reclassification as ITN.
+    # Float only for final bary → 2D position.
     if 'TN' in category:
-        P = case_data.get('P_coeffs', case_data.get('P'))
-        Q = case_data.get('Q_coeffs', case_data.get('Q'))
-        if P and Q:
-            P_f = [[float(int(c)) for c in pk] if isinstance(pk[0], str) else pk
-                   for pk in P]
-            Q_f = [float(int(c)) for c in Q] if isinstance(Q[0], str) else Q
+        P_int = [[int(c) for c in pk] for pk in case_data['P']]
+        Q_int = [int(c) for c in case_data['Q']]
+        for k in range(3):
+            a = P_int[k][2]
+            b = P_int[k][1]
+            c0 = P_int[k][0]
+            if a == 0:
+                continue
+            disc = b * b - 4 * a * c0
+            if disc != 0:
+                continue  # Not a double root (exact integer check)
+
+            # TN at λ = -b/(2a).  Float only for label/position.
+            lam_float = -b / (2.0 * a)
+
+            # Evaluate 4a²·Q(λ) in integer arithmetic (no division):
+            q4a2 = 4*a*a*Q_int[0] - 2*a*b*Q_int[1] + b*b*Q_int[2]
+
+            if q4a2 != 0:
+                mu_num = []
+                for j in range(3):
+                    pj4a2 = (4*a*a*P_int[j][0]
+                             - 2*a*b*P_int[j][1]
+                             + b*b*P_int[j][2])
+                    mu_num.append(pj4a2)
+                mu = [float(m) / float(q4a2) for m in mu_num]
+            else:
+                # Q(λ)=0 (SR+TN): L'Hôpital — μ_j = P[j]'(λ)/Q'(λ)
+                aqp = a * Q_int[1] - Q_int[2] * b
+                if aqp == 0:
+                    continue  # Higher-order degeneracy
+                mu_num = []
+                for j in range(3):
+                    apjp = a * P_int[j][1] - P_int[j][2] * b
+                    mu_num.append(apjp)
+                mu = [float(m) / float(aqp) for m in mu_num]
+
+            # Suppress if point is at a vertex (2 zero bary coords = D00)
+            n_zero_mu = sum(1 for m in mu_num if m == 0)
+            if n_zero_mu >= 2:
+                continue
+
             tn_color = '#9933cc'
-            for k in range(3):
-                pk = P_f[k]
-                if len(pk) < 3 or abs(pk[2]) < 0.5:
-                    continue
-                disc = pk[1]**2 - 4 * pk[2] * pk[0]
-                if abs(disc) > 1e-6 * max(abs(pk[1]**2), abs(4*pk[2]*pk[0]), 1):
-                    continue  # Not a double root
-                lam = -pk[1] / (2 * pk[2])
-                Q_val = poly_eval(Q_f, lam)
-                Ppp = 2 * pk[2]  # P''[k] is constant
-                if Ppp * Q_val <= 0:
-                    continue  # Isolated tangency, skip
-                # Non-isolated tangency: compute position
-                mu = [poly_eval(P_f[j], lam) / Q_val if abs(Q_val) > 1e-30
-                      else 0.33 for j in range(3)]
-                if all(m >= -0.05 for m in mu):
-                    pos = bary_to_2d(np.clip(mu, 0, 1))
-                    seg_color = _find_segment_for_lambda(lam, segments)
-                    mc = seg_color if seg_color != '#333333' else tn_color
-                    annots.append(dict(pos=pos, tag='TN',
-                                       lam_str=f'$\\lambda={lam:.2f}$',
-                                       color=tn_color, bg='#f4eeff',
-                                       marker='^', ms=120, mc=mc))
+            pos = bary_to_2d(mu)
+            seg_color = _find_segment_for_lambda(lam_float, segments)
+            mc = seg_color if seg_color != '#333333' else tn_color
+            annots.append(dict(pos=pos, tag='TN',
+                               lam_str=f'$\\lambda={lam_float:.2f}$',
+                               color=tn_color, bg='#f4eeff',
+                               marker='^', ms=120, mc=mc))
 
     if not annots:
         return
@@ -965,15 +1466,16 @@ def draw_lambda_ring(ax, case_data, segments):
     ax.text(x0, y0 - 0.12, r'$0$', ha='center', va='top',
             fontsize=9, color='#666666')
 
-    r_inner = 0.85
-    r_outer = 0.98
+    r_band_inner = 0.85
+    r_band_outer = 0.98
+    n_segs = max(len(segments), 1)
 
-    def _draw_band(a_start, a_end, color):
+    def _draw_band(a_start, a_end, color, ri, ro):
         arc_th = np.linspace(a_start, a_end, 80)
-        inner_x = r_inner * np.cos(arc_th)
-        inner_y = r_inner * np.sin(arc_th)
-        outer_x = r_outer * np.cos(arc_th)
-        outer_y = r_outer * np.sin(arc_th)
+        inner_x = ri * np.cos(arc_th)
+        inner_y = ri * np.sin(arc_th)
+        outer_x = ro * np.cos(arc_th)
+        outer_y = ro * np.sin(arc_th)
         verts_x = np.concatenate([outer_x, inner_x[::-1]])
         verts_y = np.concatenate([outer_y, inner_y[::-1]])
         verts = np.column_stack([verts_x, verts_y])
@@ -981,20 +1483,42 @@ def draw_lambda_ring(ax, case_data, segments):
                              facecolor=color, alpha=0.45,
                              edgecolor=color, linewidth=0.5, zorder=1))
 
-    for seg in segments:
+    for si, seg in enumerate(segments):
         lam1 = seg['lam_entry']
         lam2 = seg['lam_exit']
         a1 = lambda_to_angle(lam1, scale) if lam1 is not None else np.pi / 2
         a2 = lambda_to_angle(lam2, scale) if lam2 is not None else np.pi / 2
 
+        # Stack bands concentrically so they never overlap
+        band_w = (r_band_outer - r_band_inner) / n_segs
+        ri = r_band_inner + si * band_w
+        ro = r_band_inner + (si + 1) * band_w
+
         if seg.get('infinity_spanning', False):
-            a_hi = max(a1, a2)
-            a_lo = min(a1, a2)
-            _draw_band(a_hi, a_lo + 2 * np.pi, seg['color'])
+            if (lam1 is None) != (lam2 is None):
+                # One endpoint at ∞: arc from finite endpoint to ∞
+                # Direction must go AWAY from Q roots (stay in infinity interval)
+                finite_lam = lam2 if lam1 is None else lam1
+                a_finite = lambda_to_angle(finite_lam, scale)
+                # Determine direction using q_interval: interval 0 → go left
+                # (toward -∞), last interval → go right (toward +∞)
+                pi_idx = seg['pi_entry'] if lam1 is not None else seg['pi_exit']
+                qi = punctures[pi_idx].get('q_interval', 0) if pi_idx >= 0 else 0
+                if qi == 0:
+                    # Left infinity interval: go counterclockwise (left) to ∞
+                    _draw_band(a_finite, -3 * np.pi / 2, seg['color'], ri, ro)
+                else:
+                    # Right infinity interval: go clockwise (right) to ∞
+                    _draw_band(a_finite, np.pi / 2, seg['color'], ri, ro)
+            else:
+                # Both finite: complement arc through ∞
+                a_hi = max(a1, a2)
+                a_lo = min(a1, a2)
+                _draw_band(a_hi, a_lo + 2 * np.pi, seg['color'], ri, ro)
         else:
             if a1 > a2:
                 a1, a2 = a2, a1
-            _draw_band(a1, a2, seg['color'])
+            _draw_band(a1, a2, seg['color'], ri, ro)
 
     # Q roots
     q_label_r = 0.60
@@ -1025,60 +1549,94 @@ def draw_lambda_ring(ax, case_data, segments):
     cv_cw_default = '#008800'
     ring_annots = []
 
-    # SR/ISR
-    sr_ring_label = 'ISR' if 'ISR' in category else 'SR'
+    # SR/ISR on ring — uses sr_info directly (pure integer, no thresholds)
     if 'SR' in category:
-        for qi, qr in enumerate(Q_roots):
-            P = case_data['P_coeffs']
-            for k in range(3):
-                if abs(poly_eval(P[k], qr)) < 1e-6 * max(1.0, abs(qr)):
-                    ring_annots.append(dict(angle=lambda_to_angle(qr, scale),
-                        tag=sr_ring_label, lam_str=f'$\\lambda$={qr:.2f}',
-                        color='#ff8800', bg='#fff4ee', marker='D', ms=9))
-                    break
+        P_int = [[int(c) for c in pk] for pk in case_data['P']]
+        Q_int = [int(c) for c in case_data['Q']]
+        sr_ring_label = 'ISR' if 'ISR' in category else 'SR'
+        for si in case_data.get('sr_info', []):
+            g = si['g']
+            dg = si['dg']
+            lam_float = si['lam']
 
-    # D00
-    V = np.array(case_data['V'])
-    W = np.array(case_data['W'])
-    cv_type_r = case_data.get('Cv', 0)
-    cw_type_r = case_data.get('Cw', 0)
-    for vi in range(3):
-        det_vw = V[vi][0] * W[vi][1] - V[vi][1] * W[vi][0]
-        if abs(det_vw) < 1e-10 * max(np.linalg.norm(V[vi]) * np.linalg.norm(W[vi]), 1e-30):
-            v_zero = np.all(V[vi] == 0)
-            w_zero = np.all(W[vi] == 0)
-            # Skip if already tagged as Cv0 or Cw0
-            if v_zero and cv_type_r == 3:
+            # SR at λ=0 (g[0]==0): show only if on-curve position is inside
+            if g[0] == 0:
+                if compute_cv_position(case_data) is not None:
+                    ring_annots.append(dict(angle=lambda_to_angle(0.0, scale),
+                        tag=sr_ring_label, lam_str=r'$\lambda$=0',
+                        color='#ff8800', bg='#fff4ee', marker='D', ms=9))
                 continue
-            if w_zero and cw_type_r == 3:
-                continue
-            if w_zero:
-                a = np.pi / 2
-                lam_str = r'$\lambda\!\to\!\infty$'
-            elif v_zero:
-                a = lambda_to_angle(0.0, scale)
-                lam_str = r'$\lambda\!=\!0$'
+
+            if dg == 1:
+                g0, g1 = g[0], g[1]
+                denom = g1 * Q_int[1] - 2 * Q_int[2] * g0
+                if denom == 0:
+                    continue
+                mu_num = [g1 * P_int[j][1] - 2 * P_int[j][2] * g0
+                          for j in range(3)]
+            elif dg == 2:
+                ga, gb = g[2], g[1]
+                if ga == 0:
+                    continue
+                denom = 2 * ga * Q_int[1] - 2 * Q_int[2] * gb
+                if denom == 0:
+                    continue
+                mu_num = [2 * ga * P_int[j][1] - 2 * P_int[j][2] * gb
+                          for j in range(3)]
             else:
-                lam_d = None
-                for k in range(2):
-                    if W[vi][k] != 0:
-                        lam_d = -V[vi][k] / W[vi][k]
-                        break
+                continue
+
+            outside = any((m > 0) != (denom > 0) and m != 0 for m in mu_num)
+            if outside:
+                continue
+            ring_annots.append(dict(angle=lambda_to_angle(lam_float, scale),
+                tag=sr_ring_label, lam_str=f'$\\lambda$={lam_float:.2f}',
+                color='#ff8800', bg='#fff4ee', marker='D', ms=9))
+
+    # D00 — only show when C++ category includes D00 (pure integer checks)
+    if 'D00' in category:
+        V_int = [[int(v) for v in row] for row in case_data['V']]
+        W_int = [[int(w) for w in row] for row in case_data['W']]
+        cv_type_r = case_data.get('Cv', 0)
+        cw_type_r = case_data.get('Cw', 0)
+        for vi in range(3):
+            det_vw = V_int[vi][0] * W_int[vi][1] - V_int[vi][1] * W_int[vi][0]
+            if det_vw == 0:
+                v_zero = all(v == 0 for v in V_int[vi])
+                w_zero = all(w == 0 for w in W_int[vi])
+                # Skip if already tagged as Cv0 or Cw0
+                if v_zero and cv_type_r == 3:
+                    continue
+                if w_zero and cw_type_r == 3:
+                    continue
+                if w_zero:
+                    a = np.pi / 2
+                    lam_str = r'$\lambda\!\to\!\infty$'
+                elif v_zero:
+                    a = lambda_to_angle(0.0, scale)
+                    lam_str = r'$\lambda\!=\!0$'
+                else:
+                    lam_d = None
+                    for k in range(2):
+                        if W_int[vi][k] != 0:
+                            lam_d = -float(V_int[vi][k]) / float(W_int[vi][k])
+                            break
+                    a = lambda_to_angle(lam_d, scale) if lam_d is not None else np.pi / 2
+                    lam_str = (f'$\\lambda$={lam_d:.2f}' if lam_d is not None
+                               else r'$\lambda\!=\!\infty$')
+                ring_annots.append(dict(angle=a, tag='D00', lam_str=lam_str,
+                    color='#9900cc', bg='#f4eeff', marker='s', ms=9))
+
+    # D01 — only show when C++ category includes D01
+    if 'D01' in category:
+        for pi in punctures:
+            if pi.get('is_edge', False) and not pi.get('is_D00', False):
+                lam_d = pi.get('lambda')
                 a = lambda_to_angle(lam_d, scale) if lam_d is not None else np.pi / 2
                 lam_str = (f'$\\lambda$={lam_d:.2f}' if lam_d is not None
-                           else r'$\lambda\!=\!\infty$')
-            ring_annots.append(dict(angle=a, tag='D00', lam_str=lam_str,
-                color='#9900cc', bg='#f4eeff', marker='s', ms=9))
-
-    # D01
-    for pi in punctures:
-        if pi.get('is_edge', False) and not pi.get('is_D00', False):
-            lam_d = pi.get('lambda')
-            a = lambda_to_angle(lam_d, scale) if lam_d is not None else np.pi / 2
-            lam_str = (f'$\\lambda$={lam_d:.2f}' if lam_d is not None
-                       else r'$\lambda\!\to\!\infty$')
-            ring_annots.append(dict(angle=a, tag='D01', lam_str=lam_str,
-                color='#9900cc', bg='#f4eeff', marker='v', ms=9))
+                           else r'$\lambda\!\to\!\infty$')
+                ring_annots.append(dict(angle=a, tag='D01', lam_str=lam_str,
+                    color='#9900cc', bg='#f4eeff', marker='v', ms=9))
 
     # D11
     if 'D11' in category:
@@ -1090,30 +1648,43 @@ def draw_lambda_ring(ax, case_data, segments):
             ring_annots.append(dict(angle=a, tag='D11', lam_str=lam_str,
                 color='#cc6600', bg='#fff4ee', marker='h', ms=9))
 
-    # TN on ring
+    # TN on ring — show "TN" from C++ tag, no reclassification
     if 'TN' in category:
-        P = case_data.get('P_coeffs', case_data.get('P'))
-        Q = case_data.get('Q_coeffs', case_data.get('Q'))
-        if P and Q:
-            P_f = [[float(int(c)) for c in pk] if isinstance(pk[0], str) else pk
-                   for pk in P]
-            Q_f = [float(int(c)) for c in Q] if isinstance(Q[0], str) else Q
-            tn_color = '#9933cc'
-            for k in range(3):
-                pk = P_f[k]
-                if len(pk) < 3 or abs(pk[2]) < 0.5:
+        P_int_r = [[int(c) for c in pk] for pk in case_data['P']]
+        Q_int_r = [int(c) for c in case_data['Q']]
+        for k in range(3):
+            a = P_int_r[k][2]
+            b = P_int_r[k][1]
+            c0 = P_int_r[k][0]
+            if a == 0:
+                continue
+            disc = b * b - 4 * a * c0
+            if disc != 0:
+                continue
+            lam_float = -b / (2.0 * a)
+            q4a2 = 4*a*a*Q_int_r[0] - 2*a*b*Q_int_r[1] + b*b*Q_int_r[2]
+            if q4a2 != 0:
+                mu_num = []
+                for j in range(3):
+                    pj4a2 = (4*a*a*P_int_r[j][0]
+                             - 2*a*b*P_int_r[j][1]
+                             + b*b*P_int_r[j][2])
+                    mu_num.append(pj4a2)
+            else:
+                aqp = a * Q_int_r[1] - Q_int_r[2] * b
+                if aqp == 0:
                     continue
-                disc = pk[1]**2 - 4 * pk[2] * pk[0]
-                if abs(disc) > 1e-6 * max(abs(pk[1]**2), abs(4*pk[2]*pk[0]), 1):
-                    continue
-                lam = -pk[1] / (2 * pk[2])
-                Q_val = poly_eval(Q_f, lam)
-                Ppp = 2 * pk[2]
-                if Ppp * Q_val <= 0:
-                    continue
-                ring_annots.append(dict(angle=lambda_to_angle(lam, scale),
-                    tag='TN', lam_str=f'$\\lambda$={lam:.2f}',
-                    color=tn_color, bg='#f4eeff', marker='^', ms=8))
+                mu_num = []
+                for j in range(3):
+                    apjp = a * P_int_r[j][1] - P_int_r[j][2] * b
+                    mu_num.append(apjp)
+            # Suppress if point is at a vertex (2 zero bary coords = D00)
+            n_zero_mu = sum(1 for m in mu_num if m == 0)
+            if n_zero_mu >= 2:
+                continue
+            ring_annots.append(dict(angle=lambda_to_angle(lam_float, scale),
+                tag='TN', lam_str=f'$\\lambda$={lam_float:.2f}',
+                color='#9933cc', bg='#f4eeff', marker='^', ms=8))
 
     # Cv
     cv_tag_ring = None
@@ -1144,6 +1715,17 @@ def draw_lambda_ring(ax, case_data, segments):
             color=cw_color, bg='#eeffee', marker='*', ms=10))
 
     # Merge co-located ring annotations
+    # Extract lambda values from lam_str for distance comparison.
+    # Only merge annotations at the SAME lambda (exact match from C++ tags).
+    def _extract_lam(annot):
+        """Extract numeric lambda from lam_str for comparison."""
+        s = annot.get('lam_str', '')
+        if 'infty' in s or '\\infty' in s:
+            return float('inf')
+        import re
+        m = re.search(r'[-+]?\d*\.?\d+', s)
+        return float(m.group()) if m else None
+
     ring_groups = []
     r_used = [False] * len(ring_annots)
     for i, a in enumerate(ring_annots):
@@ -1151,13 +1733,20 @@ def draw_lambda_ring(ax, case_data, segments):
             continue
         group = [a]
         r_used[i] = True
+        lam_i = _extract_lam(a)
         for j in range(i + 1, len(ring_annots)):
             if r_used[j]:
                 continue
-            da = abs(a['angle'] - ring_annots[j]['angle'])
-            if da > np.pi:
-                da = 2 * np.pi - da
-            if da < 0.08:
+            lam_j = _extract_lam(ring_annots[j])
+            # Merge only if lambdas match (both inf, or same finite value)
+            same = False
+            if lam_i is not None and lam_j is not None:
+                if lam_i == float('inf') and lam_j == float('inf'):
+                    same = True
+                elif lam_i != float('inf') and lam_j != float('inf'):
+                    if lam_i == lam_j:
+                        same = True
+            if same:
                 group.append(ring_annots[j])
                 r_used[j] = True
         ring_groups.append(group)
@@ -1304,10 +1893,10 @@ def draw_info_panel(ax, case_data, segments):
 
     if 'D00' in category:
         for vi in find_d00_vertices(case_data):
-            Wi = np.array(case_data['W'][vi], dtype=float)
-            Vi = np.array(case_data['V'][vi], dtype=float)
-            w_zero = np.allclose(Wi, 0, atol=0.5)
-            v_zero = np.allclose(Vi, 0, atol=0.5)
+            Wi = [int(w) for w in case_data['W'][vi]]
+            Vi = [int(v) for v in case_data['V'][vi]]
+            w_zero = all(w == 0 for w in Wi)
+            v_zero = all(v == 0 for v in Vi)
             if w_zero:
                 lam_s = '→∞'
             elif v_zero:
@@ -1316,7 +1905,7 @@ def draw_info_panel(ax, case_data, segments):
                 d00_lam = None
                 for comp in range(2):
                     if Wi[comp] != 0:
-                        d00_lam = -Vi[comp] / Wi[comp]
+                        d00_lam = -float(Vi[comp]) / float(Wi[comp])
                         break
                 lam_s = f'={d00_lam:.3f}' if d00_lam is not None else '→∞'
             seg_lines.append(f'  D00: vertex v{vi}, lambda{lam_s}')
