@@ -434,17 +434,22 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
         // ── Q2- post-processing: inf_span + cw + re-pairing ──
         if (v2.merge_infinity && cc.n_Q_roots == 0 && cc.pairs.size() >= 1) {
             // Re-pair if ∞ puncture + D00
-            bool has_inf_punc = false, has_d00 = false;
+            bool has_inf_punc = false, has_d00 = false, d00_at_inf = false;
             for (int pi = 0; pi < v2.n_punctures; pi++)
                 if (v2.punctures[pi].root_idx < 0) has_inf_punc = true;
             for (int i = 0; i < 3; i++) {
                 int64_t det = (int64_t)gpu_v2.V[i][0] * gpu_v2.W[i][1]
                             - (int64_t)gpu_v2.V[i][1] * gpu_v2.W[i][0];
-                if (det == 0) has_d00 = true;
+                if (det == 0) {
+                    has_d00 = true;
+                    if (gpu_v2.W[i][0] == 0 && gpu_v2.W[i][1] == 0)
+                        d00_at_inf = true;  // Cw0: D00 at λ→∞
+                }
             }
             for (const auto& p : cc.punctures) if (p.is_D00) has_d00 = true;
 
-            if (has_inf_punc && has_d00 && cc.pairs.size() >= 2) {
+            // Re-pair when D00 blocks the wrap: ∞ puncture + D00, or D00 at ∞
+            if ((has_inf_punc || d00_at_inf) && has_d00 && cc.pairs.size() >= 2) {
                 // Sort by λ (∞ last), re-pair consecutive
                 std::vector<int> sorted_pi(v2.n_punctures);
                 for (int i = 0; i < v2.n_punctures; i++) sorted_pi[i] = i;
