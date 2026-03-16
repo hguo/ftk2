@@ -383,6 +383,7 @@ def ensure_float_fields(case_data):
     Q_red_f = [float(c) for c in Q_red_int]
     case_data['P_red_coeffs'] = P_red_f
     case_data['Q_red_coeffs'] = Q_red_f
+    case_data['P_red_int'] = P_red_int  # pure integer, no float
     case_data['h_deg'] = h_deg
 
     # SR info: per-face integer GCD data for shared-root visualization.
@@ -667,11 +668,20 @@ def collect_segments(case_data):
     punctures = case_data['punctures']
     puncture_lambdas = [p.get('lambda') for p in punctures]
 
-    pairs = list(case_data.get('pairs', []))
-    merge_inf = case_data.get('merge_infinity', False)
-    n_Q_roots = case_data.get('n_Q_roots', 0)
-
-    # Use C++ pairing directly — no override.
+    # Read pairs from C++ output: [{a, b, inf, cw}, ...]
+    raw_pairs = case_data.get('pairs', [])
+    pairs = []
+    pair_inf_span = []
+    pair_cw = []  # band direction: True=clockwise to ∞
+    for p in raw_pairs:
+        if isinstance(p, dict):
+            pairs.append([p['a'], p['b']])
+            pair_inf_span.append(p.get('inf', False))
+            pair_cw.append(p.get('cw', False))
+        else:
+            pairs.append(list(p))
+            pair_inf_span.append(False)
+            pair_cw.append(False)
 
     all_subsegs = []
     for iv in intervals:
@@ -687,81 +697,19 @@ def collect_segments(case_data):
         else:
             pair_subsegs[0].append(pts)
 
-    # ── Determine infinity-spanning per INTERVAL, then per pair ──
-    # Step 1: each interval has is_infinity flag from ensure_float_fields.
-    # Step 2: group punctures by interval (qi).
-    # Step 3: for each pair, determine inf_span from its interval.
-    P_red_int = [[int(round(x)) for x in pk]
-                 for pk in case_data.get('P_red_coeffs', case_data['P_coeffs'])]
-
-    # Group puncture indices by q_interval
-    qi_punctures = defaultdict(list)
-    for pi_idx, p in enumerate(punctures):
-        qi_punctures[p.get('q_interval', 0)].append(pi_idx)
-
-    # For each infinity-spanning interval with multiple pairs,
-    # find the outermost pair (integer root comparison). Only it wraps.
-    wrap_pairs = set()  # pair indices that should be infinity-spanning
-    for qi, pi_list in qi_punctures.items():
-        iv_idx = qi if qi < len(intervals) else len(intervals) - 1
-        if not intervals[iv_idx].get('is_infinity', False):
-            continue  # non-infinity interval → all pairs direct
-        # Find pairs in this interval
-        pi_set = set(pi_list)
-        interval_pairs = []
-        for pair_idx, (pa, pb) in enumerate(pairs):
-            if pa in pi_set or pb in pi_set:
-                interval_pairs.append(pair_idx)
-        if len(interval_pairs) == 1:
-            # Single pair in infinity interval → wraps iff Cw tagged
-            if case_data.get('Cw', 0) > 0:
-                wrap_pairs.add(interval_pairs[0])
-        elif len(interval_pairs) >= 2:
-            # Multiple pairs: find outermost (contains all others)
-            for pair_idx in interval_pairs:
-                pa, pb = pairs[pair_idx]
-                fA = punctures[pa]['face']; rA = punctures[pa]['root_idx']
-                fB = punctures[pb]['face']; rB = punctures[pb]['root_idx']
-                others = [(punctures[pj]['face'], punctures[pj]['root_idx'])
-                          for pj in pi_set
-                          if pj != pa and pj != pb
-                          and punctures[pj].get('root_idx', -1) >= 0]
-                if not others:
-                    continue
-                all_between = True
-                for fC, rC in others:
-                    cmpCA = _compare_roots_int(P_red_int, fC, rC, fA, rA)
-                    cmpCB = _compare_roots_int(P_red_int, fC, rC, fB, rB)
-                    if cmpCA * cmpCB > 0:
-                        all_between = False
-                        break
-                if all_between:
-                    wrap_pairs.add(pair_idx)
-                    break  # at most one outermost per interval
-
+    # ── inf_span directly from C++ output ──
     segments = []
     for idx, (pi1, pi2) in enumerate(pairs):
         color = SEGMENT_COLORS[idx % len(SEGMENT_COLORS)]
         l1 = punctures[pi1].get('lambda')
         l2 = punctures[pi2].get('lambda')
-
-        # Infinity-spanning from interval analysis
-        inf_span = False
-        if merge_inf:
-            qi1 = punctures[pi1].get('q_interval', 0)
-            qi2 = punctures[pi2].get('q_interval', 0)
-            if qi1 != qi2:
-                # Cross-interval pair → always infinity-spanning
-                inf_span = True
-            elif l1 is None or l2 is None:
-                # One endpoint at ∞ → infinity-spanning
-                inf_span = True
-            elif idx in wrap_pairs:
-                inf_span = True
+        inf_span = pair_inf_span[idx] if idx < len(pair_inf_span) else False
+        cw = pair_cw[idx] if idx < len(pair_cw) else False
 
         segments.append({
             'pts_list': pair_subsegs.get(idx, []),
             'color': color,
+            'cw': cw,
             'pi_entry': pi1,
             'pi_exit': pi2,
             'lam_entry': l1,
@@ -1496,19 +1444,12 @@ def draw_lambda_ring(ax, case_data, segments):
 
         if seg.get('infinity_spanning', False):
             if (lam1 is None) != (lam2 is None):
-                # One endpoint at ∞: arc from finite endpoint to ∞
-                # Direction must go AWAY from Q roots (stay in infinity interval)
+                # One endpoint at ∞: direction from C++ cw flag
                 finite_lam = lam2 if lam1 is None else lam1
                 a_finite = lambda_to_angle(finite_lam, scale)
-                # Determine direction using q_interval: interval 0 → go left
-                # (toward -∞), last interval → go right (toward +∞)
-                pi_idx = seg['pi_entry'] if lam1 is not None else seg['pi_exit']
-                qi = punctures[pi_idx].get('q_interval', 0) if pi_idx >= 0 else 0
-                if qi == 0:
-                    # Left infinity interval: go counterclockwise (left) to ∞
+                if seg.get('cw', False):
                     _draw_band(a_finite, -3 * np.pi / 2, seg['color'], ri, ro)
                 else:
-                    # Right infinity interval: go clockwise (right) to ∞
                     _draw_band(a_finite, np.pi / 2, seg['color'], ri, ro)
             else:
                 # Both finite: complement arc through ∞
