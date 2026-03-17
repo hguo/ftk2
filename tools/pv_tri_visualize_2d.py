@@ -655,8 +655,15 @@ def _match_to_pair(lam_e, lam_x, pairs, punctures):
     for idx, (pi1, pi2) in enumerate(pairs):
         l1 = punctures[pi1].get('lambda')
         l2 = punctures[pi2].get('lambda')
+        # Prefer pairs where the sub-segment's lambdas are BETWEEN the pair endpoints
         d = min(_lam_dist(lam_e, l1), _lam_dist(lam_e, l2),
                 _lam_dist(lam_x, l1), _lam_dist(lam_x, l2))
+        # Bonus: if sub-segment midpoint is between pair endpoints, reduce distance
+        if l1 is not None and l2 is not None and lam_e is not None and lam_x is not None:
+            lo, hi = min(l1, l2), max(l1, l2)
+            mid = (lam_e + lam_x) / 2
+            if lo <= mid <= hi:
+                d *= 0.01  # strongly prefer this pair
         if d < best_dist:
             best_dist = d
             best_pair = idx
