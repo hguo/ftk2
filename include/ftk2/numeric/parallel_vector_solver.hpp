@@ -1387,6 +1387,43 @@ FTK_HOST_DEVICE inline int count_roots_below_rational(const __int128* f, int df,
     }
 }
 
+// --- 1.6b  RP1 Sign Helpers ------------------------------------------------
+// Pure-integer sign functions for RP1 (real projective line) interval arithmetic.
+// Used by pair_punctures_rp1 to evaluate polynomial signs in arcs between roots.
+
+// Sign of polynomial p(λ) as λ→+∞: equals sign of leading coefficient.
+FTK_HOST_DEVICE inline int sign_at_plus_inf_i128(const __int128* p, int deg) {
+    int d = deg;
+    while (d > 0 && p[d] == 0) d--;
+    if (d == 0) return (p[0] > 0) ? 1 : (p[0] < 0) ? -1 : 0;
+    return (p[d] > 0) ? 1 : -1;
+}
+
+// Sign of polynomial p(λ) at the RP1 infinity point.
+// On RP1, ∞ is a single point; uses λ→-∞ convention: sign(leading) * (-1)^deg.
+FTK_HOST_DEVICE inline int sign_at_inf_i128(const __int128* p, int deg) {
+    int d = deg;
+    while (d > 0 && p[d] == 0) d--;
+    if (d == 0) return (p[0] > 0) ? 1 : (p[0] < 0) ? -1 : 0;
+    int sign_lc = (p[d] > 0) ? 1 : -1;
+    return (d % 2 == 0) ? sign_lc : -sign_lc;
+}
+
+// Sign of square-free polynomial p just AFTER its root at index root_idx
+// (0=smallest root, 1=next, ..., n_distinct-1=largest).
+// For a square-free polynomial with n_distinct simple roots:
+//   Between consecutive roots, sign alternates. Just right of root_idx:
+//     sign = sign(lc) * (-1)^(n_distinct - 1 - root_idx)
+FTK_HOST_DEVICE inline int sign_just_after_root_i128(const __int128* p, int deg,
+                                                     int n_distinct, int root_idx) {
+    int d = deg;
+    while (d > 0 && p[d] == 0) d--;
+    if (d == 0) return (p[0] > 0) ? 1 : (p[0] < 0) ? -1 : 0;
+    int sign_lc = (p[d] > 0) ? 1 : -1;
+    int exp = n_distinct - 1 - root_idx;
+    return (exp % 2 == 0) ? sign_lc : -sign_lc;
+}
+
 // --- 1.7  Signs at Roots of a Polynomial -----------------------------------
 // Determines sign(g(α_i)) for each distinct real root α_i of f.
 //
@@ -2151,6 +2188,176 @@ FTK_HOST_DEVICE inline int isolate_cubic_roots(const double P[4],
             ++n_iso;
     }
     return n_iso;
+}
+
+// --- 1.9  RP1 Interval Pairing ----------------------------------------------
+// Unified pairing for both 2D (n_faces=3, deg≤2) and 3D (n_faces=4, deg≤3).
+//
+// Given N punctures sorted on RP1 (finite roots by λ, infinity at end),
+// determines which arcs between consecutive punctures are "inside" (valid PV
+// region where all barycentric coordinates are non-negative).
+//
+// For each arc, evaluates sign of each P_red[k] and Q_red at a test point:
+//   - After finite puncture (face f, root r):
+//       P_red[f]: sign_just_after_root_i128
+//       P_red[k≠f]: signs_at_roots_i128(P_red[f], P_red[k])[r]
+//       Q_red: signs_at_roots_i128(P_red[f], Q_red)[r]
+//   - After ∞ puncture: sign_at_inf_i128 for all
+//
+// Inside iff all sign(P_red[k]) * sign(Q_red) ≥ 0.
+// contains_infinity = true when arc passes through λ = ±∞.
+
+struct RP1PairResult {
+    int a, b;                // indices into original puncture array
+    bool contains_infinity;  // arc wraps through λ = ±∞
+};
+
+// pair_punctures_rp1:
+//   n_faces:  3 (2D) or 4 (3D)
+//   sorted[]:  puncture indices sorted on RP1 (finite by λ, then ∞)
+//   n_sorted:  length of sorted[]
+//   n_finite:  how many of sorted[] are finite (rest are at ∞)
+//   p_face[i], p_root_idx[i]:  face and root index for puncture i
+//     (root_idx = -1 for infinity punctures)
+//   p_q_interval[i]:  Q_red-interval index for puncture i
+//   n_qr_roots:  number of real roots of Q_red
+//   merge_infinity:  whether intervals 0 and n_qr_roots merge through ±∞
+//   P_red[][4]:  face polynomials (h-divided), P_red[k][0..degP_red[k]]
+//   degP_red[], n_distinct_red[]:  per-face metadata
+//   Q_red[]:  Q polynomial (h-divided)
+//   degQ_red:  effective degree of Q_red
+//   out_pairs[]:  output pairs
+//   max_pairs:  capacity of out_pairs
+// Returns: number of pairs found.
+FTK_HOST_DEVICE inline int pair_punctures_rp1(
+    int n_faces,
+    const int* sorted, int n_sorted, int n_finite,
+    const int* p_face, const int* p_root_idx,
+    const int* p_q_interval, int n_qr_roots, bool merge_infinity,
+    const __int128 P_red[][4], const int* degP_red, const int* n_distinct_red,
+    const __int128* Q_red, int degQ_red,
+    RP1PairResult* out_pairs, int max_pairs)
+{
+    if (n_sorted < 2) return 0;
+
+    int n_pairs = 0;
+
+    // Pre-compute sign tables to avoid redundant signs_at_roots calls.
+    // sign_pk_at_fi_ri[fi][ri][k] = sign(P_red[k]) at root ri of P_red[fi]
+    // sign_qr_at_fi_ri[fi][ri]   = sign(Q_red)    at root ri of P_red[fi]
+    int sign_pk[4][4][4] = {};  // [fi][ri][k], max 4 faces × 4 roots × 4 faces
+    int sign_qr[4][4] = {};     // [fi][ri]
+    for (int fi = 0; fi < n_faces; fi++) {
+        if (n_distinct_red[fi] == 0) continue;
+        for (int k = 0; k < n_faces; k++) {
+            if (k == fi) continue;
+            int signs[4] = {};
+            int n = signs_at_roots_i128(P_red[fi], degP_red[fi],
+                                        P_red[k], degP_red[k], signs, 4);
+            for (int ri = 0; ri < n && ri < 4; ri++)
+                sign_pk[fi][ri][k] = signs[ri];
+        }
+        {
+            int signs[4] = {};
+            int n = signs_at_roots_i128(P_red[fi], degP_red[fi],
+                                        Q_red, degQ_red, signs, 4);
+            for (int ri = 0; ri < n && ri < 4; ri++)
+                sign_qr[fi][ri] = signs[ri];
+        }
+    }
+
+    // Walk arcs on RP1 circle, mark which are "inside"
+    bool arc_inside[12] = {};  // max 12 punctures → 12 arcs
+    for (int ai = 0; ai < n_sorted; ai++) {
+        int pi = sorted[ai];       // left endpoint of arc
+        int fi = p_face[pi];       // face of left endpoint
+        int ri = p_root_idx[pi];   // root index (-1 for ∞)
+        int next = (ai + 1) % n_sorted;
+        int pj = sorted[next];
+
+        // Evaluate signs of P_red[k] and Q_red at test point just after left endpoint
+        int sp[4] = {};  // sign(P_red[k]) at test point
+        int sq = 0;      // sign(Q_red) at test point
+
+        if (ri < 0) {
+            // Left endpoint at ∞: the arc goes from ∞ toward -∞ (first finite
+            // puncture), so the test point is in the λ→-∞ region.
+            for (int k = 0; k < n_faces; k++)
+                sp[k] = sign_at_inf_i128(P_red[k], degP_red[k]);
+            sq = sign_at_inf_i128(Q_red, degQ_red);
+        } else {
+            // Left endpoint is finite (face fi, root ri)
+            sp[fi] = sign_just_after_root_i128(P_red[fi], degP_red[fi],
+                                                n_distinct_red[fi], ri);
+            for (int k = 0; k < n_faces; k++) {
+                if (k == fi) continue;
+                sp[k] = sign_pk[fi][ri][k];
+            }
+            sq = sign_qr[fi][ri];
+        }
+
+        // Inside iff all sign(P_red[k]) * sign(Q_red) >= 0
+        bool inside = (sq != 0);  // Q_red = 0 → on boundary, not inside
+        for (int k = 0; k < n_faces && inside; k++) {
+            if (sp[k] * sq < 0) inside = false;
+        }
+
+        // Q-interval compatibility: arc must not cross Q_red roots.
+        if (inside) {
+            int qi_a = p_q_interval[pi], qi_b = p_q_interval[pj];
+            bool q_compat = (qi_a == qi_b);
+            if (!q_compat && merge_infinity) {
+                q_compat = (qi_a == 0 && qi_b == n_qr_roots) ||
+                           (qi_a == n_qr_roots && qi_b == 0);
+            }
+            if (!q_compat) inside = false;
+        }
+
+        // Wrap-around arcs (through ∞) require merge_infinity
+        if (inside && (ai >= n_finite - 1) && !merge_infinity) {
+            // Arc goes through ∞ but asymptotic point is outside tet
+            // Exception: ∞ punctures split the wrap — check if any endpoint is ∞
+            bool has_inf_endpoint = (p_root_idx[pi] < 0 || p_root_idx[pj] < 0);
+            if (!has_inf_endpoint) inside = false;
+        }
+
+        arc_inside[ai] = inside;
+    }
+
+    // Group consecutive inside arcs into connected regions.
+    // Within each region, pair consecutive punctures: (1st, 2nd), (3rd, 4th), etc.
+    // This handles TN (tangency) correctly: zero-length arcs between TN duplicates
+    // are inside, connecting them into a larger region with consecutive pairing.
+    bool visited[12] = {};
+    for (int start = 0; start < n_sorted; start++) {
+        if (!arc_inside[start] || visited[start]) continue;
+
+        // Find the connected run of inside arcs starting at 'start'
+        int group[12];
+        int ng = 0;
+        bool ci = false;  // does this region contain ∞?
+        group[ng++] = sorted[start];  // left endpoint of first arc
+
+        int ai = start;
+        while (arc_inside[ai] && !visited[ai]) {
+            visited[ai] = true;
+            if (ai >= n_finite - 1) ci = true;
+            int next = (ai + 1) % n_sorted;
+            group[ng++] = sorted[next];  // right endpoint of this arc
+            ai = next;
+            if (ai == start) break;  // wrapped all the way around
+        }
+
+        // Pair consecutive punctures within the region
+        for (int i = 0; i + 1 < ng && n_pairs < max_pairs; i += 2) {
+            out_pairs[n_pairs].a = group[i];
+            out_pairs[n_pairs].b = group[i + 1];
+            out_pairs[n_pairs].contains_infinity = ci;
+            n_pairs++;
+        }
+    }
+
+    return n_pairs;
 }
 
 // ============================================================================
@@ -3731,7 +3938,7 @@ struct ExactPV2Result {
     } punctures[MAX_PUNCTURES];
 
     int n_pairs = 0;
-    struct Pair { int a, b; } pairs[MAX_PAIRS];
+    struct Pair { int a, b; bool contains_infinity; } pairs[MAX_PAIRS];
 
     bool has_passthrough = false;
     int passthrough_deg = 0;   // degree of gcd(P_0, P_1, P_2, P_3)
@@ -4404,11 +4611,8 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
         result.n_punctures++;
     }
 
-    // --- Step 9: Pairing ---
-    // Group by Q_red-interval, pair consecutive within each group.
-    // Cross-infinity: intervals 0 and n_qr_roots are connected through λ = ±∞
-    // only when the asymptotic point at ∞ is inside the tet.
-    // Condition: Q[3] == 0 (deg drops) or all P[k][3] * Q[3] >= 0.
+    // --- Step 9: RP1 interval pairing ---
+    // merge_infinity: intervals 0 and n_qr_roots connect through ±∞
     bool merge_infinity = false;
     if (Q[3] == 0) {
         merge_infinity = true;
@@ -4422,31 +4626,28 @@ FTK_HOST_DEVICE inline ExactPV2Result solve_pv_tet_v2(const __int128 Q_raw[4],
         }
     }
 
-    for (int qi = 0; qi <= n_qr_roots; qi++) {
-        if (merge_infinity && qi == n_qr_roots && n_qr_roots > 0)
-            continue;  // already handled with qi=0
-
-        int group[12];
-        int ng = 0;
-        if (merge_infinity && qi == 0 && n_qr_roots > 0) {
-            // Wrapped group: interval n_qr_roots (→ +∞) then interval 0 (−∞ →)
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].q_interval == n_qr_roots)
-                    group[ng++] = i;
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].q_interval == 0)
-                    group[ng++] = i;
-        } else {
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].q_interval == qi)
-                    group[ng++] = i;
+    {
+        int sorted_rp1[12], p_face_arr[12], p_ridx_arr[12], p_qi_arr[12];
+        int n_fin = 0;
+        for (int i = 0; i < result.n_punctures; i++) {
+            sorted_rp1[i] = i;  // punctures already sorted by λ (Step 6)
+            p_face_arr[i] = result.punctures[i].face;
+            p_ridx_arr[i] = result.punctures[i].root_idx;
+            p_qi_arr[i] = result.punctures[i].q_interval;
+            if (result.punctures[i].root_idx >= 0) n_fin++;
         }
-        for (int i = 0; i + 1 < ng; i += 2) {
-            if (result.n_pairs < ExactPV2Result::MAX_PAIRS) {
-                result.pairs[result.n_pairs].a = group[i];
-                result.pairs[result.n_pairs].b = group[i + 1];
-                result.n_pairs++;
-            }
+        RP1PairResult rp1_pairs[6];
+        int np = pair_punctures_rp1(4, sorted_rp1, result.n_punctures, n_fin,
+                                     p_face_arr, p_ridx_arr,
+                                     p_qi_arr, n_qr_roots, merge_infinity,
+                                     P, degP, n_distinct,
+                                     Q_red, degQ_red,
+                                     rp1_pairs, 6);
+        for (int i = 0; i < np && result.n_pairs < ExactPV2Result::MAX_PAIRS; i++) {
+            result.pairs[result.n_pairs].a = rp1_pairs[i].a;
+            result.pairs[result.n_pairs].b = rp1_pairs[i].b;
+            result.pairs[result.n_pairs].contains_infinity = rp1_pairs[i].contains_infinity;
+            result.n_pairs++;
         }
     }
 
@@ -4726,8 +4927,7 @@ struct ExactPV2Result2D {
     } punctures[MAX_PUNCTURES];
 
     int n_pairs = 0;
-    struct Pair { int a, b; } pairs[MAX_PAIRS];
-    int rp1_inf_arc_pair = -1;  // which pair contains +∞ arc (Q2- RP1 pairing)
+    struct Pair { int a, b; bool contains_infinity; } pairs[MAX_PAIRS];
 
     bool has_passthrough = false;
     int passthrough_deg = 0;
@@ -5329,7 +5529,8 @@ FTK_HOST_DEVICE inline ExactPV2Result2D solve_pv_tri_2d(
         result.n_punctures++;
     }
 
-    // --- Step 9: Pairing ---
+    // --- Step 9: RP1 interval pairing ---
+    // merge_infinity: intervals 0 and n_qr_roots connect through ±∞
     bool merge_infinity = false;
     if (Q[2] == 0) {
         merge_infinity = true;
@@ -5343,107 +5544,34 @@ FTK_HOST_DEVICE inline ExactPV2Result2D solve_pv_tri_2d(
         }
     }
 
-    for (int qi = 0; qi <= n_qr_roots; qi++) {
-        if (merge_infinity && qi == n_qr_roots && n_qr_roots > 0)
-            continue;
+    {
+        // Pad P[3][3] → P_pad[3][4] for pair_punctures_rp1 (expects [][4])
+        __int128 P_pad[3][4] = {};
+        for (int k = 0; k < 3; k++)
+            for (int i = 0; i <= degP[k] && i < 3; i++)
+                P_pad[k][i] = P[k][i];
 
-        int group[8];
-        int ng = 0;
-        if (merge_infinity && qi == 0 && n_qr_roots > 0) {
-            // Q2+ merge: outer intervals merge
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].q_interval == n_qr_roots)
-                    group[ng++] = i;
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].q_interval == 0)
-                    group[ng++] = i;
-        } else if (merge_infinity && qi == 0 && n_qr_roots == 0
-                   && result.n_punctures >= 2) {
-            // Q2- with >2 punctures: RP1 sign evaluation pairing.
-            // Sort by λ, evaluate P_red signs at each puncture root.
-            int sorted_rp1[8];
-            int ns_rp1 = 0, ns_fin = 0;
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].root_idx >= 0)
-                    sorted_rp1[ns_rp1++] = i;
-            ns_fin = ns_rp1;
-            for (int i = 1; i < ns_fin; i++) {
-                int j = i;
-                while (j > 0) {
-                    int a = sorted_rp1[j-1], b = sorted_rp1[j];
-                    int cmp = compare_roots_i128(
-                        P[result.punctures[a].face], degP[result.punctures[a].face],
-                        n_distinct[result.punctures[a].face], result.punctures[a].root_idx,
-                        P[result.punctures[b].face], degP[result.punctures[b].face],
-                        n_distinct[result.punctures[b].face], result.punctures[b].root_idx);
-                    if (cmp <= 0) break;
-                    int tmp = sorted_rp1[j-1]; sorted_rp1[j-1] = sorted_rp1[j]; sorted_rp1[j] = tmp;
-                    j--;
-                }
-            }
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].root_idx < 0)
-                    sorted_rp1[ns_rp1++] = i;
-
-            int sign_Q = (Q_red[degQ_red] > 0) ? 1 : -1;
-            for (int ai = 0; ai < ns_rp1; ai++) {
-                int pi = sorted_rp1[ai];
-                int fi = result.punctures[pi].face;
-                int ri = result.punctures[pi].root_idx;
-                int sign_k[3];
-                bool ok = true;
-                if (ri < 0) {
-                    // ∞ puncture: signs at -∞
-                    for (int k = 0; k < 3 && ok; k++) {
-                        int lc = (degP[k] >= 1) ?
-                            ((P[k][degP[k]] > 0) ? 1 : -1) : 0;
-                        sign_k[k] = (degP[k] % 2 == 1) ? -lc : lc;
-                        if (sign_k[k] * sign_Q < 0) ok = false;
-                    }
-                } else {
-                    for (int k = 0; k < 3 && ok; k++) {
-                        if (k == fi) {
-                            // Sign just AFTER root ri of P_red[fi]
-                            if (degP[fi] == 1)
-                                sign_k[k] = (P[fi][1] > 0) ? 1 : -1;
-                            else
-                                sign_k[k] = (ri == 0) ?
-                                    -((P[fi][2] > 0) ? 1 : -1) :
-                                     ((P[fi][2] > 0) ? 1 : -1);
-                        } else {
-                            sign_k[k] = eval_sign_at_root_2d(
-                                P[k], degP[k], P[fi], degP[fi], ri);
-                        }
-                        if (sign_k[k] * sign_Q < 0) ok = false;
-                    }
-                }
-                if (ok) {
-                    // Tag: does this arc contain +∞?
-                    bool has_inf_punc_rp1 = (ns_rp1 > ns_fin);
-                    int inf_arc_idx = has_inf_punc_rp1 ? (ns_fin - 1) : (ns_rp1 - 1);
-                    if (ai == inf_arc_idx)
-                        result.rp1_inf_arc_pair = result.n_pairs + ng / 2;
-                    group[ng++] = sorted_rp1[ai];
-                    group[ng++] = sorted_rp1[(ai + 1) % ns_rp1];
-                }
-            }
-            // Fallback: if RP1 sign eval found 0 inside arcs (e.g., TN
-            // duplicates at same position), pair consecutive.
-            if (ng == 0 && result.n_punctures >= 2) {
-                for (int i = 0; i < ns_rp1; i++)
-                    group[ng++] = sorted_rp1[i];
-            }
-        } else {
-            for (int i = 0; i < result.n_punctures; i++)
-                if (result.punctures[i].q_interval == qi)
-                    group[ng++] = i;
+        int sorted_rp1[8], p_face_arr[8], p_ridx_arr[8], p_qi_arr[8];
+        int n_fin = 0;
+        for (int i = 0; i < result.n_punctures; i++) {
+            sorted_rp1[i] = i;  // punctures already sorted by λ (Step 6)
+            p_face_arr[i] = result.punctures[i].face;
+            p_ridx_arr[i] = result.punctures[i].root_idx;
+            p_qi_arr[i] = result.punctures[i].q_interval;
+            if (result.punctures[i].root_idx >= 0) n_fin++;
         }
-        for (int i = 0; i + 1 < ng; i += 2) {
-            if (result.n_pairs < ExactPV2Result2D::MAX_PAIRS) {
-                result.pairs[result.n_pairs].a = group[i];
-                result.pairs[result.n_pairs].b = group[i + 1];
-                result.n_pairs++;
-            }
+        RP1PairResult rp1_pairs[4];
+        int np = pair_punctures_rp1(3, sorted_rp1, result.n_punctures, n_fin,
+                                     p_face_arr, p_ridx_arr,
+                                     p_qi_arr, n_qr_roots, merge_infinity,
+                                     P_pad, degP, n_distinct,
+                                     Q_red, degQ_red,
+                                     rp1_pairs, 4);
+        for (int i = 0; i < np && result.n_pairs < ExactPV2Result2D::MAX_PAIRS; i++) {
+            result.pairs[result.n_pairs].a = rp1_pairs[i].a;
+            result.pairs[result.n_pairs].b = rp1_pairs[i].b;
+            result.pairs[result.n_pairs].contains_infinity = rp1_pairs[i].contains_infinity;
+            result.n_pairs++;
         }
     }
 

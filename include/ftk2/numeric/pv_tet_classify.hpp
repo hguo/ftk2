@@ -93,6 +93,7 @@ struct ClassifiedCase {
     struct PuncturePair {
         int pi_a, pi_b;
         bool is_cross;
+        bool contains_infinity;  // band goes through ∞ (from solver RP1 pairing)
         int interval_idx;
     };
     std::vector<PuncturePair> pairs;
@@ -469,7 +470,8 @@ inline ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             bool is_cross = v2.merge_infinity && (qa != qb);
 
             int iv_idx = cc.punctures[a].interval_idx;
-            cc.pairs.push_back({a, b, is_cross, iv_idx});
+            bool ci = v2.pairs[i].contains_infinity;
+            cc.pairs.push_back({a, b, is_cross, ci, iv_idx});
         }
 
         std::set<int> paired;
@@ -487,7 +489,7 @@ inline ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             return v2.punctures[a].root_idx < v2.punctures[b].root_idx;
         });
         for (int j = 0; j + 1 < (int)unpaired.size(); j += 2)
-            cc.pairs.push_back({unpaired[j], unpaired[j + 1], false, -1});
+            cc.pairs.push_back({unpaired[j], unpaired[j + 1], false, false, -1});
 
         // SR root index computation
         std::set<int> sr_qr_set;
@@ -660,7 +662,7 @@ inline ClassifiedCase classify_case_v2(const TetCaseV2GPU& gpu_v2) {
             int pi_a = get_or_create_pi(d12_eps[i]);
             int pi_b = get_or_create_pi(d12_eps[i + 1]);
             int iv_idx = cc.punctures[pi_a].interval_idx;
-            cc.pairs.push_back({pi_a, pi_b, false, iv_idx});
+            cc.pairs.push_back({pi_a, pi_b, false, false, iv_idx});
         }
     }
 

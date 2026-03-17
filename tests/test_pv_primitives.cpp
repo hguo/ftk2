@@ -1494,6 +1494,92 @@ void test_gcd_swap_degrees() {
 
 static void test_classify_2d_cases();  // forward declaration
 
+// ============================================================================
+// RP1 sign helper tests
+// ============================================================================
+
+void test_sign_at_plus_inf() {
+    std::cout << "  sign_at_plus_inf (degree 1/2/3)" << std::endl;
+    // Linear: p(x) = -3 + 2x, leading coeff +2 → +1 at +∞
+    { __int128 p[] = {-3, 2}; ASSERT_EQ(sign_at_plus_inf_i128(p, 1), 1); }
+    // Linear: p(x) = 5 - 7x, leading coeff -7 → -1 at +∞
+    { __int128 p[] = {5, -7}; ASSERT_EQ(sign_at_plus_inf_i128(p, 1), -1); }
+    // Quadratic: p(x) = 1 - 2x + 3x², leading coeff +3 → +1 at +∞
+    { __int128 p[] = {1, -2, 3}; ASSERT_EQ(sign_at_plus_inf_i128(p, 2), 1); }
+    // Quadratic: leading coeff -3 → -1 at +∞
+    { __int128 p[] = {1, 2, -3}; ASSERT_EQ(sign_at_plus_inf_i128(p, 2), -1); }
+    // Cubic: leading coeff +1 → +1
+    { __int128 p[] = {-1, 0, 0, 1}; ASSERT_EQ(sign_at_plus_inf_i128(p, 3), 1); }
+    // Constant: p(x) = -5
+    { __int128 p[] = {-5}; ASSERT_EQ(sign_at_plus_inf_i128(p, 0), -1); }
+    // Degree drops: p[2] = 0, effective linear
+    { __int128 p[] = {1, 3, 0}; ASSERT_EQ(sign_at_plus_inf_i128(p, 2), 1); }
+}
+
+void test_sign_at_inf() {
+    std::cout << "  sign_at_minus_inf (degree 1/2/3)" << std::endl;
+    // Linear: p(x) = 2x, leading coeff +2, odd deg → -1 at -∞
+    { __int128 p[] = {0, 2}; ASSERT_EQ(sign_at_inf_i128(p, 1), -1); }
+    // Linear: p(x) = -7x, leading coeff -7, odd deg → +1 at -∞
+    { __int128 p[] = {0, -7}; ASSERT_EQ(sign_at_inf_i128(p, 1), 1); }
+    // Quadratic: p(x) = 3x², even deg → +1 at -∞ (same as +∞)
+    { __int128 p[] = {0, 0, 3}; ASSERT_EQ(sign_at_inf_i128(p, 2), 1); }
+    // Quadratic: leading coeff -3, even deg → -1 at -∞
+    { __int128 p[] = {0, 0, -3}; ASSERT_EQ(sign_at_inf_i128(p, 2), -1); }
+    // Cubic: leading coeff +1, odd deg → -1 at -∞
+    { __int128 p[] = {0, 0, 0, 1}; ASSERT_EQ(sign_at_inf_i128(p, 3), -1); }
+    // Cubic: leading coeff -2, odd deg → +1 at -∞
+    { __int128 p[] = {0, 0, 0, -2}; ASSERT_EQ(sign_at_inf_i128(p, 3), 1); }
+}
+
+void test_sign_just_after_root() {
+    std::cout << "  sign_just_after_root (degree 1/2/3)" << std::endl;
+    // Linear: p(x) = x - 1, lc=+1, 1 root, root_idx=0 → exp = 0 → lc = +1
+    { __int128 p[] = {-1, 1}; ASSERT_EQ(sign_just_after_root_i128(p, 1, 1, 0), 1); }
+    // Linear: p(x) = -x + 1, lc=-1, 1 root, root_idx=0 → exp = 0 → -1
+    { __int128 p[] = {1, -1}; ASSERT_EQ(sign_just_after_root_i128(p, 1, 1, 0), -1); }
+    // Quadratic with 2 roots: p(x) = (x-1)(x-3) = x²-4x+3, lc=+1, 2 roots
+    // Just after root 0 (smaller): exp = 2-1-0 = 1 → -lc = -1
+    { __int128 p[] = {3, -4, 1}; ASSERT_EQ(sign_just_after_root_i128(p, 2, 2, 0), -1); }
+    // Just after root 1 (larger): exp = 2-1-1 = 0 → lc = +1
+    { __int128 p[] = {3, -4, 1}; ASSERT_EQ(sign_just_after_root_i128(p, 2, 2, 1), 1); }
+    // Cubic with 3 roots: p(x) = (x-1)(x-2)(x-3) = x³-6x²+11x-6, lc=+1
+    // After root 0: exp = 3-1-0 = 2 → lc = +1
+    { __int128 p[] = {-6, 11, -6, 1}; ASSERT_EQ(sign_just_after_root_i128(p, 3, 3, 0), 1); }
+    // After root 1: exp = 3-1-1 = 1 → -lc = -1
+    { __int128 p[] = {-6, 11, -6, 1}; ASSERT_EQ(sign_just_after_root_i128(p, 3, 3, 1), -1); }
+    // After root 2: exp = 3-1-2 = 0 → lc = +1
+    { __int128 p[] = {-6, 11, -6, 1}; ASSERT_EQ(sign_just_after_root_i128(p, 3, 3, 2), 1); }
+    // Negative leading coeff: p(x) = -(x-1)(x-3) = -x²+4x-3, lc=-1
+    { __int128 p[] = {-3, 4, -1}; ASSERT_EQ(sign_just_after_root_i128(p, 2, 2, 0), 1); }
+    { __int128 p[] = {-3, 4, -1}; ASSERT_EQ(sign_just_after_root_i128(p, 2, 2, 1), -1); }
+}
+
+void test_rp1_pairing_basic() {
+    std::cout << "  pair_punctures_rp1: 2 punctures, 1 pair" << std::endl;
+    // Simple 2D case: 2 punctures on different faces, same Q-interval
+    // P_red[0] = x - 1 (root at 1), P_red[1] = x - 2 (root at 2), P_red[2] = 5 (no roots)
+    // Q_red = 1 (constant positive)
+    __int128 P_red[3][4] = {{-1, 1, 0, 0}, {-2, 1, 0, 0}, {5, 0, 0, 0}};
+    int degP_red[] = {1, 1, 0};
+    int n_distinct_red[] = {1, 1, 0};
+    __int128 Q_red[] = {1, 0, 0, 0};
+    int degQ_red = 0;
+
+    int sorted[] = {0, 1};  // puncture 0 (face=0, root=0), puncture 1 (face=1, root=0)
+    int p_face[] = {0, 1};
+    int p_root_idx[] = {0, 0};
+    int p_qi[] = {0, 0};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 2, 2, p_face, p_root_idx,
+                                p_qi, 0, true,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    // Should find 1 pair: between the two punctures (direct or complement)
+    ASSERT_EQ(n, 1);
+}
+
 int main() {
     std::cout << "=== content_reduce_i128 ===" << std::endl;
     test_content_reduce_basic();
@@ -1585,6 +1671,12 @@ int main() {
     test_compare_roots_equal();
     test_compare_roots_3root_cubic();
     test_compare_roots_degenerate();
+
+    std::cout << "\n=== RP1 sign helpers ===" << std::endl;
+    test_sign_at_plus_inf();
+    test_sign_at_inf();
+    test_sign_just_after_root();
+    test_rp1_pairing_basic();
 
     std::cout << "\n=== compute_tet_QP_i128 ===" << std::endl;
     test_compute_tet_QP_identity();

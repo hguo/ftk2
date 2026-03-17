@@ -91,38 +91,11 @@ struct ClassifiedCase2D {
     struct PuncturePair {
         int pi_a, pi_b;
         bool is_cross;
-        bool inf_span;    // band goes through ∞ (not direct)
-        bool cw;          // band direction: true=clockwise to ∞ on ring
+        bool contains_infinity;  // band goes through ∞ (from solver RP1 pairing)
         int interval_idx;
     };
     std::vector<PuncturePair> pairs;
 };
-
-// Sign of root root_idx of polynomial pk (degree deg). Pure integer.
-// Returns +1 (positive), -1 (negative), 0 (zero/ambiguous).
-inline int root_sign_2d(const __int128* pk, int deg, int root_idx) {
-    if (root_idx < 0) return 1;  // infinity puncture
-    if (deg == 1) {
-        __int128 prod = pk[0] * pk[1];
-        return (prod < 0) ? 1 : (prod > 0) ? -1 : 0;
-    }
-    if (deg == 2) {
-        __int128 prod_roots = pk[0] * pk[2];
-        if (prod_roots < 0)
-            return (root_idx == 0) ? -1 : 1;  // opposite signs
-        if (prod_roots > 0) {
-            __int128 sum_sign = pk[1] * pk[2];  // -sum * c²/c = -sum*c
-            return (sum_sign < 0) ? 1 : -1;     // sum>0 → both positive
-        }
-        // pk[0]==0: one root at 0
-        __int128 other = pk[1] * pk[2];  // other root > 0 iff pk[1]*pk[2] < 0
-        if (root_idx == 0)
-            return (other < 0) ? 0 : -1;  // min(0, other)
-        else
-            return (other < 0) ? 1 : 0;   // max(0, other)
-    }
-    return 0;
-}
 
 // Check if field=0 is inside triangle interior (Cv/Cw in 2D).
 // For 2D integer field F[3][2] on a triangle with vertices 0,1,2:
@@ -393,7 +366,7 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
         }
     }
 
-    // ─── Step 5: Pairs + inf_span (integer bary check at λ=0) ──────
+    // ─── Step 5: Pairs (contains_infinity from RP1 solver pairing) ──────
     {
         // zero_inside: bary at λ=0 is inside triangle (all P[k][0]*Q[0] >= 0)
         bool zero_inside = true;
@@ -414,83 +387,8 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
             int qb = v2.punctures[b].q_interval;
             bool is_cross = v2.merge_infinity && (qa != qb);
             int iv_idx = cc.punctures[a].interval_idx;
-
-            // Initial: inf_span for cross-interval and ∞-endpoint pairs
-            bool inf_span = false;
-            bool cw = false;
-            if (is_cross || v2.punctures[a].root_idx < 0 || v2.punctures[b].root_idx < 0) {
-                inf_span = true;
-                bool a_inf = (v2.punctures[a].root_idx < 0);
-                bool b_inf = (v2.punctures[b].root_idx < 0);
-                if (a_inf != b_inf && cc.n_Q_roots > 0) {
-                    // Q2+ with ∞ endpoint: use qi to stay in correct outer interval
-                    int fin = a_inf ? b : a;
-                    cw = (v2.punctures[fin].q_interval == 0);
-                } else if (a_inf != b_inf) {
-                    // Q2- with ∞ endpoint: use root sign (short way for multi-pair)
-                    int fin = a_inf ? b : a;
-                    int fs = root_sign_2d(v2.P_red[v2.punctures[fin].face],
-                                          v2.degP_red[v2.punctures[fin].face],
-                                          v2.punctures[fin].root_idx);
-                    cw = (fs < 0);
-                } else if (!a_inf && !b_inf) {
-                    // Both finite cross-interval
-                    cw = (v2.punctures[a].q_interval == 0);
-                }
-            }
-            cc.pairs.push_back({a, b, is_cross, inf_span, cw, iv_idx});
-        }
-
-        // ── Q2- post-processing: inf_span + cw + re-pairing ──
-        // Q2- inf_span/cw: use solver's RP1 pairing result.
-        // The solver tags rp1_inf_arc_pair = which pair contains +∞ arc.
-        if (v2.merge_infinity && cc.n_Q_roots == 0) {
-            for (int pi = 0; pi < (int)cc.pairs.size(); pi++) {
-                auto& p = cc.pairs[pi];
-                bool a_inf = (v2.punctures[p.pi_a].root_idx < 0);
-                bool b_inf = (v2.punctures[p.pi_b].root_idx < 0);
-                // inf_span: pair contains ∞ arc (tagged by solver),
-                // or fallback when RP1 found 0 inside arcs (TN coincident)
-                p.inf_span = (a_inf || b_inf || pi == v2.rp1_inf_arc_pair);
-                if (!p.inf_span && v2.rp1_inf_arc_pair < 0
-                    && zero_inside && cc.pairs.size() == 1)
-                    p.inf_span = true;  // TN/coincident: entire ring
-                // cw direction
-                if (p.inf_span) {
-                    if (a_inf != b_inf) {
-                        int fin_idx = a_inf ? p.pi_b : p.pi_a;
-                        int fs = root_sign_2d(v2.P_red[v2.punctures[fin_idx].face],
-                                              v2.degP_red[v2.punctures[fin_idx].face],
-                                              v2.punctures[fin_idx].root_idx);
-                        if (fs == 0) {
-                            // Root at λ=0: use derivative to determine direction.
-                            // P_red[f]'(0) = P_red[f][1]. Curve inside on right iff
-                            // P_red[f][1] * Q[0] > 0 → go right (cw=false).
-                            int face_fin = v2.punctures[fin_idx].face;
-                            __int128 deriv_Q = v2.P_red[face_fin][1] * cc.Q_i128[0];
-                            p.cw = (deriv_Q <= 0);
-                        } else {
-                            p.cw = (cc.pairs.size() > 1) ? (fs < 0) : (zero_inside != (fs < 0));
-                        }
-                    } else if (!a_inf && !b_inf) {
-                        int sa = root_sign_2d(v2.P_red[v2.punctures[p.pi_a].face],
-                                              v2.degP_red[v2.punctures[p.pi_a].face],
-                                              v2.punctures[p.pi_a].root_idx);
-                        bool both_pos = (sa > 0);
-                        p.cw = (cc.pairs.size() > 1) ? both_pos : (zero_inside == both_pos);
-                    }
-                }
-            }
-        }
-
-        // ── Verification: no overlapping inf_span bands ──
-        if (cc.n_Q_roots == 0 && v2.merge_infinity) {
-            int n_inf_total = 0;
-            for (const auto& p : cc.pairs) if (p.inf_span) n_inf_total++;
-            if (n_inf_total >= 2) {
-                fprintf(stderr, "WARNING: seed %lu has %d inf_span bands (Q2- overlap)\n",
-                        (unsigned long)cc.seed, n_inf_total);
-            }
+            bool ci = v2.pairs[i].contains_infinity;
+            cc.pairs.push_back({a, b, is_cross, ci, iv_idx});
         }
 
         // SR root indices
@@ -824,14 +722,13 @@ inline void print_json_2d(FILE* f, const ClassifiedCase2D& cc) {
     }
     fprintf(f, "]");
 
-    // Pairs (with inf_span flag)
+    // Pairs (with contains_infinity from RP1 pairing)
     fprintf(f, ",\"pairs\":[");
     for (int i = 0; i < (int)cc.pairs.size(); i++) {
         if (i > 0) fprintf(f, ",");
-        fprintf(f, "{\"a\":%d,\"b\":%d,\"inf\":%s,\"cw\":%s}",
+        fprintf(f, "{\"a\":%d,\"b\":%d,\"ci\":%s}",
                 cc.pairs[i].pi_a, cc.pairs[i].pi_b,
-                cc.pairs[i].inf_span ? "true" : "false",
-                cc.pairs[i].cw ? "true" : "false");
+                cc.pairs[i].contains_infinity ? "true" : "false");
     }
     fprintf(f, "]");
 

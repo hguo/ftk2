@@ -169,40 +169,6 @@ def _eval_sign_at_root_int(pj, pk, root_idx):
     return 0  # fallback
 
 
-def _compare_roots_int(P_red_int, fA, rA, fB, rB):
-    """Compare λ_A (root rA of P_red[fA]) with λ_B (root rB of P_red[fB]).
-    Returns +1 if λ_A > λ_B, -1 if λ_A < λ_B, 0 if equal. Pure integer."""
-    if fA == fB:
-        if rA == rB:
-            return 0
-        return -1 if rA < rB else 1
-    pkB = P_red_int[fB]
-    dB = _ipoly_deg(pkB)
-    sign_B = _eval_sign_at_root_int(pkB, P_red_int[fA], rA)
-    if sign_B == 0:
-        return 0
-    if dB == 1:
-        # Linear: monotonic. sign_B * sign(leading) gives comparison.
-        return sign_B * _isign(pkB[1])
-    if dB == 2:
-        c = pkB[2]
-        # Between roots: sign_B opposite to leading coeff c
-        if sign_B * c < 0:
-            # λ_A is between root_0 and root_1 of P_B
-            return 1 if rB == 0 else -1
-        else:
-            # λ_A is outside both roots. Use derivative to determine side.
-            # P_B'(x) = pkB[1] + 2*pkB[2]*x (linear)
-            deriv = [pkB[1], 2 * pkB[2]]
-            sign_d = _eval_sign_at_root_int(deriv, P_red_int[fA], rA)
-            if sign_d * c > 0:
-                # Right of root_1 → λ_A > root_1 ≥ root_0
-                return 1
-            else:
-                # Left of root_0 → λ_A < root_0 ≤ root_1
-                return -1
-    return 0
-
 def _ipoly_content(p, d):
     from math import gcd as igcd
     g = 0
@@ -679,20 +645,18 @@ def collect_segments(case_data):
     punctures = case_data['punctures']
     puncture_lambdas = [p.get('lambda') for p in punctures]
 
-    # Read pairs from C++ output: [{a, b, inf, cw}, ...]
+    # Read pairs from C++ output: [{a, b, ci}, ...]
     raw_pairs = case_data.get('pairs', [])
     pairs = []
-    pair_inf_span = []
-    pair_cw = []  # band direction: True=clockwise to ∞
+    pair_ci = []  # contains_infinity: True = band goes through ∞
     for p in raw_pairs:
         if isinstance(p, dict):
             pairs.append([p['a'], p['b']])
-            pair_inf_span.append(p.get('inf', False))
-            pair_cw.append(p.get('cw', False))
+            # Support both old format (inf/cw) and new format (ci)
+            pair_ci.append(p.get('ci', p.get('inf', False)))
         else:
             pairs.append(list(p))
-            pair_inf_span.append(False)
-            pair_cw.append(False)
+            pair_ci.append(False)
 
     all_subsegs = []
     for iv in intervals:
@@ -708,24 +672,22 @@ def collect_segments(case_data):
         else:
             pair_subsegs[0].append(pts)
 
-    # ── inf_span directly from C++ output ──
+    # ── contains_infinity directly from C++ RP1 pairing ──
     segments = []
     for idx, (pi1, pi2) in enumerate(pairs):
         color = SEGMENT_COLORS[idx % len(SEGMENT_COLORS)]
         l1 = punctures[pi1].get('lambda')
         l2 = punctures[pi2].get('lambda')
-        inf_span = pair_inf_span[idx] if idx < len(pair_inf_span) else False
-        cw = pair_cw[idx] if idx < len(pair_cw) else False
+        ci = pair_ci[idx] if idx < len(pair_ci) else False
 
         segments.append({
             'pts_list': pair_subsegs.get(idx, []),
             'color': color,
-            'cw': cw,
             'pi_entry': pi1,
             'pi_exit': pi2,
             'lam_entry': l1,
             'lam_exit': l2,
-            'infinity_spanning': inf_span,
+            'infinity_spanning': ci,
         })
 
     # Connect infinity-spanning sub-segments through the λ→∞ point.
@@ -1479,12 +1441,14 @@ def draw_lambda_ring(ax, case_data, segments):
 
         if seg.get('infinity_spanning', False):
             if (lam1 is None) != (lam2 is None):
-                # One endpoint at ∞: extend to opposite Q-root for Q2+
+                # One endpoint at ∞: direction from (a,b) order in RP1 pairing
                 finite_lam = lam2 if lam1 is None else lam1
                 a_finite = lambda_to_angle(finite_lam, scale)
-                if seg.get('cw', False):
+                if lam1 is None:
+                    # Entry at ∞: arc from ∞ through -∞ (bottom) to finite
                     _draw_band(a_finite, -3 * np.pi / 2, seg['color'], ri, ro)
                 else:
+                    # Exit at ∞: direct arc from finite up to ∞ (top)
                     _draw_band(a_finite, np.pi / 2, seg['color'], ri, ro)
             else:
                 # Both finite: complement arc through ∞
