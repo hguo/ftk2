@@ -439,6 +439,10 @@ def ensure_float_fields(case_data):
     case_data['Q_roots'] = Q_roots
     # Override n_Q_roots with the Q_red root count (the solver uses Q_red)
     case_data['n_Q_roots'] = n_qr
+    # Q2o: double root is tangent point, not interval boundary
+    Q_int_raw = [int(c) for c in case_data['Q']]
+    disc_Q_int = Q_int_raw[1]*Q_int_raw[1] - 4*Q_int_raw[0]*Q_int_raw[2]
+    case_data['Q_disc_zero'] = (disc_Q_int == 0 and n_qr == 1)
 
     # ── 4. P_red face roots (match C++ root_idx) ──
     face_roots = {}
@@ -1184,15 +1188,39 @@ def draw_special_points(ax, case_data, segments=None):
                 mu_num = [g1 * P_int[j][1] - 2 * P_int[j][2] * g0
                           for j in range(3)]
             elif dg == 2:
-                ga, gb = g[2], g[1]
+                ga, gb, g0 = g[2], g[1], g[0]
                 if ga == 0:
                     continue
-                # denom = 2ga·Q'(-gb/(2ga)) = 2ga·Q[1] - 2·Q[2]·gb
-                denom = 2 * ga * Q_int[1] - 2 * Q_int[2] * gb
-                if denom == 0:
+                # Quadratic gcd: evaluate L'Hôpital at specific root.
+                # Q'(λ) = Q[1]+2Q[2]λ, P'(λ) = P[j][1]+2P[j][2]λ (both linear).
+                # Evaluate these linear polys at root of g using integer
+                # eval_sign for inside check.
+                Qp_poly = [Q_int[1], 2*Q_int[2]]  # Q'(λ) as polynomial
+                denom_sign = _eval_sign_at_root_int(Qp_poly, [g0,gb,ga],
+                    0 if si == case_data.get('sr_info',[])[0] else 1)
+                # Use sr_info index to determine root_idx
+                sr_list = case_data.get('sr_info', [])
+                ri_g = 0
+                for si_idx, si_item in enumerate(sr_list):
+                    if si_item is si:
+                        ri_g = si_idx  # 0 for first root, 1 for second
+                        break
+                denom_sign = _eval_sign_at_root_int(Qp_poly, [g0,gb,ga], ri_g)
+                if denom_sign == 0:
                     continue
-                mu_num = [2 * ga * P_int[j][1] - 2 * P_int[j][2] * gb
-                          for j in range(3)]
+                inside = True
+                for j in range(3):
+                    Pp_poly = [P_int[j][1], 2*P_int[j][2]]
+                    mu_sign = _eval_sign_at_root_int(Pp_poly, [g0,gb,ga], ri_g)
+                    if mu_sign * denom_sign < 0:
+                        inside = False
+                        break
+                if not inside:
+                    continue
+                # Float position (display only)
+                Qp_val = Q_int[1] + 2*Q_int[2]*lam_float
+                mu_num = [P_int[j][1] + 2*P_int[j][2]*lam_float for j in range(3)]
+                denom = Qp_val
             else:
                 continue
 
@@ -1471,7 +1499,11 @@ def draw_lambda_ring(ax, case_data, segments):
         if abs(q_angles[ic] - q_angles[ip]) < 0.30:
             q_label_radii[ic] = 0.42 if q_label_radii[ip] >= 0.55 else 0.60
 
+    # Skip Q-root circles for Q2o (double root = tangent, not boundary)
+    q_disc_zero = case_data.get('Q_disc_zero', False)
     for i, r in enumerate(Q_roots):
+        if q_disc_zero:
+            continue  # Q2o: tangent point, not interval boundary
         a = q_angles[i]
         rx, ry = angle_to_xy(a, R_ring)
         ax.plot(rx, ry, 'o', color='white', markersize=7, zorder=8,
@@ -1516,14 +1548,32 @@ def draw_lambda_ring(ax, case_data, segments):
                 mu_num = [g1 * P_int[j][1] - 2 * P_int[j][2] * g0
                           for j in range(3)]
             elif dg == 2:
-                ga, gb = g[2], g[1]
+                # Per-root: evaluate Q'(λ) and P'(λ) at specific root
+                ga, gb, g0 = g[2], g[1], g[0]
                 if ga == 0:
                     continue
-                denom = 2 * ga * Q_int[1] - 2 * Q_int[2] * gb
-                if denom == 0:
+                sr_list = case_data.get('sr_info', [])
+                ri_g = 0
+                for si_idx, si_item in enumerate(sr_list):
+                    if si_item is si:
+                        ri_g = si_idx
+                        break
+                Qp_poly = [Q_int[1], 2*Q_int[2]]
+                denom_sign = _eval_sign_at_root_int(Qp_poly, [g0,gb,ga], ri_g)
+                if denom_sign == 0:
                     continue
-                mu_num = [2 * ga * P_int[j][1] - 2 * P_int[j][2] * gb
-                          for j in range(3)]
+                inside = True
+                for j in range(3):
+                    Pp_poly = [P_int[j][1], 2*P_int[j][2]]
+                    mu_sign = _eval_sign_at_root_int(Pp_poly, [g0,gb,ga], ri_g)
+                    if mu_sign * denom_sign < 0:
+                        inside = False; break
+                if not inside:
+                    continue
+                ring_annots.append(dict(angle=lambda_to_angle(lam_float, scale),
+                    tag=sr_ring_label, lam_str=f'$\\lambda$={lam_float:.2f}',
+                    color='#ff8800', bg='#fff4ee', marker='D', ms=9))
+                continue
             else:
                 continue
 

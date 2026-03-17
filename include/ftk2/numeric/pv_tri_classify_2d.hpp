@@ -421,158 +421,72 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
             // Initial: inf_span for cross-interval and ∞-endpoint pairs
             bool inf_span = false;
             bool cw = false;
-            if (is_cross) {
+            if (is_cross || v2.punctures[a].root_idx < 0 || v2.punctures[b].root_idx < 0) {
                 inf_span = true;
-                cw = (v2.punctures[a].q_interval == 0);
-            } else if (v2.punctures[a].root_idx < 0 || v2.punctures[b].root_idx < 0) {
-                inf_span = true;
-                // cw computed in post-processing below
+                bool a_inf = (v2.punctures[a].root_idx < 0);
+                bool b_inf = (v2.punctures[b].root_idx < 0);
+                if (a_inf != b_inf && cc.n_Q_roots > 0) {
+                    // Q2+ with ∞ endpoint: use qi to stay in correct outer interval
+                    int fin = a_inf ? b : a;
+                    cw = (v2.punctures[fin].q_interval == 0);
+                } else if (a_inf != b_inf) {
+                    // Q2- with ∞ endpoint: use root sign (short way for multi-pair)
+                    int fin = a_inf ? b : a;
+                    int fs = root_sign_2d(v2.P_red[v2.punctures[fin].face],
+                                          v2.degP_red[v2.punctures[fin].face],
+                                          v2.punctures[fin].root_idx);
+                    cw = (fs < 0);
+                } else if (!a_inf && !b_inf) {
+                    // Both finite cross-interval
+                    cw = (v2.punctures[a].q_interval == 0);
+                }
             }
             cc.pairs.push_back({a, b, is_cross, inf_span, cw, iv_idx});
         }
 
         // ── Q2- post-processing: inf_span + cw + re-pairing ──
-        if (v2.merge_infinity && cc.n_Q_roots == 0 && cc.pairs.size() >= 1) {
-            // Re-pair if ∞ puncture + D00
-            bool has_inf_punc = false, has_d00 = false, d00_at_inf = false;
-            for (int pi = 0; pi < v2.n_punctures; pi++)
-                if (v2.punctures[pi].root_idx < 0) has_inf_punc = true;
-            for (int i = 0; i < 3; i++) {
-                int64_t det = (int64_t)gpu_v2.V[i][0] * gpu_v2.W[i][1]
-                            - (int64_t)gpu_v2.V[i][1] * gpu_v2.W[i][0];
-                if (det == 0) {
-                    has_d00 = true;
-                    if (gpu_v2.W[i][0] == 0 && gpu_v2.W[i][1] == 0)
-                        d00_at_inf = true;  // Cw0: D00 at λ→∞
-                }
-            }
-            for (const auto& p : cc.punctures) if (p.is_D00) has_d00 = true;
-
-            // Re-pair when D00 blocks the wrap: ∞ puncture + D00, or D00 at ∞
-            if ((has_inf_punc || d00_at_inf) && has_d00 && cc.pairs.size() >= 2) {
-                // Sort by λ (∞ last), re-pair consecutive
-                std::vector<int> sorted_pi(v2.n_punctures);
-                for (int i = 0; i < v2.n_punctures; i++) sorted_pi[i] = i;
-                for (int i = 1; i < (int)sorted_pi.size(); i++) {
-                    int j = i;
-                    while (j > 0) {
-                        int a = sorted_pi[j-1], b = sorted_pi[j];
-                        int ra = v2.punctures[a].root_idx, rb = v2.punctures[b].root_idx;
-                        if (rb < 0) break;
-                        if (ra < 0) { std::swap(sorted_pi[j-1], sorted_pi[j]); j--; continue; }
-                        int cmp = compare_roots_i128(
-                            v2.P_red[v2.punctures[a].face], v2.degP_red[v2.punctures[a].face],
-                            v2.n_distinct_red[v2.punctures[a].face], ra,
-                            v2.P_red[v2.punctures[b].face], v2.degP_red[v2.punctures[b].face],
-                            v2.n_distinct_red[v2.punctures[b].face], rb);
-                        if (cmp <= 0) break;
-                        std::swap(sorted_pi[j-1], sorted_pi[j]); j--;
-                    }
-                }
-                cc.pairs.clear();
-                for (int i = 0; i + 1 < (int)sorted_pi.size(); i += 2) {
-                    int a = sorted_pi[i], b = sorted_pi[i+1];
-                    bool is_cross = false;
-                    bool inf_span = (v2.punctures[a].root_idx < 0 || v2.punctures[b].root_idx < 0);
-                    int iv_idx = cc.punctures[a].interval_idx;
-                    cc.pairs.push_back({a, b, is_cross, inf_span, false, iv_idx});
-                }
-            }
-
-            // Determine inf_span for all-finite pairs:
-            // - Single pair: XOR check (zero_between != zero_inside)
-            // - Multiple pairs: outermost wraps (root comparison), others direct
-            // - If ∞-endpoint pair exists, NO all-finite pair wraps
-            bool has_inf_pair = false;
-            for (const auto& p : cc.pairs)
-                if (v2.punctures[p.pi_a].root_idx < 0 || v2.punctures[p.pi_b].root_idx < 0)
-                    has_inf_pair = true;
-
-            std::vector<int> fin_pair_idx;  // indices of all-finite pairs
+        // Q2- inf_span/cw: use solver's RP1 pairing result.
+        // The solver tags rp1_inf_arc_pair = which pair contains +∞ arc.
+        if (v2.merge_infinity && cc.n_Q_roots == 0) {
             for (int pi = 0; pi < (int)cc.pairs.size(); pi++) {
                 auto& p = cc.pairs[pi];
-                if (v2.punctures[p.pi_a].root_idx < 0 || v2.punctures[p.pi_b].root_idx < 0)
-                    continue;
-                fin_pair_idx.push_back(pi);
-            }
-
-            if (!has_inf_pair && fin_pair_idx.size() == 1) {
-                // Single all-finite pair: XOR check
-                auto& p = cc.pairs[fin_pair_idx[0]];
-                int sa = root_sign_2d(v2.P_red[v2.punctures[p.pi_a].face],
-                                      v2.degP_red[v2.punctures[p.pi_a].face],
-                                      v2.punctures[p.pi_a].root_idx);
-                int sb = root_sign_2d(v2.P_red[v2.punctures[p.pi_b].face],
-                                      v2.degP_red[v2.punctures[p.pi_b].face],
-                                      v2.punctures[p.pi_b].root_idx);
-                bool zero_between = (sa * sb < 0);
-                p.inf_span = (zero_between != zero_inside);
-            } else if (!has_inf_pair && fin_pair_idx.size() >= 2) {
-                // Multiple all-finite pairs: outermost wraps
-                for (int pi : fin_pair_idx) {
-                    auto& p = cc.pairs[pi];
-                    int pa = p.pi_a, pb = p.pi_b;
-                    int fA = v2.punctures[pa].face, rA = v2.punctures[pa].root_idx;
-                    int fB = v2.punctures[pb].face, rB = v2.punctures[pb].root_idx;
-                    bool all_between = true;
-                    for (int pj = 0; pj < v2.n_punctures; pj++) {
-                        if (pj == pa || pj == pb) continue;
-                        if (v2.punctures[pj].root_idx < 0) continue;
-                        int fC = v2.punctures[pj].face, rC = v2.punctures[pj].root_idx;
-                        int cmpCA = compare_roots_i128(
-                            v2.P_red[fC], v2.degP_red[fC], v2.n_distinct_red[fC], rC,
-                            v2.P_red[fA], v2.degP_red[fA], v2.n_distinct_red[fA], rA);
-                        int cmpCB = compare_roots_i128(
-                            v2.P_red[fC], v2.degP_red[fC], v2.n_distinct_red[fC], rC,
-                            v2.P_red[fB], v2.degP_red[fB], v2.n_distinct_red[fB], rB);
-                        if (cmpCA * cmpCB > 0) { all_between = false; break; }
-                    }
-                    if (all_between) { p.inf_span = true; break; }
-                }
-            }
-            // has_inf_pair: all-finite pairs stay inf_span=false (no overlap with ∞ pair)
-
-            // Compute cw for all inf_span pairs
-            for (auto& p : cc.pairs) {
-                if (!p.inf_span) continue;
                 bool a_inf = (v2.punctures[p.pi_a].root_idx < 0);
                 bool b_inf = (v2.punctures[p.pi_b].root_idx < 0);
-                if (a_inf != b_inf) {
-                    int fin_idx = a_inf ? p.pi_b : p.pi_a;
-                    int fs = root_sign_2d(v2.P_red[v2.punctures[fin_idx].face],
-                                          v2.degP_red[v2.punctures[fin_idx].face],
-                                          v2.punctures[fin_idx].root_idx);
-                    if (cc.pairs.size() > 1) {
-                        // Multi-pair: SHORT arc to avoid overlapping others
-                        p.cw = (fs < 0);  // negative λ → clockwise
-                    } else {
-                        // Single pair: go through λ=0 if zero_inside
-                        p.cw = (zero_inside != (fs < 0));
-                    }
-                } else if (a_inf && b_inf) {
-                    // Both ∞: bubble
-                } else {
-                    // All-finite inf_span: complement arc
-                    int sa = root_sign_2d(v2.P_red[v2.punctures[p.pi_a].face],
-                                          v2.degP_red[v2.punctures[p.pi_a].face],
-                                          v2.punctures[p.pi_a].root_idx);
-                    int sb = root_sign_2d(v2.P_red[v2.punctures[p.pi_b].face],
-                                          v2.degP_red[v2.punctures[p.pi_b].face],
-                                          v2.punctures[p.pi_b].root_idx);
-                    bool both_pos = (sa > 0 && sb > 0);
-                    if (cc.pairs.size() > 1) {
-                        // Multi-pair: complement goes opposite to direct
-                        // both positive → complement through negative → cw=true
-                        p.cw = both_pos;
-                    } else {
-                        p.cw = (zero_inside == both_pos);
+                // inf_span: pair contains ∞ arc (tagged by solver),
+                // or fallback when RP1 found 0 inside arcs (TN coincident)
+                p.inf_span = (a_inf || b_inf || pi == v2.rp1_inf_arc_pair);
+                if (!p.inf_span && v2.rp1_inf_arc_pair < 0
+                    && zero_inside && cc.pairs.size() == 1)
+                    p.inf_span = true;  // TN/coincident: entire ring
+                // cw direction
+                if (p.inf_span) {
+                    if (a_inf != b_inf) {
+                        int fin_idx = a_inf ? p.pi_b : p.pi_a;
+                        int fs = root_sign_2d(v2.P_red[v2.punctures[fin_idx].face],
+                                              v2.degP_red[v2.punctures[fin_idx].face],
+                                              v2.punctures[fin_idx].root_idx);
+                        if (fs == 0) {
+                            // Root at λ=0: use derivative to determine direction.
+                            // P_red[f]'(0) = P_red[f][1]. Curve inside on right iff
+                            // P_red[f][1] * Q[0] > 0 → go right (cw=false).
+                            int face_fin = v2.punctures[fin_idx].face;
+                            __int128 deriv_Q = v2.P_red[face_fin][1] * cc.Q_i128[0];
+                            p.cw = (deriv_Q <= 0);
+                        } else {
+                            p.cw = (cc.pairs.size() > 1) ? (fs < 0) : (zero_inside != (fs < 0));
+                        }
+                    } else if (!a_inf && !b_inf) {
+                        int sa = root_sign_2d(v2.P_red[v2.punctures[p.pi_a].face],
+                                              v2.degP_red[v2.punctures[p.pi_a].face],
+                                              v2.punctures[p.pi_a].root_idx);
+                        bool both_pos = (sa > 0);
+                        p.cw = (cc.pairs.size() > 1) ? both_pos : (zero_inside == both_pos);
                     }
                 }
             }
         }
 
         // ── Verification: no overlapping inf_span bands ──
-        // Count total inf_span. For Q2- (no Q roots): at most 1 inf_span total.
         if (cc.n_Q_roots == 0 && v2.merge_infinity) {
             int n_inf_total = 0;
             for (const auto& p : cc.pairs) if (p.inf_span) n_inf_total++;

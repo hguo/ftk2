@@ -4727,6 +4727,7 @@ struct ExactPV2Result2D {
 
     int n_pairs = 0;
     struct Pair { int a, b; } pairs[MAX_PAIRS];
+    int rp1_inf_arc_pair = -1;  // which pair contains +∞ arc (Q2- RP1 pairing)
 
     bool has_passthrough = false;
     int passthrough_deg = 0;
@@ -4753,6 +4754,58 @@ struct ExactPV2Result2D {
 //   - P'' is constant (= 2·P[k][2])
 //
 // All steps follow the 3D solver exactly, with degree bounds reduced.
+
+// Sign of A + Bs*sqrt(D), all __int128, D >= 0. Pure integer.
+FTK_HOST_DEVICE inline int sign_A_Bs_sqrtD(__int128 A, __int128 Bs, __int128 D) {
+    if (Bs == 0) return (A > 0) ? 1 : (A < 0) ? -1 : 0;
+    if (D <= 0) return (A > 0) ? 1 : (A < 0) ? -1 : 0;
+    if (Bs > 0) {
+        if (A >= 0) return 1;
+        return (Bs * Bs * D > A * A) ? 1 : (Bs * Bs * D < A * A) ? -1 : 0;
+    } else {
+        if (A <= 0) return -1;
+        return (A * A > Bs * Bs * D) ? 1 : (A * A < Bs * Bs * D) ? -1 : 0;
+    }
+}
+
+// Sign of polynomial pj (degree dj) evaluated at root ri of polynomial pk (degree dk).
+// Both have __int128 coefficients, degree <= 2. Pure integer arithmetic.
+FTK_HOST_DEVICE inline int eval_sign_at_root_2d(
+    const __int128* pj, int dj, const __int128* pk, int dk, int ri)
+{
+    if (dj == 0) return (pj[0] > 0) ? 1 : (pj[0] < 0) ? -1 : 0;
+    if (dk == 1) {
+        __int128 a = pk[0], b = pk[1];
+        // root = -a/b. Evaluate pj(-a/b) * b^dj.
+        if (dj == 1) {
+            __int128 val = pj[0] * b - pj[1] * a;
+            // pj(root) = val / b. sign = sign(val * b) since 1/b has sign(b)
+            __int128 prod = val * b;
+            return (prod > 0) ? 1 : (prod < 0) ? -1 : 0;
+        }
+        // dj == 2: pj(root)*b^2 = pj[0]*b^2 - pj[1]*a*b + pj[2]*a^2
+        __int128 val = pj[0]*b*b - pj[1]*a*b + pj[2]*a*a;
+        return (val > 0) ? 1 : (val < 0) ? -1 : 0;
+    }
+    if (dk == 2) {
+        __int128 a = pk[0], b = pk[1], c = pk[2];
+        __int128 D = b*b - (__int128)4*a*c;
+        int s = (ri == 0) ? -1 : 1;
+        if (dj == 1) {
+            __int128 A = (__int128)2*c*pj[0] - b*pj[1];
+            __int128 Bs = pj[1] * s;
+            int sc = (c > 0) ? 1 : -1;
+            return sign_A_Bs_sqrtD(A, Bs, D) * sc;
+        }
+        // dj == 2: pj(root)*4c^2 = A + B*s*sqrt(D)
+        __int128 d = pj[0], e = pj[1], f = pj[2];
+        __int128 A = (__int128)4*c*c*d - (__int128)2*b*c*e
+                   + (__int128)2*f*b*b - (__int128)4*a*c*f;
+        __int128 B = (__int128)2*(c*e - b*f);
+        return sign_A_Bs_sqrtD(A, B * s, D);
+    }
+    return 0;
+}
 
 FTK_HOST_DEVICE inline ExactPV2Result2D solve_pv_tri_2d(
     const __int128 Q_raw[3], const __int128 P_raw[3][3])
@@ -5297,12 +5350,89 @@ FTK_HOST_DEVICE inline ExactPV2Result2D solve_pv_tri_2d(
         int group[8];
         int ng = 0;
         if (merge_infinity && qi == 0 && n_qr_roots > 0) {
+            // Q2+ merge: outer intervals merge
             for (int i = 0; i < result.n_punctures; i++)
                 if (result.punctures[i].q_interval == n_qr_roots)
                     group[ng++] = i;
             for (int i = 0; i < result.n_punctures; i++)
                 if (result.punctures[i].q_interval == 0)
                     group[ng++] = i;
+        } else if (merge_infinity && qi == 0 && n_qr_roots == 0
+                   && result.n_punctures >= 2) {
+            // Q2- with >2 punctures: RP1 sign evaluation pairing.
+            // Sort by λ, evaluate P_red signs at each puncture root.
+            int sorted_rp1[8];
+            int ns_rp1 = 0, ns_fin = 0;
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].root_idx >= 0)
+                    sorted_rp1[ns_rp1++] = i;
+            ns_fin = ns_rp1;
+            for (int i = 1; i < ns_fin; i++) {
+                int j = i;
+                while (j > 0) {
+                    int a = sorted_rp1[j-1], b = sorted_rp1[j];
+                    int cmp = compare_roots_i128(
+                        P[result.punctures[a].face], degP[result.punctures[a].face],
+                        n_distinct[result.punctures[a].face], result.punctures[a].root_idx,
+                        P[result.punctures[b].face], degP[result.punctures[b].face],
+                        n_distinct[result.punctures[b].face], result.punctures[b].root_idx);
+                    if (cmp <= 0) break;
+                    int tmp = sorted_rp1[j-1]; sorted_rp1[j-1] = sorted_rp1[j]; sorted_rp1[j] = tmp;
+                    j--;
+                }
+            }
+            for (int i = 0; i < result.n_punctures; i++)
+                if (result.punctures[i].root_idx < 0)
+                    sorted_rp1[ns_rp1++] = i;
+
+            int sign_Q = (Q_red[degQ_red] > 0) ? 1 : -1;
+            for (int ai = 0; ai < ns_rp1; ai++) {
+                int pi = sorted_rp1[ai];
+                int fi = result.punctures[pi].face;
+                int ri = result.punctures[pi].root_idx;
+                int sign_k[3];
+                bool ok = true;
+                if (ri < 0) {
+                    // ∞ puncture: signs at -∞
+                    for (int k = 0; k < 3 && ok; k++) {
+                        int lc = (degP[k] >= 1) ?
+                            ((P[k][degP[k]] > 0) ? 1 : -1) : 0;
+                        sign_k[k] = (degP[k] % 2 == 1) ? -lc : lc;
+                        if (sign_k[k] * sign_Q < 0) ok = false;
+                    }
+                } else {
+                    for (int k = 0; k < 3 && ok; k++) {
+                        if (k == fi) {
+                            // Sign just AFTER root ri of P_red[fi]
+                            if (degP[fi] == 1)
+                                sign_k[k] = (P[fi][1] > 0) ? 1 : -1;
+                            else
+                                sign_k[k] = (ri == 0) ?
+                                    -((P[fi][2] > 0) ? 1 : -1) :
+                                     ((P[fi][2] > 0) ? 1 : -1);
+                        } else {
+                            sign_k[k] = eval_sign_at_root_2d(
+                                P[k], degP[k], P[fi], degP[fi], ri);
+                        }
+                        if (sign_k[k] * sign_Q < 0) ok = false;
+                    }
+                }
+                if (ok) {
+                    // Tag: does this arc contain +∞?
+                    bool has_inf_punc_rp1 = (ns_rp1 > ns_fin);
+                    int inf_arc_idx = has_inf_punc_rp1 ? (ns_fin - 1) : (ns_rp1 - 1);
+                    if (ai == inf_arc_idx)
+                        result.rp1_inf_arc_pair = result.n_pairs + ng / 2;
+                    group[ng++] = sorted_rp1[ai];
+                    group[ng++] = sorted_rp1[(ai + 1) % ns_rp1];
+                }
+            }
+            // Fallback: if RP1 sign eval found 0 inside arcs (e.g., TN
+            // duplicates at same position), pair consecutive.
+            if (ng == 0 && result.n_punctures >= 2) {
+                for (int i = 0; i < ns_rp1; i++)
+                    group[ng++] = sorted_rp1[i];
+            }
         } else {
             for (int i = 0; i < result.n_punctures; i++)
                 if (result.punctures[i].q_interval == qi)
