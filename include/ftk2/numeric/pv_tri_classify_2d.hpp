@@ -66,6 +66,7 @@ struct ClassifiedCase2D {
     bool has_B;
     bool has_vertex_d00;  // det(V[i],W[i])=0 at any vertex
     int d11_edge;   // edge with D11 degeneracy (-1 if none)
+    bool has_d22_lam;     // all 3 vertices PV at same λ (lam_compat)
 
     struct PunctureInfo {
         int face;
@@ -177,6 +178,7 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
     cc.has_B = false;
     cc.has_vertex_d00 = false;
     cc.d11_edge = -1;
+    cc.has_d22_lam = false;
     cc.has_Cv = false;
     cc.has_Cw = false;
     cc.Cv_type = -1;
@@ -423,12 +425,52 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
     }
 
     // ─── Step 6: D11 detection (PV curve on edge) ────────────────────
+    // Method 1: P[k]≡0 (barycentric polynomial identically zero)
     for (int k = 0; k < 3; k++) {
         if (cc.P_i128[k][0] == 0 && cc.P_i128[k][1] == 0 && cc.P_i128[k][2] == 0) {
             cc.d11_edge = k;
             break;
         }
     }
+
+    // Method 2: lam_compat — two vertices PV at same λ
+    // In 2D, vertex i is PV when det(V[i], W[i]) = 0 (V[i] ∥ W[i])
+    struct PVVertInfo2D { bool is_pv, any_lambda; int64_t lam_num, lam_den; };
+    PVVertInfo2D pv_vi[3];
+    for (int i = 0; i < 3; i++) {
+        pv_vi[i] = {false, false, 0, 1};
+        int64_t det = (int64_t)gpu_v2.V[i][0] * gpu_v2.W[i][1]
+                    - (int64_t)gpu_v2.V[i][1] * gpu_v2.W[i][0];
+        if (det != 0) continue;
+        pv_vi[i].is_pv = true;
+        bool v_zero = (gpu_v2.V[i][0]==0 && gpu_v2.V[i][1]==0);
+        bool w_zero = (gpu_v2.W[i][0]==0 && gpu_v2.W[i][1]==0);
+        if (v_zero && w_zero) pv_vi[i].any_lambda = true;
+        else if (v_zero) { pv_vi[i].lam_num = 0; pv_vi[i].lam_den = 1; }
+        else if (w_zero) { pv_vi[i].lam_num = 1; pv_vi[i].lam_den = 0; }
+        else {
+            for (int c = 0; c < 2; c++)
+                if (gpu_v2.W[i][c] != 0) {
+                    pv_vi[i].lam_num = -gpu_v2.V[i][c];
+                    pv_vi[i].lam_den = gpu_v2.W[i][c];
+                    break;
+                }
+        }
+    }
+    auto lam_compat_2d = [&](int a, int b) -> bool {
+        if (!pv_vi[a].is_pv || !pv_vi[b].is_pv) return false;
+        if (pv_vi[a].any_lambda || pv_vi[b].any_lambda) return true;
+        return pv_vi[a].lam_num * pv_vi[b].lam_den
+            == pv_vi[b].lam_num * pv_vi[a].lam_den;
+    };
+    // edges: e0=(1,2) opp v0, e1=(0,2) opp v1, e2=(0,1) opp v2
+    static const int te2d[3][2] = {{1,2},{0,2},{0,1}};
+    if (cc.d11_edge < 0) {
+        for (int e = 0; e < 3; e++)
+            if (lam_compat_2d(te2d[e][0], te2d[e][1])) { cc.d11_edge = e; break; }
+    }
+    // D22: all 3 vertices PV at same λ
+    cc.has_d22_lam = lam_compat_2d(0,1) && lam_compat_2d(1,2);
 
     // ─── Step 7: D00 detection (vertex puncture + vertex det=0) ──────
     for (int pi = 0; pi < (int)cc.punctures.size(); pi++) {
@@ -634,13 +676,17 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
     // D11 (PV curve on edge)
     if (cc.d11_edge >= 0) cat += "_D11";
 
-    // D22 (entire triangle is PV: Q≡0 and all P≡0)
-    if (q_type == "Qz") {
-        bool all_p_zero = true;
-        for (int k = 0; k < 3; k++)
-            if (cc.P_i128[k][0] != 0 || cc.P_i128[k][1] != 0 || cc.P_i128[k][2] != 0)
-                all_p_zero = false;
-        if (all_p_zero) cat += "_D22";
+    // D22 (PV surface on triangle: all vertices PV at same λ, or Q≡0+all P≡0)
+    {
+        bool d22 = cc.has_d22_lam;
+        if (!d22 && q_type == "Qz") {
+            bool all_p_zero = true;
+            for (int k = 0; k < 3; k++)
+                if (cc.P_i128[k][0] != 0 || cc.P_i128[k][1] != 0 || cc.P_i128[k][2] != 0)
+                    all_p_zero = false;
+            d22 = all_p_zero;
+        }
+        if (d22) cat += "_D22";
     }
 
     if (cc.has_B) cat += "_B";

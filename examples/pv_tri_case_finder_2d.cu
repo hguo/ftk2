@@ -188,6 +188,7 @@ int main(int argc, char** argv)
     int max_cases = 100000;
     int batch_size = 10000000;
     const char* seeds_arg = nullptr;
+    const char* vw_file = nullptr;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--min-punctures") == 0 && i + 1 < argc)
@@ -200,6 +201,8 @@ int main(int argc, char** argv)
             base_seed = (uint64_t)atoll(argv[++i]);
         else if (strcmp(argv[i], "--seeds") == 0 && i + 1 < argc)
             seeds_arg = argv[++i];
+        else if (strcmp(argv[i], "--vw-file") == 0 && i + 1 < argc)
+            vw_file = argv[++i];
         else if (strcmp(argv[i], "--max-cases") == 0 && i + 1 < argc)
             max_cases = atoi(argv[++i]);
         else if (strcmp(argv[i], "--batch-size") == 0 && i + 1 < argc)
@@ -211,10 +214,60 @@ int main(int argc, char** argv)
             fprintf(stderr, "  --range R           Integer field range [-R, R] (default: 20)\n");
             fprintf(stderr, "  --seed S            Base random seed (default: 42)\n");
             fprintf(stderr, "  --seeds S1,S2,...   Replay specific seeds on CPU\n");
+            fprintf(stderr, "  --vw-file FILE      Read V,W pairs from file (12 ints per line)\n");
             fprintf(stderr, "  --max-cases C       Max output cases (default: 100000)\n");
             fprintf(stderr, "  --batch-size B      GPU batch size (default: 10M)\n");
             return 0;
         }
+    }
+
+    // ─── VW-file mode: CPU-only, read V,W pairs from file ─────────────
+    if (vw_file) {
+        FILE* fp = fopen(vw_file, "r");
+        if (!fp) { fprintf(stderr, "Cannot open %s\n", vw_file); return 1; }
+        fprintf(stderr, "VW-file mode: reading from %s\n", vw_file);
+        int line_num = 0;
+        char linebuf[1024];
+        while (fgets(linebuf, sizeof(linebuf), fp)) {
+            line_num++;
+            TriCaseV2GPU tv2;
+            memset(&tv2, 0, sizeof(tv2));
+            int vals[13];
+            int n = sscanf(linebuf, "%d %d %d %d %d %d %d %d %d %d %d %d %d",
+                &vals[0],&vals[1],&vals[2],&vals[3],&vals[4],&vals[5],
+                &vals[6],&vals[7],&vals[8],&vals[9],&vals[10],&vals[11],
+                &vals[12]);
+            int vw_offset = 0;
+            if (n == 13) { tv2.seed = vals[0]; vw_offset = 1; }
+            else if (n == 12) { tv2.seed = line_num; vw_offset = 0; }
+            else continue;
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 2; j++) {
+                    tv2.V[i][j] = vals[vw_offset+i*2+j];
+                    tv2.W[i][j] = vals[vw_offset+6+i*2+j];
+                }
+            __int128 V128[3][2], W128[3][2];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 2; j++) {
+                    V128[i][j] = (__int128)tv2.V[i][j];
+                    W128[i][j] = (__int128)tv2.W[i][j];
+                }
+            __int128 Q[3], P[3][3];
+            compute_tri_QP_2d(V128, W128, Q, P);
+            tv2.v2 = solve_pv_tri_2d(Q, P);
+            for (int k = 0; k < 3; k++) {
+                int dk = effective_degree_i128(P[k], 2);
+                __int128 disc = (dk == 2) ? P[k][1]*P[k][1] - (__int128)4*P[k][0]*P[k][2] : 0;
+                tv2.disc_sign[k] = (disc > 0) ? 1 : (disc < 0) ? -1 : 0;
+            }
+            ClassifiedCase2D cc = classify_case_v2_2d(tv2);
+            fprintf(stderr, "  line %d: %s (%d punctures)\n",
+                    line_num, cc.category.c_str(), (int)cc.punctures.size());
+            print_json_2d(stdout, cc);
+        }
+        fclose(fp);
+        fprintf(stderr, "Done. %d lines\n", line_num);
+        return 0;
     }
 
     // ─── Seeds mode ─────────────────────────────────────────────────────

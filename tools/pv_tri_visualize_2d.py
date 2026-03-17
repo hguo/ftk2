@@ -108,7 +108,7 @@ def _isign(x):
 
 def _sign_A_plus_Bs_sqrtD(A, Bs, D):
     """Sign of A + Bs*sqrt(D), all integers, D >= 0. Pure integer."""
-    if Bs == 0:
+    if D == 0 or Bs == 0:
         return _isign(A)
     if Bs > 0:
         if A >= 0:
