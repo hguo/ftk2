@@ -1630,3967 +1630,2415 @@ int main() {
     return failed_tests > 0 ? 1 : 0;
 }
 // 179 2D PV classification regression tests
-// 180 2D PV classification regression tests
+// 172 2D PV classification regression tests
 static void test_classify_2d_cases() {
-    std::cout << "Testing 180 2D cases..." << std::endl;
+    std::cout << "Testing 172 2D cases..." << std::endl;
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 78187;
-        gpu.V[0][0]=6; gpu.V[0][1]=14;
-        gpu.W[0][0]=0; gpu.W[0][1]=-12;
-        gpu.V[1][0]=16; gpu.V[1][1]=3;
-        gpu.W[1][0]=3; gpu.W[1][1]=-18;
-        gpu.V[2][0]=14; gpu.V[2][1]=-8;
-        gpu.W[2][0]=-2; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 78187;
+        gpu.V[0][0]=6; gpu.V[0][1]=14; gpu.W[0][0]=0; gpu.W[0][1]=-12;
+        gpu.V[1][0]=16; gpu.V[1][1]=3; gpu.W[1][0]=3; gpu.W[1][1]=-18;
+        gpu.V[2][0]=14; gpu.V[2][1]=-8; gpu.W[2][0]=-2; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q0");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q0");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 4574;
-        gpu.V[0][0]=-3; gpu.V[0][1]=9;
-        gpu.W[0][0]=-20; gpu.W[0][1]=-12;
-        gpu.V[1][0]=-7; gpu.V[1][1]=-12;
-        gpu.W[1][0]=16; gpu.W[1][1]=-14;
-        gpu.V[2][0]=-2; gpu.V[2][1]=0;
-        gpu.W[2][0]=16; gpu.W[2][1]=-14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 4574;
+        gpu.V[0][0]=-3; gpu.V[0][1]=9; gpu.W[0][0]=-20; gpu.W[0][1]=-12;
+        gpu.V[1][0]=-7; gpu.V[1][1]=-12; gpu.W[1][0]=16; gpu.W[1][1]=-14;
+        gpu.V[2][0]=-2; gpu.V[2][1]=0; gpu.W[2][0]=16; gpu.W[2][1]=-14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 64902;
-        gpu.V[0][0]=11; gpu.V[0][1]=20;
-        gpu.W[0][0]=0; gpu.W[0][1]=15;
-        gpu.V[1][0]=19; gpu.V[1][1]=-10;
-        gpu.W[1][0]=12; gpu.W[1][1]=15;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=-3; gpu.W[2][1]=15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 64902;
+        gpu.V[0][0]=11; gpu.V[0][1]=20; gpu.W[0][0]=0; gpu.W[0][1]=15;
+        gpu.V[1][0]=19; gpu.V[1][1]=-10; gpu.W[1][0]=12; gpu.W[1][1]=15;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=-3; gpu.W[2][1]=15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q1_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q1_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6073;
-        gpu.V[0][0]=4; gpu.V[0][1]=18;
-        gpu.W[0][0]=1; gpu.W[0][1]=17;
-        gpu.V[1][0]=18; gpu.V[1][1]=-18;
-        gpu.W[1][0]=-11; gpu.W[1][1]=11;
-        gpu.V[2][0]=3; gpu.V[2][1]=14;
-        gpu.W[2][0]=-5; gpu.W[2][1]=14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6073;
+        gpu.V[0][0]=4; gpu.V[0][1]=18; gpu.W[0][0]=1; gpu.W[0][1]=17;
+        gpu.V[1][0]=18; gpu.V[1][1]=-18; gpu.W[1][0]=-11; gpu.W[1][1]=11;
+        gpu.V[2][0]=3; gpu.V[2][1]=14; gpu.W[2][0]=-5; gpu.W[2][1]=14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6985;
-        gpu.V[0][0]=10; gpu.V[0][1]=13;
-        gpu.W[0][0]=-1; gpu.W[0][1]=-3;
-        gpu.V[1][0]=-16; gpu.V[1][1]=8;
-        gpu.W[1][0]=8; gpu.W[1][1]=12;
-        gpu.V[2][0]=-3; gpu.V[2][1]=12;
-        gpu.W[2][0]=3; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8744;
+        gpu.V[0][0]=10; gpu.V[0][1]=14; gpu.W[0][0]=-16; gpu.W[0][1]=-13;
+        gpu.V[1][0]=-13; gpu.V[1][1]=19; gpu.W[1][0]=6; gpu.W[1][1]=-11;
+        gpu.V[2][0]=-6; gpu.V[2][1]=9; gpu.W[2][0]=-4; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 18751;
-        gpu.V[0][0]=14; gpu.V[0][1]=-20;
-        gpu.W[0][0]=-16; gpu.W[0][1]=7;
-        gpu.V[1][0]=14; gpu.V[1][1]=11;
-        gpu.W[1][0]=11; gpu.W[1][1]=-13;
-        gpu.V[2][0]=14; gpu.V[2][1]=9;
-        gpu.W[2][0]=20; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 18751;
+        gpu.V[0][0]=14; gpu.V[0][1]=-20; gpu.W[0][0]=-16; gpu.W[0][1]=7;
+        gpu.V[1][0]=14; gpu.V[1][1]=11; gpu.W[1][0]=11; gpu.W[1][1]=-13;
+        gpu.V[2][0]=14; gpu.V[2][1]=9; gpu.W[2][0]=20; gpu.W[2][1]=-9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9366;
-        gpu.V[0][0]=1; gpu.V[0][1]=16;
-        gpu.W[0][0]=-14; gpu.W[0][1]=1;
-        gpu.V[1][0]=0; gpu.V[1][1]=0;
-        gpu.W[1][0]=-20; gpu.W[1][1]=-9;
-        gpu.V[2][0]=-6; gpu.V[2][1]=16;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9366;
+        gpu.V[0][0]=1; gpu.V[0][1]=16; gpu.W[0][0]=-14; gpu.W[0][1]=1;
+        gpu.V[1][0]=0; gpu.V[1][1]=0; gpu.W[1][0]=-20; gpu.W[1][1]=-9;
+        gpu.V[2][0]=-6; gpu.V[2][1]=16; gpu.W[2][0]=-7; gpu.W[2][1]=-2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 14496;
-        gpu.V[0][0]=-1; gpu.V[0][1]=19;
-        gpu.W[0][0]=19; gpu.W[0][1]=-8;
-        gpu.V[1][0]=10; gpu.V[1][1]=-13;
-        gpu.W[1][0]=9; gpu.W[1][1]=-12;
-        gpu.V[2][0]=8; gpu.V[2][1]=12;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 14496;
+        gpu.V[0][0]=-1; gpu.V[0][1]=19; gpu.W[0][0]=19; gpu.W[0][1]=-8;
+        gpu.V[1][0]=10; gpu.V[1][1]=-13; gpu.W[1][0]=9; gpu.W[1][1]=-12;
+        gpu.V[2][0]=8; gpu.V[2][1]=12; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11810;
-        gpu.V[0][0]=-12; gpu.V[0][1]=3;
-        gpu.W[0][0]=4; gpu.W[0][1]=-18;
-        gpu.V[1][0]=-3; gpu.V[1][1]=-4;
-        gpu.W[1][0]=-3; gpu.W[1][1]=-4;
-        gpu.V[2][0]=-8; gpu.V[2][1]=-7;
-        gpu.W[2][0]=-11; gpu.W[2][1]=-19;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11810;
+        gpu.V[0][0]=-12; gpu.V[0][1]=3; gpu.W[0][0]=4; gpu.W[0][1]=-18;
+        gpu.V[1][0]=-3; gpu.V[1][1]=-4; gpu.W[1][0]=-3; gpu.W[1][1]=-4;
+        gpu.V[2][0]=-8; gpu.V[2][1]=-7; gpu.W[2][0]=-11; gpu.W[2][1]=-19;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 25644;
-        gpu.V[0][0]=-4; gpu.V[0][1]=6;
-        gpu.W[0][0]=-4; gpu.W[0][1]=4;
-        gpu.V[1][0]=14; gpu.V[1][1]=-16;
-        gpu.W[1][0]=12; gpu.W[1][1]=6;
-        gpu.V[2][0]=-20; gpu.V[2][1]=20;
-        gpu.W[2][0]=-16; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 25644;
+        gpu.V[0][0]=-4; gpu.V[0][1]=6; gpu.W[0][0]=-4; gpu.W[0][1]=4;
+        gpu.V[1][0]=14; gpu.V[1][1]=-16; gpu.W[1][0]=12; gpu.W[1][1]=6;
+        gpu.V[2][0]=-20; gpu.V[2][1]=20; gpu.W[2][0]=-16; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_ISR_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_ISR_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 545;
-        gpu.V[0][0]=9; gpu.V[0][1]=-12;
-        gpu.W[0][0]=0; gpu.W[0][1]=-8;
-        gpu.V[1][0]=6; gpu.V[1][1]=-12;
-        gpu.W[1][0]=-15; gpu.W[1][1]=-8;
-        gpu.V[2][0]=10; gpu.V[2][1]=14;
-        gpu.W[2][0]=13; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 545;
+        gpu.V[0][0]=9; gpu.V[0][1]=-12; gpu.W[0][0]=0; gpu.W[0][1]=-8;
+        gpu.V[1][0]=6; gpu.V[1][1]=-12; gpu.W[1][0]=-15; gpu.W[1][1]=-8;
+        gpu.V[2][0]=10; gpu.V[2][1]=14; gpu.W[2][0]=13; gpu.W[2][1]=-17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_SR");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_SR");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 56002;
-        gpu.V[0][0]=-12; gpu.V[0][1]=-19;
-        gpu.W[0][0]=13; gpu.W[0][1]=0;
-        gpu.V[1][0]=-9; gpu.V[1][1]=0;
-        gpu.W[1][0]=0; gpu.W[1][1]=-3;
-        gpu.V[2][0]=-12; gpu.V[2][1]=-19;
-        gpu.W[2][0]=-4; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 56002;
+        gpu.V[0][0]=-12; gpu.V[0][1]=-19; gpu.W[0][0]=13; gpu.W[0][1]=0;
+        gpu.V[1][0]=-9; gpu.V[1][1]=0; gpu.W[1][0]=0; gpu.W[1][1]=-3;
+        gpu.V[2][0]=-12; gpu.V[2][1]=-19; gpu.W[2][0]=-4; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_SR_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_SR_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 35894;
-        gpu.V[0][0]=-14; gpu.V[0][1]=-3;
-        gpu.W[0][0]=5; gpu.W[0][1]=7;
-        gpu.V[1][0]=11; gpu.V[1][1]=0;
-        gpu.W[1][0]=-7; gpu.W[1][1]=0;
-        gpu.V[2][0]=-6; gpu.V[2][1]=-3;
-        gpu.W[2][0]=3; gpu.W[2][1]=7;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 35894;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-3; gpu.W[0][0]=5; gpu.W[0][1]=7;
+        gpu.V[1][0]=11; gpu.V[1][1]=0; gpu.W[1][0]=-7; gpu.W[1][1]=0;
+        gpu.V[2][0]=-6; gpu.V[2][1]=-3; gpu.W[2][0]=3; gpu.W[2][1]=7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_SR_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_SR_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 31432;
-        gpu.V[0][0]=2; gpu.V[0][1]=7;
-        gpu.W[0][0]=-2; gpu.W[0][1]=-1;
-        gpu.V[1][0]=20; gpu.V[1][1]=2;
-        gpu.W[1][0]=-10; gpu.W[1][1]=9;
-        gpu.V[2][0]=6; gpu.V[2][1]=7;
-        gpu.W[2][0]=-8; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 31432;
+        gpu.V[0][0]=2; gpu.V[0][1]=7; gpu.W[0][0]=-2; gpu.W[0][1]=-1;
+        gpu.V[1][0]=20; gpu.V[1][1]=2; gpu.W[1][0]=-10; gpu.W[1][1]=9;
+        gpu.V[2][0]=6; gpu.V[2][1]=7; gpu.W[2][0]=-8; gpu.W[2][1]=-9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_TN");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2+_TN");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7002;
-        gpu.V[0][0]=13; gpu.V[0][1]=-5;
-        gpu.W[0][0]=13; gpu.W[0][1]=-14;
-        gpu.V[1][0]=-8; gpu.V[1][1]=-6;
-        gpu.W[1][0]=-20; gpu.W[1][1]=5;
-        gpu.V[2][0]=15; gpu.V[2][1]=-20;
-        gpu.W[2][0]=-20; gpu.W[2][1]=-18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8751;
+        gpu.V[0][0]=-18; gpu.V[0][1]=0; gpu.W[0][0]=-4; gpu.W[0][1]=-19;
+        gpu.V[1][0]=-19; gpu.V[1][1]=-18; gpu.W[1][0]=9; gpu.W[1][1]=-18;
+        gpu.V[2][0]=2; gpu.V[2][1]=-11; gpu.W[2][0]=10; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2-");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2-");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 20538;
-        gpu.V[0][0]=0; gpu.V[0][1]=0;
-        gpu.W[0][0]=-6; gpu.W[0][1]=-3;
-        gpu.V[1][0]=-1; gpu.V[1][1]=20;
-        gpu.W[1][0]=-8; gpu.W[1][1]=4;
-        gpu.V[2][0]=-5; gpu.V[2][1]=5;
-        gpu.W[2][0]=-10; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 20538;
+        gpu.V[0][0]=0; gpu.V[0][1]=0; gpu.W[0][0]=-6; gpu.W[0][1]=-3;
+        gpu.V[1][0]=-1; gpu.V[1][1]=20; gpu.W[1][0]=-8; gpu.W[1][1]=4;
+        gpu.V[2][0]=-5; gpu.V[2][1]=5; gpu.W[2][0]=-10; gpu.W[2][1]=-5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2-_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2-_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7000;
-        gpu.V[0][0]=-7; gpu.V[0][1]=13;
-        gpu.W[0][0]=6; gpu.W[0][1]=12;
-        gpu.V[1][0]=-1; gpu.V[1][1]=-17;
-        gpu.W[1][0]=-18; gpu.W[1][1]=14;
-        gpu.V[2][0]=8; gpu.V[2][1]=-2;
-        gpu.W[2][0]=3; gpu.W[2][1]=-18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7000;
+        gpu.V[0][0]=-7; gpu.V[0][1]=13; gpu.W[0][0]=6; gpu.W[0][1]=12;
+        gpu.V[1][0]=-1; gpu.V[1][1]=-17; gpu.W[1][0]=-18; gpu.W[1][1]=14;
+        gpu.V[2][0]=8; gpu.V[2][1]=-2; gpu.W[2][0]=3; gpu.W[2][1]=-18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2-_Cv_Cw_B");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2-_Cv_Cw_B");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9631;
-        gpu.V[0][0]=-3; gpu.V[0][1]=4;
-        gpu.W[0][0]=-7; gpu.W[0][1]=-15;
-        gpu.V[1][0]=-3; gpu.V[1][1]=-3;
-        gpu.W[1][0]=-13; gpu.W[1][1]=-13;
-        gpu.V[2][0]=-18; gpu.V[2][1]=1;
-        gpu.W[2][0]=-12; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9631;
+        gpu.V[0][0]=-3; gpu.V[0][1]=4; gpu.W[0][0]=-7; gpu.W[0][1]=-15;
+        gpu.V[1][0]=-3; gpu.V[1][1]=-3; gpu.W[1][0]=-13; gpu.W[1][1]=-13;
+        gpu.V[2][0]=-18; gpu.V[2][1]=1; gpu.W[2][0]=-12; gpu.W[2][1]=-2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2-_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Q2-_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 49064;
-        gpu.V[0][0]=-11; gpu.V[0][1]=12;
-        gpu.W[0][0]=20; gpu.W[0][1]=6;
-        gpu.V[1][0]=-14; gpu.V[1][1]=-13;
-        gpu.W[1][0]=2; gpu.W[1][1]=4;
-        gpu.V[2][0]=-14; gpu.V[2][1]=-13;
-        gpu.W[2][0]=2; gpu.W[2][1]=4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 49064;
+        gpu.V[0][0]=-11; gpu.V[0][1]=12; gpu.W[0][0]=20; gpu.W[0][1]=6;
+        gpu.V[1][0]=-14; gpu.V[1][1]=-13; gpu.W[1][0]=2; gpu.W[1][1]=4;
+        gpu.V[2][0]=-14; gpu.V[2][1]=-13; gpu.W[2][0]=2; gpu.W[2][1]=4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Qz_Cv1_D11");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T0_Qz_Cv1_D11");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 53518;
-        gpu.V[0][0]=12; gpu.V[0][1]=1;
-        gpu.W[0][0]=0; gpu.W[0][1]=-11;
-        gpu.V[1][0]=19; gpu.V[1][1]=-1;
-        gpu.W[1][0]=0; gpu.W[1][1]=4;
-        gpu.V[2][0]=-14; gpu.V[2][1]=0;
-        gpu.W[2][0]=0; gpu.W[2][1]=7;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 53518;
+        gpu.V[0][0]=12; gpu.V[0][1]=1; gpu.W[0][0]=0; gpu.W[0][1]=-11;
+        gpu.V[1][0]=19; gpu.V[1][1]=-1; gpu.W[1][0]=0; gpu.W[1][1]=4;
+        gpu.V[2][0]=-14; gpu.V[2][1]=0; gpu.W[2][0]=0; gpu.W[2][1]=7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q1_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q1_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9828;
-        gpu.V[0][0]=2; gpu.V[0][1]=-18;
-        gpu.W[0][0]=-7; gpu.W[0][1]=7;
-        gpu.V[1][0]=-6; gpu.V[1][1]=14;
-        gpu.W[1][0]=7; gpu.W[1][1]=7;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9828;
+        gpu.V[0][0]=2; gpu.V[0][1]=-18; gpu.W[0][0]=-7; gpu.W[0][1]=7;
+        gpu.V[1][0]=-6; gpu.V[1][1]=14; gpu.W[1][0]=7; gpu.W[1][1]=7;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=-7; gpu.W[2][1]=-17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv0_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv0_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9790;
-        gpu.V[0][0]=9; gpu.V[0][1]=12;
-        gpu.W[0][0]=3; gpu.W[0][1]=-15;
-        gpu.V[1][0]=19; gpu.V[1][1]=-16;
-        gpu.W[1][0]=-6; gpu.W[1][1]=4;
-        gpu.V[2][0]=-6; gpu.V[2][1]=-8;
-        gpu.W[2][0]=12; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9790;
+        gpu.V[0][0]=9; gpu.V[0][1]=12; gpu.W[0][0]=3; gpu.W[0][1]=-15;
+        gpu.V[1][0]=19; gpu.V[1][1]=-16; gpu.W[1][0]=-6; gpu.W[1][1]=4;
+        gpu.V[2][0]=-6; gpu.V[2][1]=-8; gpu.W[2][0]=12; gpu.W[2][1]=-2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 90742;
-        gpu.V[0][0]=-8; gpu.V[0][1]=-8;
-        gpu.W[0][0]=-18; gpu.W[0][1]=-9;
-        gpu.V[1][0]=1; gpu.V[1][1]=1;
-        gpu.W[1][0]=3; gpu.W[1][1]=3;
-        gpu.V[2][0]=-9; gpu.V[2][1]=-16;
-        gpu.W[2][0]=-10; gpu.W[2][1]=-15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 90742;
+        gpu.V[0][0]=-8; gpu.V[0][1]=-8; gpu.W[0][0]=-18; gpu.W[0][1]=-9;
+        gpu.V[1][0]=1; gpu.V[1][1]=1; gpu.W[1][0]=3; gpu.W[1][1]=3;
+        gpu.V[2][0]=-9; gpu.V[2][1]=-16; gpu.W[2][0]=-10; gpu.W[2][1]=-15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv1_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv1_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11899;
-        gpu.V[0][0]=5; gpu.V[0][1]=14;
-        gpu.W[0][0]=1; gpu.W[0][1]=19;
-        gpu.V[1][0]=-13; gpu.V[1][1]=-3;
-        gpu.W[1][0]=-16; gpu.W[1][1]=5;
-        gpu.V[2][0]=5; gpu.V[2][1]=-13;
-        gpu.W[2][0]=15; gpu.W[2][1]=-6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11899;
+        gpu.V[0][0]=5; gpu.V[0][1]=14; gpu.W[0][0]=1; gpu.W[0][1]=19;
+        gpu.V[1][0]=-13; gpu.V[1][1]=-3; gpu.W[1][0]=-16; gpu.W[1][1]=5;
+        gpu.V[2][0]=5; gpu.V[2][1]=-13; gpu.W[2][0]=15; gpu.W[2][1]=-6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 86787;
-        gpu.V[0][0]=-8; gpu.V[0][1]=-9;
-        gpu.W[0][0]=10; gpu.W[0][1]=14;
-        gpu.V[1][0]=8; gpu.V[1][1]=16;
-        gpu.W[1][0]=18; gpu.W[1][1]=-6;
-        gpu.V[2][0]=19; gpu.V[2][1]=19;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 86787;
+        gpu.V[0][0]=-8; gpu.V[0][1]=-9; gpu.W[0][0]=10; gpu.W[0][1]=14;
+        gpu.V[1][0]=8; gpu.V[1][1]=16; gpu.W[1][0]=18; gpu.W[1][1]=-6;
+        gpu.V[2][0]=19; gpu.V[2][1]=19; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 14219;
-        gpu.V[0][0]=20; gpu.V[0][1]=6;
-        gpu.W[0][0]=-9; gpu.W[0][1]=-18;
-        gpu.V[1][0]=13; gpu.V[1][1]=-16;
-        gpu.W[1][0]=10; gpu.W[1][1]=20;
-        gpu.V[2][0]=-15; gpu.V[2][1]=-3;
-        gpu.W[2][0]=20; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 14219;
+        gpu.V[0][0]=20; gpu.V[0][1]=6; gpu.W[0][0]=-9; gpu.W[0][1]=-18;
+        gpu.V[1][0]=13; gpu.V[1][1]=-16; gpu.W[1][0]=10; gpu.W[1][1]=20;
+        gpu.V[2][0]=-15; gpu.V[2][1]=-3; gpu.W[2][0]=20; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 27428;
-        gpu.V[0][0]=-18; gpu.V[0][1]=-9;
-        gpu.W[0][0]=4; gpu.W[0][1]=2;
-        gpu.V[1][0]=-5; gpu.V[1][1]=-19;
-        gpu.W[1][0]=-20; gpu.W[1][1]=3;
-        gpu.V[2][0]=4; gpu.V[2][1]=8;
-        gpu.W[2][0]=-16; gpu.W[2][1]=-13;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 27428;
+        gpu.V[0][0]=-18; gpu.V[0][1]=-9; gpu.W[0][0]=4; gpu.W[0][1]=2;
+        gpu.V[1][0]=-5; gpu.V[1][1]=-19; gpu.W[1][0]=-20; gpu.W[1][1]=3;
+        gpu.V[2][0]=4; gpu.V[2][1]=8; gpu.W[2][0]=-16; gpu.W[2][1]=-13;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cv_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cv_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13894;
-        gpu.V[0][0]=14; gpu.V[0][1]=-15;
-        gpu.W[0][0]=1; gpu.W[0][1]=-13;
-        gpu.V[1][0]=-15; gpu.V[1][1]=9;
-        gpu.W[1][0]=-8; gpu.W[1][1]=12;
-        gpu.V[2][0]=2; gpu.V[2][1]=-10;
-        gpu.W[2][0]=17; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13894;
+        gpu.V[0][0]=14; gpu.V[0][1]=-15; gpu.W[0][0]=1; gpu.W[0][1]=-13;
+        gpu.V[1][0]=-15; gpu.V[1][1]=9; gpu.W[1][0]=-8; gpu.W[1][1]=12;
+        gpu.V[2][0]=2; gpu.V[2][1]=-10; gpu.W[2][0]=17; gpu.W[2][1]=-9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 303;
-        gpu.V[0][0]=10; gpu.V[0][1]=18;
-        gpu.W[0][0]=-17; gpu.W[0][1]=15;
-        gpu.V[1][0]=1; gpu.V[1][1]=5;
-        gpu.W[1][0]=10; gpu.W[1][1]=3;
-        gpu.V[2][0]=4; gpu.V[2][1]=16;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 303;
+        gpu.V[0][0]=10; gpu.V[0][1]=18; gpu.W[0][0]=-17; gpu.W[0][1]=15;
+        gpu.V[1][0]=1; gpu.V[1][1]=5; gpu.W[1][0]=10; gpu.W[1][1]=3;
+        gpu.V[2][0]=4; gpu.V[2][1]=16; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6923;
-        gpu.V[0][0]=11; gpu.V[0][1]=20;
-        gpu.W[0][0]=-4; gpu.W[0][1]=2;
-        gpu.V[1][0]=10; gpu.V[1][1]=-15;
-        gpu.W[1][0]=-9; gpu.W[1][1]=14;
-        gpu.V[2][0]=19; gpu.V[2][1]=-15;
-        gpu.W[2][0]=4; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6923;
+        gpu.V[0][0]=11; gpu.V[0][1]=20; gpu.W[0][0]=-4; gpu.W[0][1]=2;
+        gpu.V[1][0]=10; gpu.V[1][1]=-15; gpu.W[1][0]=-9; gpu.W[1][1]=14;
+        gpu.V[2][0]=19; gpu.V[2][1]=-15; gpu.W[2][0]=4; gpu.W[2][1]=-2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7637;
-        gpu.V[0][0]=13; gpu.V[0][1]=-2;
-        gpu.W[0][0]=-3; gpu.W[0][1]=3;
-        gpu.V[1][0]=12; gpu.V[1][1]=-5;
-        gpu.W[1][0]=12; gpu.W[1][1]=-5;
-        gpu.V[2][0]=1; gpu.V[2][1]=19;
-        gpu.W[2][0]=9; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7637;
+        gpu.V[0][0]=13; gpu.V[0][1]=-2; gpu.W[0][0]=-3; gpu.W[0][1]=3;
+        gpu.V[1][0]=12; gpu.V[1][1]=-5; gpu.W[1][0]=12; gpu.W[1][1]=-5;
+        gpu.V[2][0]=1; gpu.V[2][1]=19; gpu.W[2][0]=9; gpu.W[2][1]=-9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3801;
-        gpu.V[0][0]=-8; gpu.V[0][1]=4;
-        gpu.W[0][0]=-5; gpu.W[0][1]=3;
-        gpu.V[1][0]=2; gpu.V[1][1]=2;
-        gpu.W[1][0]=3; gpu.W[1][1]=3;
-        gpu.V[2][0]=19; gpu.V[2][1]=20;
-        gpu.W[2][0]=8; gpu.W[2][1]=-7;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3801;
+        gpu.V[0][0]=-8; gpu.V[0][1]=4; gpu.W[0][0]=-5; gpu.W[0][1]=3;
+        gpu.V[1][0]=2; gpu.V[1][1]=2; gpu.W[1][0]=3; gpu.W[1][1]=3;
+        gpu.V[2][0]=19; gpu.V[2][1]=20; gpu.W[2][0]=8; gpu.W[2][1]=-7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11620;
-        gpu.V[0][0]=-18; gpu.V[0][1]=-15;
-        gpu.W[0][0]=-8; gpu.W[0][1]=-5;
-        gpu.V[1][0]=17; gpu.V[1][1]=18;
-        gpu.W[1][0]=8; gpu.W[1][1]=9;
-        gpu.V[2][0]=11; gpu.V[2][1]=10;
-        gpu.W[2][0]=16; gpu.W[2][1]=15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11620;
+        gpu.V[0][0]=-18; gpu.V[0][1]=-15; gpu.W[0][0]=-8; gpu.W[0][1]=-5;
+        gpu.V[1][0]=17; gpu.V[1][1]=18; gpu.W[1][0]=8; gpu.W[1][1]=9;
+        gpu.V[2][0]=11; gpu.V[2][1]=10; gpu.W[2][0]=16; gpu.W[2][1]=15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_SR");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 88499;
-        gpu.V[0][0]=-5; gpu.V[0][1]=2;
-        gpu.W[0][0]=12; gpu.W[0][1]=-10;
-        gpu.V[1][0]=-9; gpu.V[1][1]=-3;
-        gpu.W[1][0]=1; gpu.W[1][1]=15;
-        gpu.V[2][0]=10; gpu.V[2][1]=-4;
-        gpu.W[2][0]=16; gpu.W[2][1]=20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 88499;
+        gpu.V[0][0]=-5; gpu.V[0][1]=2; gpu.W[0][0]=12; gpu.W[0][1]=-10;
+        gpu.V[1][0]=-9; gpu.V[1][1]=-3; gpu.W[1][0]=1; gpu.W[1][1]=15;
+        gpu.V[2][0]=10; gpu.V[2][1]=-4; gpu.W[2][0]=16; gpu.W[2][1]=20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_SR_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 28686;
-        gpu.V[0][0]=1; gpu.V[0][1]=-7;
-        gpu.W[0][0]=4; gpu.W[0][1]=-9;
-        gpu.V[1][0]=-18; gpu.V[1][1]=-11;
-        gpu.W[1][0]=-18; gpu.W[1][1]=-5;
-        gpu.V[2][0]=1; gpu.V[2][1]=-7;
-        gpu.W[2][0]=10; gpu.W[2][1]=14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 32116;
+        gpu.V[0][0]=16; gpu.V[0][1]=10; gpu.W[0][0]=5; gpu.W[0][1]=-18;
+        gpu.V[1][0]=0; gpu.V[1][1]=1; gpu.W[1][0]=9; gpu.W[1][1]=15;
+        gpu.V[2][0]=-11; gpu.V[2][1]=-10; gpu.W[2][0]=-13; gpu.W[2][1]=-7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_SR_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 25679;
-        gpu.V[0][0]=-5; gpu.V[0][1]=7;
-        gpu.W[0][0]=-16; gpu.W[0][1]=-2;
-        gpu.V[1][0]=-10; gpu.V[1][1]=-10;
-        gpu.W[1][0]=-2; gpu.W[1][1]=-2;
-        gpu.V[2][0]=17; gpu.V[2][1]=-1;
-        gpu.W[2][0]=20; gpu.W[2][1]=-1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 25679;
+        gpu.V[0][0]=-5; gpu.V[0][1]=7; gpu.W[0][0]=-16; gpu.W[0][1]=-2;
+        gpu.V[1][0]=-10; gpu.V[1][1]=-10; gpu.W[1][0]=-2; gpu.W[1][1]=-2;
+        gpu.V[2][0]=17; gpu.V[2][1]=-1; gpu.W[2][0]=20; gpu.W[2][1]=-1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_SR_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 14669;
-        gpu.V[0][0]=-10; gpu.V[0][1]=13;
-        gpu.W[0][0]=-5; gpu.W[0][1]=7;
-        gpu.V[1][0]=-20; gpu.V[1][1]=-11;
-        gpu.W[1][0]=14; gpu.W[1][1]=-4;
-        gpu.V[2][0]=-14; gpu.V[2][1]=-11;
-        gpu.W[2][0]=1; gpu.W[2][1]=-4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 14669;
+        gpu.V[0][0]=-10; gpu.V[0][1]=13; gpu.W[0][0]=-5; gpu.W[0][1]=7;
+        gpu.V[1][0]=-20; gpu.V[1][1]=-11; gpu.W[1][0]=14; gpu.W[1][1]=-4;
+        gpu.V[2][0]=-14; gpu.V[2][1]=-11; gpu.W[2][0]=1; gpu.W[2][1]=-4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_(1,1)_Q2+_SR_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 1892;
-        gpu.V[0][0]=13; gpu.V[0][1]=12;
-        gpu.W[0][0]=-18; gpu.W[0][1]=19;
-        gpu.V[1][0]=3; gpu.V[1][1]=-5;
-        gpu.W[1][0]=-5; gpu.W[1][1]=-7;
-        gpu.V[2][0]=11; gpu.V[2][1]=17;
-        gpu.W[2][0]=-18; gpu.W[2][1]=19;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 1892;
+        gpu.V[0][0]=13; gpu.V[0][1]=12; gpu.W[0][0]=-18; gpu.W[0][1]=19;
+        gpu.V[1][0]=3; gpu.V[1][1]=-5; gpu.W[1][0]=-5; gpu.W[1][1]=-7;
+        gpu.V[2][0]=11; gpu.V[2][1]=17; gpu.W[2][0]=-18; gpu.W[2][1]=19;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 5222;
-        gpu.V[0][0]=19; gpu.V[0][1]=11;
-        gpu.W[0][0]=-6; gpu.W[0][1]=2;
-        gpu.V[1][0]=-8; gpu.V[1][1]=-8;
-        gpu.W[1][0]=7; gpu.W[1][1]=2;
-        gpu.V[2][0]=-12; gpu.V[2][1]=10;
-        gpu.W[2][0]=16; gpu.W[2][1]=2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5222;
+        gpu.V[0][0]=19; gpu.V[0][1]=11; gpu.W[0][0]=-6; gpu.W[0][1]=2;
+        gpu.V[1][0]=-8; gpu.V[1][1]=-8; gpu.W[1][0]=7; gpu.W[1][1]=2;
+        gpu.V[2][0]=-12; gpu.V[2][1]=10; gpu.W[2][0]=16; gpu.W[2][1]=2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q1_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q1_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 22092;
-        gpu.V[0][0]=-13; gpu.V[0][1]=-3;
-        gpu.W[0][0]=-3; gpu.W[0][1]=17;
-        gpu.V[1][0]=1; gpu.V[1][1]=-1;
-        gpu.W[1][0]=12; gpu.W[1][1]=2;
-        gpu.V[2][0]=-6; gpu.V[2][1]=6;
-        gpu.W[2][0]=14; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 22092;
+        gpu.V[0][0]=-13; gpu.V[0][1]=-3; gpu.W[0][0]=-3; gpu.W[0][1]=17;
+        gpu.V[1][0]=1; gpu.V[1][1]=-1; gpu.W[1][0]=12; gpu.W[1][1]=2;
+        gpu.V[2][0]=-6; gpu.V[2][1]=6; gpu.W[2][0]=14; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q1_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q1_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 67958;
-        gpu.V[0][0]=12; gpu.V[0][1]=-11;
-        gpu.W[0][0]=-18; gpu.W[0][1]=7;
-        gpu.V[1][0]=0; gpu.V[1][1]=11;
-        gpu.W[1][0]=0; gpu.W[1][1]=-1;
-        gpu.V[2][0]=-1; gpu.V[2][1]=-20;
-        gpu.W[2][0]=0; gpu.W[2][1]=-1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 67958;
+        gpu.V[0][0]=12; gpu.V[0][1]=-11; gpu.W[0][0]=-18; gpu.W[0][1]=7;
+        gpu.V[1][0]=0; gpu.V[1][1]=11; gpu.W[1][0]=0; gpu.W[1][1]=-1;
+        gpu.V[2][0]=-1; gpu.V[2][1]=-20; gpu.W[2][0]=0; gpu.W[2][1]=-1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q1_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q1_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 34189;
-        gpu.V[0][0]=3; gpu.V[0][1]=-18;
-        gpu.W[0][0]=0; gpu.W[0][1]=0;
-        gpu.V[1][0]=-11; gpu.V[1][1]=-14;
-        gpu.W[1][0]=18; gpu.W[1][1]=12;
-        gpu.V[2][0]=-11; gpu.V[2][1]=-5;
-        gpu.W[2][0]=-12; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 34189;
+        gpu.V[0][0]=3; gpu.V[0][1]=-18; gpu.W[0][0]=0; gpu.W[0][1]=0;
+        gpu.V[1][0]=-11; gpu.V[1][1]=-14; gpu.W[1][0]=18; gpu.W[1][1]=12;
+        gpu.V[2][0]=-11; gpu.V[2][1]=-5; gpu.W[2][0]=-12; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 64566;
-        gpu.V[0][0]=7; gpu.V[0][1]=-7;
-        gpu.W[0][0]=8; gpu.W[0][1]=-12;
-        gpu.V[1][0]=-4; gpu.V[1][1]=-9;
-        gpu.W[1][0]=8; gpu.W[1][1]=-8;
-        gpu.V[2][0]=7; gpu.V[2][1]=1;
-        gpu.W[2][0]=8; gpu.W[2][1]=15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 64566;
+        gpu.V[0][0]=7; gpu.V[0][1]=-7; gpu.W[0][0]=8; gpu.W[0][1]=-12;
+        gpu.V[1][0]=-4; gpu.V[1][1]=-9; gpu.W[1][0]=8; gpu.W[1][1]=-8;
+        gpu.V[2][0]=7; gpu.V[2][1]=1; gpu.W[2][0]=8; gpu.W[2][1]=15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q1_SR");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q1_SR");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13891;
-        gpu.V[0][0]=1; gpu.V[0][1]=3;
-        gpu.W[0][0]=-7; gpu.W[0][1]=-7;
-        gpu.V[1][0]=-9; gpu.V[1][1]=5;
-        gpu.W[1][0]=-11; gpu.W[1][1]=19;
-        gpu.V[2][0]=-10; gpu.V[2][1]=10;
-        gpu.W[2][0]=3; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13891;
+        gpu.V[0][0]=1; gpu.V[0][1]=3; gpu.W[0][0]=-7; gpu.W[0][1]=-7;
+        gpu.V[1][0]=-9; gpu.V[1][1]=5; gpu.W[1][0]=-11; gpu.W[1][1]=19;
+        gpu.V[2][0]=-10; gpu.V[2][1]=10; gpu.W[2][0]=3; gpu.W[2][1]=-17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13908;
-        gpu.V[0][0]=10; gpu.V[0][1]=8;
-        gpu.W[0][0]=16; gpu.W[0][1]=-8;
-        gpu.V[1][0]=-2; gpu.V[1][1]=-16;
-        gpu.W[1][0]=6; gpu.W[1][1]=7;
-        gpu.V[2][0]=-20; gpu.V[2][1]=-3;
-        gpu.W[2][0]=-6; gpu.W[2][1]=-18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13908;
+        gpu.V[0][0]=10; gpu.V[0][1]=8; gpu.W[0][0]=16; gpu.W[0][1]=-8;
+        gpu.V[1][0]=-2; gpu.V[1][1]=-16; gpu.W[1][0]=6; gpu.W[1][1]=7;
+        gpu.V[2][0]=-20; gpu.V[2][1]=-3; gpu.W[2][0]=-6; gpu.W[2][1]=-18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 60087;
-        gpu.V[0][0]=-11; gpu.V[0][1]=3;
-        gpu.W[0][0]=-4; gpu.W[0][1]=1;
-        gpu.V[1][0]=0; gpu.V[1][1]=0;
-        gpu.W[1][0]=4; gpu.W[1][1]=-1;
-        gpu.V[2][0]=10; gpu.V[2][1]=13;
-        gpu.W[2][0]=-3; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 60087;
+        gpu.V[0][0]=-11; gpu.V[0][1]=3; gpu.W[0][0]=-4; gpu.W[0][1]=1;
+        gpu.V[1][0]=0; gpu.V[1][1]=0; gpu.W[1][0]=4; gpu.W[1][1]=-1;
+        gpu.V[2][0]=10; gpu.V[2][1]=13; gpu.W[2][0]=-3; gpu.W[2][1]=-9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv0_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv0_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 10514;
-        gpu.V[0][0]=0; gpu.V[0][1]=-20;
-        gpu.W[0][0]=18; gpu.W[0][1]=-20;
-        gpu.V[1][0]=0; gpu.V[1][1]=0;
-        gpu.W[1][0]=-3; gpu.W[1][1]=-9;
-        gpu.V[2][0]=-1; gpu.V[2][1]=-14;
-        gpu.W[2][0]=15; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10514;
+        gpu.V[0][0]=0; gpu.V[0][1]=-20; gpu.W[0][0]=18; gpu.W[0][1]=-20;
+        gpu.V[1][0]=0; gpu.V[1][1]=0; gpu.W[1][0]=-3; gpu.W[1][1]=-9;
+        gpu.V[2][0]=-1; gpu.V[2][1]=-14; gpu.W[2][0]=15; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8817;
-        gpu.V[0][0]=-2; gpu.V[0][1]=-11;
-        gpu.W[0][0]=7; gpu.W[0][1]=7;
-        gpu.V[1][0]=20; gpu.V[1][1]=10;
-        gpu.W[1][0]=5; gpu.W[1][1]=-16;
-        gpu.V[2][0]=-8; gpu.V[2][1]=-4;
-        gpu.W[2][0]=13; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8817;
+        gpu.V[0][0]=-2; gpu.V[0][1]=-11; gpu.W[0][0]=7; gpu.W[0][1]=7;
+        gpu.V[1][0]=20; gpu.V[1][1]=10; gpu.W[1][0]=5; gpu.W[1][1]=-16;
+        gpu.V[2][0]=-8; gpu.V[2][1]=-4; gpu.W[2][0]=13; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 5119;
-        gpu.V[0][0]=0; gpu.V[0][1]=-5;
-        gpu.W[0][0]=0; gpu.W[0][1]=-18;
-        gpu.V[1][0]=14; gpu.V[1][1]=15;
-        gpu.W[1][0]=-9; gpu.W[1][1]=-7;
-        gpu.V[2][0]=0; gpu.V[2][1]=20;
-        gpu.W[2][0]=-4; gpu.W[2][1]=-4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5119;
+        gpu.V[0][0]=0; gpu.V[0][1]=-5; gpu.W[0][0]=0; gpu.W[0][1]=-18;
+        gpu.V[1][0]=14; gpu.V[1][1]=15; gpu.W[1][0]=-9; gpu.W[1][1]=-7;
+        gpu.V[2][0]=0; gpu.V[2][1]=20; gpu.W[2][0]=-4; gpu.W[2][1]=-4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 2325;
-        gpu.V[0][0]=15; gpu.V[0][1]=18;
-        gpu.W[0][0]=0; gpu.W[0][1]=0;
-        gpu.V[1][0]=8; gpu.V[1][1]=-20;
-        gpu.W[1][0]=15; gpu.W[1][1]=-15;
-        gpu.V[2][0]=-19; gpu.V[2][1]=18;
-        gpu.W[2][0]=13; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8347;
+        gpu.V[0][0]=16; gpu.V[0][1]=-9; gpu.W[0][0]=6; gpu.W[0][1]=0;
+        gpu.V[1][0]=-20; gpu.V[1][1]=13; gpu.W[1][0]=-1; gpu.W[1][1]=-13;
+        gpu.V[2][0]=-12; gpu.V[2][1]=0; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12639;
-        gpu.V[0][0]=-5; gpu.V[0][1]=-5;
-        gpu.W[0][0]=-13; gpu.W[0][1]=-9;
-        gpu.V[1][0]=17; gpu.V[1][1]=11;
-        gpu.W[1][0]=13; gpu.W[1][1]=9;
-        gpu.V[2][0]=-19; gpu.V[2][1]=2;
-        gpu.W[2][0]=10; gpu.W[2][1]=17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12639;
+        gpu.V[0][0]=-5; gpu.V[0][1]=-5; gpu.W[0][0]=-13; gpu.W[0][1]=-9;
+        gpu.V[1][0]=17; gpu.V[1][1]=11; gpu.W[1][0]=13; gpu.W[1][1]=9;
+        gpu.V[2][0]=-19; gpu.V[2][1]=2; gpu.W[2][0]=10; gpu.W[2][1]=17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7779;
-        gpu.V[0][0]=20; gpu.V[0][1]=5;
-        gpu.W[0][0]=-16; gpu.W[0][1]=-4;
-        gpu.V[1][0]=-18; gpu.V[1][1]=7;
-        gpu.W[1][0]=2; gpu.W[1][1]=-17;
-        gpu.V[2][0]=-14; gpu.V[2][1]=-18;
-        gpu.W[2][0]=1; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9021;
+        gpu.V[0][0]=-12; gpu.V[0][1]=-16; gpu.W[0][0]=12; gpu.W[0][1]=16;
+        gpu.V[1][0]=11; gpu.V[1][1]=18; gpu.W[1][0]=0; gpu.W[1][1]=-20;
+        gpu.V[2][0]=7; gpu.V[2][1]=-11; gpu.W[2][0]=9; gpu.W[2][1]=-1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 45;
-        gpu.V[0][0]=-20; gpu.V[0][1]=-11;
-        gpu.W[0][0]=16; gpu.W[0][1]=11;
-        gpu.V[1][0]=-5; gpu.V[1][1]=19;
-        gpu.W[1][0]=-2; gpu.W[1][1]=9;
-        gpu.V[2][0]=11; gpu.V[2][1]=-4;
-        gpu.W[2][0]=5; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 45;
+        gpu.V[0][0]=-20; gpu.V[0][1]=-11; gpu.W[0][0]=16; gpu.W[0][1]=11;
+        gpu.V[1][0]=-5; gpu.V[1][1]=19; gpu.W[1][0]=-2; gpu.W[1][1]=9;
+        gpu.V[2][0]=11; gpu.V[2][1]=-4; gpu.W[2][0]=5; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cv_TN");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cv_TN");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3170;
-        gpu.V[0][0]=-16; gpu.V[0][1]=-2;
-        gpu.W[0][0]=0; gpu.W[0][1]=0;
-        gpu.V[1][0]=4; gpu.V[1][1]=-4;
-        gpu.W[1][0]=-1; gpu.W[1][1]=3;
-        gpu.V[2][0]=-11; gpu.V[2][1]=-5;
-        gpu.W[2][0]=15; gpu.W[2][1]=11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3170;
+        gpu.V[0][0]=-16; gpu.V[0][1]=-2; gpu.W[0][0]=0; gpu.W[0][1]=0;
+        gpu.V[1][0]=4; gpu.V[1][1]=-4; gpu.W[1][0]=-1; gpu.W[1][1]=3;
+        gpu.V[2][0]=-11; gpu.V[2][1]=-5; gpu.W[2][0]=15; gpu.W[2][1]=11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 147;
-        gpu.V[0][0]=-18; gpu.V[0][1]=-3;
-        gpu.W[0][0]=7; gpu.W[0][1]=-4;
-        gpu.V[1][0]=16; gpu.V[1][1]=8;
-        gpu.W[1][0]=18; gpu.W[1][1]=6;
-        gpu.V[2][0]=-15; gpu.V[2][1]=-2;
-        gpu.W[2][0]=-15; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 147;
+        gpu.V[0][0]=-18; gpu.V[0][1]=-3; gpu.W[0][0]=7; gpu.W[0][1]=-4;
+        gpu.V[1][0]=16; gpu.V[1][1]=8; gpu.W[1][0]=18; gpu.W[1][1]=6;
+        gpu.V[2][0]=-15; gpu.V[2][1]=-2; gpu.W[2][0]=-15; gpu.W[2][1]=-5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 25292;
-        gpu.V[0][0]=-3; gpu.V[0][1]=3;
-        gpu.W[0][0]=-20; gpu.W[0][1]=20;
-        gpu.V[1][0]=-4; gpu.V[1][1]=0;
-        gpu.W[1][0]=9; gpu.W[1][1]=-9;
-        gpu.V[2][0]=-11; gpu.V[2][1]=1;
-        gpu.W[2][0]=1; gpu.W[2][1]=6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 25292;
+        gpu.V[0][0]=-3; gpu.V[0][1]=3; gpu.W[0][0]=-20; gpu.W[0][1]=20;
+        gpu.V[1][0]=-4; gpu.V[1][1]=0; gpu.W[1][0]=9; gpu.W[1][1]=-9;
+        gpu.V[2][0]=-11; gpu.V[2][1]=1; gpu.W[2][0]=1; gpu.W[2][1]=6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 5198;
-        gpu.V[0][0]=-19; gpu.V[0][1]=19;
-        gpu.W[0][0]=19; gpu.W[0][1]=-19;
-        gpu.V[1][0]=-15; gpu.V[1][1]=-18;
-        gpu.W[1][0]=8; gpu.W[1][1]=-6;
-        gpu.V[2][0]=1; gpu.V[2][1]=5;
-        gpu.W[2][0]=12; gpu.W[2][1]=8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5198;
+        gpu.V[0][0]=-19; gpu.V[0][1]=19; gpu.W[0][0]=19; gpu.W[0][1]=-19;
+        gpu.V[1][0]=-15; gpu.V[1][1]=-18; gpu.W[1][0]=8; gpu.W[1][1]=-6;
+        gpu.V[2][0]=1; gpu.V[2][1]=5; gpu.W[2][0]=12; gpu.W[2][1]=8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11624;
-        gpu.V[0][0]=12; gpu.V[0][1]=12;
-        gpu.W[0][0]=-7; gpu.W[0][1]=19;
-        gpu.V[1][0]=-4; gpu.V[1][1]=6;
-        gpu.W[1][0]=-4; gpu.W[1][1]=-4;
-        gpu.V[2][0]=12; gpu.V[2][1]=8;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11624;
+        gpu.V[0][0]=12; gpu.V[0][1]=12; gpu.W[0][0]=-7; gpu.W[0][1]=19;
+        gpu.V[1][0]=-4; gpu.V[1][1]=6; gpu.W[1][0]=-4; gpu.W[1][1]=-4;
+        gpu.V[2][0]=12; gpu.V[2][1]=8; gpu.W[2][0]=-7; gpu.W[2][1]=-9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_SR");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_SR");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 15423;
-        gpu.V[0][0]=-13; gpu.V[0][1]=4;
-        gpu.W[0][0]=20; gpu.W[0][1]=6;
-        gpu.V[1][0]=18; gpu.V[1][1]=-16;
-        gpu.W[1][0]=-3; gpu.W[1][1]=14;
-        gpu.V[2][0]=3; gpu.V[2][1]=6;
-        gpu.W[2][0]=4; gpu.W[2][1]=4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 15423;
+        gpu.V[0][0]=-13; gpu.V[0][1]=4; gpu.W[0][0]=20; gpu.W[0][1]=6;
+        gpu.V[1][0]=18; gpu.V[1][1]=-16; gpu.W[1][0]=-3; gpu.W[1][1]=14;
+        gpu.V[2][0]=3; gpu.V[2][1]=6; gpu.W[2][0]=4; gpu.W[2][1]=4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_SR_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_SR_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 30118;
-        gpu.V[0][0]=8; gpu.V[0][1]=2;
-        gpu.W[0][0]=0; gpu.W[0][1]=14;
-        gpu.V[1][0]=-4; gpu.V[1][1]=-1;
-        gpu.W[1][0]=-1; gpu.W[1][1]=0;
-        gpu.V[2][0]=-1; gpu.V[2][1]=-11;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 30118;
+        gpu.V[0][0]=8; gpu.V[0][1]=2; gpu.W[0][0]=0; gpu.W[0][1]=14;
+        gpu.V[1][0]=-4; gpu.V[1][1]=-1; gpu.W[1][0]=-1; gpu.W[1][1]=0;
+        gpu.V[2][0]=-1; gpu.V[2][1]=-11; gpu.W[2][0]=-18; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_SR_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_SR_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 2309;
-        gpu.V[0][0]=3; gpu.V[0][1]=13;
-        gpu.W[0][0]=19; gpu.W[0][1]=17;
-        gpu.V[1][0]=6; gpu.V[1][1]=-10;
-        gpu.W[1][0]=3; gpu.W[1][1]=-5;
-        gpu.V[2][0]=-4; gpu.V[2][1]=-16;
-        gpu.W[2][0]=18; gpu.W[2][1]=4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 2309;
+        gpu.V[0][0]=3; gpu.V[0][1]=13; gpu.W[0][0]=19; gpu.W[0][1]=17;
+        gpu.V[1][0]=6; gpu.V[1][1]=-10; gpu.W[1][0]=3; gpu.W[1][1]=-5;
+        gpu.V[2][0]=-4; gpu.V[2][1]=-16; gpu.W[2][0]=18; gpu.W[2][1]=4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_SR_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_SR_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13003;
-        gpu.V[0][0]=-19; gpu.V[0][1]=4;
-        gpu.W[0][0]=0; gpu.W[0][1]=18;
-        gpu.V[1][0]=-19; gpu.V[1][1]=12;
-        gpu.W[1][0]=0; gpu.W[1][1]=-14;
-        gpu.V[2][0]=3; gpu.V[2][1]=-4;
-        gpu.W[2][0]=17; gpu.W[2][1]=-13;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13003;
+        gpu.V[0][0]=-19; gpu.V[0][1]=4; gpu.W[0][0]=0; gpu.W[0][1]=18;
+        gpu.V[1][0]=-19; gpu.V[1][1]=12; gpu.W[1][0]=0; gpu.W[1][1]=-14;
+        gpu.V[2][0]=3; gpu.V[2][1]=-4; gpu.W[2][0]=17; gpu.W[2][1]=-13;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_SR_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_SR_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 80957;
-        gpu.V[0][0]=12; gpu.V[0][1]=-14;
-        gpu.W[0][0]=-10; gpu.W[0][1]=8;
-        gpu.V[1][0]=7; gpu.V[1][1]=-6;
-        gpu.W[1][0]=18; gpu.W[1][1]=-17;
-        gpu.V[2][0]=-11; gpu.V[2][1]=4;
-        gpu.W[2][0]=-12; gpu.W[2][1]=4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 80957;
+        gpu.V[0][0]=12; gpu.V[0][1]=-14; gpu.W[0][0]=-10; gpu.W[0][1]=8;
+        gpu.V[1][0]=7; gpu.V[1][1]=-6; gpu.W[1][0]=18; gpu.W[1][1]=-17;
+        gpu.V[2][0]=-11; gpu.V[2][1]=4; gpu.W[2][0]=-12; gpu.W[2][1]=4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2+_TN");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2+_TN");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3149;
-        gpu.V[0][0]=5; gpu.V[0][1]=-17;
-        gpu.W[0][0]=19; gpu.W[0][1]=-16;
-        gpu.V[1][0]=17; gpu.V[1][1]=5;
-        gpu.W[1][0]=11; gpu.W[1][1]=6;
-        gpu.V[2][0]=4; gpu.V[2][1]=6;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3149;
+        gpu.V[0][0]=5; gpu.V[0][1]=-17; gpu.W[0][0]=19; gpu.W[0][1]=-16;
+        gpu.V[1][0]=17; gpu.V[1][1]=5; gpu.W[1][0]=11; gpu.W[1][1]=6;
+        gpu.V[2][0]=4; gpu.V[2][1]=6; gpu.W[2][0]=-7; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3142;
-        gpu.V[0][0]=-2; gpu.V[0][1]=20;
-        gpu.W[0][0]=20; gpu.W[0][1]=0;
-        gpu.V[1][0]=-19; gpu.V[1][1]=-2;
-        gpu.W[1][0]=16; gpu.W[1][1]=4;
-        gpu.V[2][0]=5; gpu.V[2][1]=0;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3142;
+        gpu.V[0][0]=-2; gpu.V[0][1]=20; gpu.W[0][0]=20; gpu.W[0][1]=0;
+        gpu.V[1][0]=-19; gpu.V[1][1]=-2; gpu.W[1][0]=16; gpu.W[1][1]=4;
+        gpu.V[2][0]=5; gpu.V[2][1]=0; gpu.W[2][0]=-7; gpu.W[2][1]=-4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 18722;
-        gpu.V[0][0]=15; gpu.V[0][1]=-2;
-        gpu.W[0][0]=11; gpu.W[0][1]=-19;
-        gpu.V[1][0]=6; gpu.V[1][1]=-16;
-        gpu.W[1][0]=-2; gpu.W[1][1]=-6;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=2; gpu.W[2][1]=8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 18722;
+        gpu.V[0][0]=15; gpu.V[0][1]=-2; gpu.W[0][0]=11; gpu.W[0][1]=-19;
+        gpu.V[1][0]=6; gpu.V[1][1]=-16; gpu.W[1][0]=-2; gpu.W[1][1]=-6;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=2; gpu.W[2][1]=8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv0_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv0_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6621;
-        gpu.V[0][0]=0; gpu.V[0][1]=0;
-        gpu.W[0][0]=-16; gpu.W[0][1]=-4;
-        gpu.V[1][0]=-14; gpu.V[1][1]=12;
-        gpu.W[1][0]=-7; gpu.W[1][1]=-16;
-        gpu.V[2][0]=7; gpu.V[2][1]=-13;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6621;
+        gpu.V[0][0]=0; gpu.V[0][1]=0; gpu.W[0][0]=-16; gpu.W[0][1]=-4;
+        gpu.V[1][0]=-14; gpu.V[1][1]=12; gpu.W[1][0]=-7; gpu.W[1][1]=-16;
+        gpu.V[2][0]=7; gpu.V[2][1]=-13; gpu.W[2][0]=-7; gpu.W[2][1]=-3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7160;
-        gpu.V[0][0]=18; gpu.V[0][1]=18;
-        gpu.W[0][0]=-12; gpu.W[0][1]=2;
-        gpu.V[1][0]=15; gpu.V[1][1]=-6;
-        gpu.W[1][0]=3; gpu.W[1][1]=5;
-        gpu.V[2][0]=-15; gpu.V[2][1]=6;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 2142;
+        gpu.V[0][0]=1; gpu.V[0][1]=-14; gpu.W[0][0]=-12; gpu.W[0][1]=-20;
+        gpu.V[1][0]=2; gpu.V[1][1]=1; gpu.W[1][0]=9; gpu.W[1][1]=-17;
+        gpu.V[2][0]=-4; gpu.V[2][1]=-2; gpu.W[2][0]=13; gpu.W[2][1]=-7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 554;
-        gpu.V[0][0]=-14; gpu.V[0][1]=-17;
-        gpu.W[0][0]=20; gpu.W[0][1]=-16;
-        gpu.V[1][0]=9; gpu.V[1][1]=-9;
-        gpu.W[1][0]=19; gpu.W[1][1]=8;
-        gpu.V[2][0]=-15; gpu.V[2][1]=15;
-        gpu.W[2][0]=-19; gpu.W[2][1]=4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 554;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-17; gpu.W[0][0]=20; gpu.W[0][1]=-16;
+        gpu.V[1][0]=9; gpu.V[1][1]=-9; gpu.W[1][0]=19; gpu.W[1][1]=8;
+        gpu.V[2][0]=-15; gpu.V[2][1]=15; gpu.W[2][0]=-19; gpu.W[2][1]=4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11852;
-        gpu.V[0][0]=-5; gpu.V[0][1]=-1;
-        gpu.W[0][0]=14; gpu.W[0][1]=8;
-        gpu.V[1][0]=-10; gpu.V[1][1]=-17;
-        gpu.W[1][0]=-14; gpu.W[1][1]=4;
-        gpu.V[2][0]=10; gpu.V[2][1]=2;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11852;
+        gpu.V[0][0]=-5; gpu.V[0][1]=-1; gpu.W[0][0]=14; gpu.W[0][1]=8;
+        gpu.V[1][0]=-10; gpu.V[1][1]=-17; gpu.W[1][0]=-14; gpu.W[1][1]=4;
+        gpu.V[2][0]=10; gpu.V[2][1]=2; gpu.W[2][0]=-7; gpu.W[2][1]=-4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv1_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv1_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 36158;
-        gpu.V[0][0]=-10; gpu.V[0][1]=-20;
-        gpu.W[0][0]=-7; gpu.W[0][1]=-14;
-        gpu.V[1][0]=-16; gpu.V[1][1]=-18;
-        gpu.W[1][0]=-1; gpu.W[1][1]=12;
-        gpu.V[2][0]=8; gpu.V[2][1]=16;
-        gpu.W[2][0]=7; gpu.W[2][1]=7;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 36158;
+        gpu.V[0][0]=-10; gpu.V[0][1]=-20; gpu.W[0][0]=-7; gpu.W[0][1]=-14;
+        gpu.V[1][0]=-16; gpu.V[1][1]=-18; gpu.W[1][0]=-1; gpu.W[1][1]=12;
+        gpu.V[2][0]=8; gpu.V[2][1]=16; gpu.W[2][0]=7; gpu.W[2][1]=7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv1_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv1_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11969;
-        gpu.V[0][0]=-15; gpu.V[0][1]=-6;
-        gpu.W[0][0]=-2; gpu.W[0][1]=11;
-        gpu.V[1][0]=7; gpu.V[1][1]=7;
-        gpu.W[1][0]=-16; gpu.W[1][1]=-16;
-        gpu.V[2][0]=-19; gpu.V[2][1]=-19;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12649;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-14; gpu.W[0][0]=16; gpu.W[0][1]=-11;
+        gpu.V[1][0]=8; gpu.V[1][1]=8; gpu.W[1][0]=-14; gpu.W[1][1]=-14;
+        gpu.V[2][0]=18; gpu.V[2][1]=-19; gpu.W[2][0]=19; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13901;
-        gpu.V[0][0]=17; gpu.V[0][1]=-11;
-        gpu.W[0][0]=0; gpu.W[0][1]=12;
-        gpu.V[1][0]=-20; gpu.V[1][1]=16;
-        gpu.W[1][0]=-13; gpu.W[1][1]=10;
-        gpu.V[2][0]=-3; gpu.V[2][1]=-4;
-        gpu.W[2][0]=17; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13901;
+        gpu.V[0][0]=17; gpu.V[0][1]=-11; gpu.W[0][0]=0; gpu.W[0][1]=12;
+        gpu.V[1][0]=-20; gpu.V[1][1]=16; gpu.W[1][0]=-13; gpu.W[1][1]=10;
+        gpu.V[2][0]=-3; gpu.V[2][1]=-4; gpu.W[2][0]=17; gpu.W[2][1]=-17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 10623;
-        gpu.V[0][0]=-7; gpu.V[0][1]=-17;
-        gpu.W[0][0]=-18; gpu.W[0][1]=3;
-        gpu.V[1][0]=14; gpu.V[1][1]=10;
-        gpu.W[1][0]=0; gpu.W[1][1]=0;
-        gpu.V[2][0]=-17; gpu.V[2][1]=5;
-        gpu.W[2][0]=4; gpu.W[2][1]=8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10623;
+        gpu.V[0][0]=-7; gpu.V[0][1]=-17; gpu.W[0][0]=-18; gpu.W[0][1]=3;
+        gpu.V[1][0]=14; gpu.V[1][1]=10; gpu.W[1][0]=0; gpu.W[1][1]=0;
+        gpu.V[2][0]=-17; gpu.V[2][1]=5; gpu.W[2][0]=4; gpu.W[2][1]=8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11089;
-        gpu.V[0][0]=11; gpu.V[0][1]=-10;
-        gpu.W[0][0]=-3; gpu.W[0][1]=3;
-        gpu.V[1][0]=-9; gpu.V[1][1]=-8;
-        gpu.W[1][0]=2; gpu.W[1][1]=20;
-        gpu.V[2][0]=5; gpu.V[2][1]=10;
-        gpu.W[2][0]=8; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11089;
+        gpu.V[0][0]=11; gpu.V[0][1]=-10; gpu.W[0][0]=-3; gpu.W[0][1]=3;
+        gpu.V[1][0]=-9; gpu.V[1][1]=-8; gpu.W[1][0]=2; gpu.W[1][1]=20;
+        gpu.V[2][0]=5; gpu.V[2][1]=10; gpu.W[2][0]=8; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 32083;
-        gpu.V[0][0]=-9; gpu.V[0][1]=0;
-        gpu.W[0][0]=-3; gpu.W[0][1]=0;
-        gpu.V[1][0]=-9; gpu.V[1][1]=-9;
-        gpu.W[1][0]=17; gpu.W[1][1]=0;
-        gpu.V[2][0]=18; gpu.V[2][1]=10;
-        gpu.W[2][0]=-3; gpu.W[2][1]=3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 32083;
+        gpu.V[0][0]=-9; gpu.V[0][1]=0; gpu.W[0][0]=-3; gpu.W[0][1]=0;
+        gpu.V[1][0]=-9; gpu.V[1][1]=-9; gpu.W[1][0]=17; gpu.W[1][1]=0;
+        gpu.V[2][0]=18; gpu.V[2][1]=10; gpu.W[2][0]=-3; gpu.W[2][1]=3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 4581;
-        gpu.V[0][0]=-9; gpu.V[0][1]=-18;
-        gpu.W[0][0]=-18; gpu.W[0][1]=16;
-        gpu.V[1][0]=-8; gpu.V[1][1]=16;
-        gpu.W[1][0]=2; gpu.W[1][1]=1;
-        gpu.V[2][0]=8; gpu.V[2][1]=-12;
-        gpu.W[2][0]=2; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12450;
+        gpu.V[0][0]=-12; gpu.V[0][1]=0; gpu.W[0][0]=-11; gpu.W[0][1]=-7;
+        gpu.V[1][0]=4; gpu.V[1][1]=19; gpu.W[1][0]=-8; gpu.W[1][1]=11;
+        gpu.V[2][0]=18; gpu.V[2][1]=-9; gpu.W[2][0]=14; gpu.W[2][1]=-7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 49876;
-        gpu.V[0][0]=20; gpu.V[0][1]=0;
-        gpu.W[0][0]=10; gpu.W[0][1]=-15;
-        gpu.V[1][0]=-16; gpu.V[1][1]=14;
-        gpu.W[1][0]=-8; gpu.W[1][1]=19;
-        gpu.V[2][0]=-10; gpu.V[2][1]=-18;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 49876;
+        gpu.V[0][0]=20; gpu.V[0][1]=0; gpu.W[0][0]=10; gpu.W[0][1]=-15;
+        gpu.V[1][0]=-16; gpu.V[1][1]=14; gpu.W[1][0]=-8; gpu.W[1][1]=19;
+        gpu.V[2][0]=-10; gpu.V[2][1]=-18; gpu.W[2][0]=-18; gpu.W[2][1]=-14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw_TN");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_Cw_TN");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3321;
-        gpu.V[0][0]=0; gpu.V[0][1]=2;
-        gpu.W[0][0]=0; gpu.W[0][1]=-5;
-        gpu.V[1][0]=13; gpu.V[1][1]=-13;
-        gpu.W[1][0]=3; gpu.W[1][1]=6;
-        gpu.V[2][0]=-20; gpu.V[2][1]=16;
-        gpu.W[2][0]=-1; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3321;
+        gpu.V[0][0]=0; gpu.V[0][1]=2; gpu.W[0][0]=0; gpu.W[0][1]=-5;
+        gpu.V[1][0]=13; gpu.V[1][1]=-13; gpu.W[1][0]=3; gpu.W[1][1]=6;
+        gpu.V[2][0]=-20; gpu.V[2][1]=16; gpu.W[2][0]=-1; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3146;
-        gpu.V[0][0]=-13; gpu.V[0][1]=6;
-        gpu.W[0][0]=-16; gpu.W[0][1]=-17;
-        gpu.V[1][0]=1; gpu.V[1][1]=-14;
-        gpu.W[1][0]=4; gpu.W[1][1]=-5;
-        gpu.V[2][0]=6; gpu.V[2][1]=-6;
-        gpu.W[2][0]=11; gpu.W[2][1]=17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3146;
+        gpu.V[0][0]=-13; gpu.V[0][1]=6; gpu.W[0][0]=-16; gpu.W[0][1]=-17;
+        gpu.V[1][0]=1; gpu.V[1][1]=-14; gpu.W[1][0]=4; gpu.W[1][1]=-5;
+        gpu.V[2][0]=6; gpu.V[2][1]=-6; gpu.W[2][0]=11; gpu.W[2][1]=17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 23264;
-        gpu.V[0][0]=0; gpu.V[0][1]=-18;
-        gpu.W[0][0]=2; gpu.W[0][1]=-2;
-        gpu.V[1][0]=15; gpu.V[1][1]=18;
-        gpu.W[1][0]=0; gpu.W[1][1]=0;
-        gpu.V[2][0]=14; gpu.V[2][1]=-9;
-        gpu.W[2][0]=4; gpu.W[2][1]=5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 23264;
+        gpu.V[0][0]=0; gpu.V[0][1]=-18; gpu.W[0][0]=2; gpu.W[0][1]=-2;
+        gpu.V[1][0]=15; gpu.V[1][1]=18; gpu.W[1][0]=0; gpu.W[1][1]=0;
+        gpu.V[2][0]=14; gpu.V[2][1]=-9; gpu.W[2][0]=4; gpu.W[2][1]=5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7505;
-        gpu.V[0][0]=15; gpu.V[0][1]=12;
-        gpu.W[0][0]=-9; gpu.W[0][1]=9;
-        gpu.V[1][0]=19; gpu.V[1][1]=-14;
-        gpu.W[1][0]=15; gpu.W[1][1]=-1;
-        gpu.V[2][0]=8; gpu.V[2][1]=10;
-        gpu.W[2][0]=11; gpu.W[2][1]=-11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7505;
+        gpu.V[0][0]=15; gpu.V[0][1]=12; gpu.W[0][0]=-9; gpu.W[0][1]=9;
+        gpu.V[1][0]=19; gpu.V[1][1]=-14; gpu.W[1][0]=15; gpu.W[1][1]=-1;
+        gpu.V[2][0]=8; gpu.V[2][1]=10; gpu.W[2][0]=11; gpu.W[2][1]=-11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 67364;
-        gpu.V[0][0]=-2; gpu.V[0][1]=-3;
-        gpu.W[0][0]=-10; gpu.W[0][1]=-15;
-        gpu.V[1][0]=18; gpu.V[1][1]=19;
-        gpu.W[1][0]=-5; gpu.W[1][1]=9;
-        gpu.V[2][0]=19; gpu.V[2][1]=-12;
-        gpu.W[2][0]=12; gpu.W[2][1]=18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 67364;
+        gpu.V[0][0]=-2; gpu.V[0][1]=-3; gpu.W[0][0]=-10; gpu.W[0][1]=-15;
+        gpu.V[1][0]=18; gpu.V[1][1]=19; gpu.W[1][0]=-5; gpu.W[1][1]=9;
+        gpu.V[2][0]=19; gpu.V[2][1]=-12; gpu.W[2][0]=12; gpu.W[2][1]=18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 707;
-        gpu.V[0][0]=9; gpu.V[0][1]=20;
-        gpu.W[0][0]=-7; gpu.W[0][1]=1;
-        gpu.V[1][0]=11; gpu.V[1][1]=10;
-        gpu.W[1][0]=8; gpu.W[1][1]=15;
-        gpu.V[2][0]=-6; gpu.V[2][1]=8;
-        gpu.W[2][0]=6; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 707;
+        gpu.V[0][0]=9; gpu.V[0][1]=20; gpu.W[0][0]=-7; gpu.W[0][1]=1;
+        gpu.V[1][0]=11; gpu.V[1][1]=10; gpu.W[1][0]=8; gpu.W[1][1]=15;
+        gpu.V[2][0]=-6; gpu.V[2][1]=8; gpu.W[2][0]=6; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13798;
-        gpu.V[0][0]=-16; gpu.V[0][1]=-12;
-        gpu.W[0][0]=-14; gpu.W[0][1]=-8;
-        gpu.V[1][0]=-16; gpu.V[1][1]=0;
-        gpu.W[1][0]=-1; gpu.W[1][1]=0;
-        gpu.V[2][0]=-7; gpu.V[2][1]=5;
-        gpu.W[2][0]=15; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12226;
+        gpu.V[0][0]=-18; gpu.V[0][1]=18; gpu.W[0][0]=-13; gpu.W[0][1]=2;
+        gpu.V[1][0]=-15; gpu.V[1][1]=-18; gpu.W[1][0]=-5; gpu.W[1][1]=-6;
+        gpu.V[2][0]=-4; gpu.V[2][1]=-6; gpu.W[2][0]=-14; gpu.W[2][1]=6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2-_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 4675;
-        gpu.V[0][0]=-5; gpu.V[0][1]=11;
-        gpu.W[0][0]=18; gpu.W[0][1]=-18;
-        gpu.V[1][0]=1; gpu.V[1][1]=17;
-        gpu.W[1][0]=-11; gpu.W[1][1]=-14;
-        gpu.V[2][0]=-3; gpu.V[2][1]=13;
-        gpu.W[2][0]=13; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 4675;
+        gpu.V[0][0]=-5; gpu.V[0][1]=11; gpu.W[0][0]=18; gpu.W[0][1]=-18;
+        gpu.V[1][0]=1; gpu.V[1][1]=17; gpu.W[1][0]=-11; gpu.W[1][1]=-14;
+        gpu.V[2][0]=-3; gpu.V[2][1]=13; gpu.W[2][0]=13; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2o");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2o");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13200;
-        gpu.V[0][0]=-14; gpu.V[0][1]=-18;
-        gpu.W[0][0]=0; gpu.W[0][1]=-5;
-        gpu.V[1][0]=19; gpu.V[1][1]=-8;
-        gpu.W[1][0]=20; gpu.W[1][1]=6;
-        gpu.V[2][0]=-20; gpu.V[2][1]=-5;
-        gpu.W[2][0]=-19; gpu.W[2][1]=9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13200;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-18; gpu.W[0][0]=0; gpu.W[0][1]=-5;
+        gpu.V[1][0]=19; gpu.V[1][1]=-8; gpu.W[1][0]=20; gpu.W[1][1]=6;
+        gpu.V[2][0]=-20; gpu.V[2][1]=-5; gpu.W[2][0]=-19; gpu.W[2][1]=9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2o_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T2_Q2o_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 16968;
-        gpu.V[0][0]=0; gpu.V[0][1]=0;
-        gpu.W[0][0]=3; gpu.W[0][1]=12;
-        gpu.V[1][0]=-1; gpu.V[1][1]=-7;
-        gpu.W[1][0]=-18; gpu.W[1][1]=19;
-        gpu.V[2][0]=-20; gpu.V[2][1]=12;
-        gpu.W[2][0]=15; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 16968;
+        gpu.V[0][0]=0; gpu.V[0][1]=0; gpu.W[0][0]=3; gpu.W[0][1]=12;
+        gpu.V[1][0]=-1; gpu.V[1][1]=-7; gpu.W[1][0]=-18; gpu.W[1][1]=19;
+        gpu.V[2][0]=-20; gpu.V[2][1]=12; gpu.W[2][0]=15; gpu.W[2][1]=-17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv0_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv0_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9782;
-        gpu.V[0][0]=19; gpu.V[0][1]=-6;
-        gpu.W[0][0]=12; gpu.W[0][1]=-5;
-        gpu.V[1][0]=-19; gpu.V[1][1]=-19;
-        gpu.W[1][0]=2; gpu.W[1][1]=-5;
-        gpu.V[2][0]=7; gpu.V[2][1]=7;
-        gpu.W[2][0]=-11; gpu.W[2][1]=14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 1585;
+        gpu.V[0][0]=-13; gpu.V[0][1]=13; gpu.W[0][0]=-15; gpu.W[0][1]=5;
+        gpu.V[1][0]=-14; gpu.V[1][1]=9; gpu.W[1][0]=16; gpu.W[1][1]=-2;
+        gpu.V[2][0]=17; gpu.V[2][1]=-17; gpu.W[2][0]=6; gpu.W[2][1]=-11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 85172;
-        gpu.V[0][0]=2; gpu.V[0][1]=-15;
-        gpu.W[0][0]=12; gpu.W[0][1]=1;
-        gpu.V[1][0]=0; gpu.V[1][1]=4;
-        gpu.W[1][0]=-8; gpu.W[1][1]=-1;
-        gpu.V[2][0]=0; gpu.V[2][1]=-17;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 85172;
+        gpu.V[0][0]=2; gpu.V[0][1]=-15; gpu.W[0][0]=12; gpu.W[0][1]=1;
+        gpu.V[1][0]=0; gpu.V[1][1]=4; gpu.W[1][0]=-8; gpu.W[1][1]=-1;
+        gpu.V[2][0]=0; gpu.V[2][1]=-17; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv1_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv1_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 10857;
-        gpu.V[0][0]=7; gpu.V[0][1]=7;
-        gpu.W[0][0]=9; gpu.W[0][1]=-13;
-        gpu.V[1][0]=18; gpu.V[1][1]=10;
-        gpu.W[1][0]=-4; gpu.W[1][1]=8;
-        gpu.V[2][0]=-9; gpu.V[2][1]=-9;
-        gpu.W[2][0]=4; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10857;
+        gpu.V[0][0]=7; gpu.V[0][1]=7; gpu.W[0][0]=9; gpu.W[0][1]=-13;
+        gpu.V[1][0]=18; gpu.V[1][1]=10; gpu.W[1][0]=-4; gpu.W[1][1]=8;
+        gpu.V[2][0]=-9; gpu.V[2][1]=-9; gpu.W[2][0]=4; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv1_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv1_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 96328;
-        gpu.V[0][0]=-11; gpu.V[0][1]=5;
-        gpu.W[0][0]=-6; gpu.W[0][1]=18;
-        gpu.V[1][0]=-3; gpu.V[1][1]=-3;
-        gpu.W[1][0]=-8; gpu.W[1][1]=-15;
-        gpu.V[2][0]=20; gpu.V[2][1]=20;
-        gpu.W[2][0]=6; gpu.W[2][1]=6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 96328;
+        gpu.V[0][0]=-11; gpu.V[0][1]=5; gpu.W[0][0]=-6; gpu.W[0][1]=18;
+        gpu.V[1][0]=-3; gpu.V[1][1]=-3; gpu.W[1][0]=-8; gpu.W[1][1]=-15;
+        gpu.V[2][0]=20; gpu.V[2][1]=20; gpu.W[2][0]=6; gpu.W[2][1]=6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv1_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv1_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7288;
-        gpu.V[0][0]=-6; gpu.V[0][1]=-16;
-        gpu.W[0][0]=10; gpu.W[0][1]=4;
-        gpu.V[1][0]=20; gpu.V[1][1]=20;
-        gpu.W[1][0]=-17; gpu.W[1][1]=-7;
-        gpu.V[2][0]=5; gpu.V[2][1]=18;
-        gpu.W[2][0]=11; gpu.W[2][1]=17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7288;
+        gpu.V[0][0]=-6; gpu.V[0][1]=-16; gpu.W[0][0]=10; gpu.W[0][1]=4;
+        gpu.V[1][0]=20; gpu.V[1][1]=20; gpu.W[1][0]=-17; gpu.W[1][1]=-7;
+        gpu.V[2][0]=5; gpu.V[2][1]=18; gpu.W[2][0]=11; gpu.W[2][1]=17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 48779;
-        gpu.V[0][0]=0; gpu.V[0][1]=-13;
-        gpu.W[0][0]=-3; gpu.W[0][1]=1;
-        gpu.V[1][0]=-18; gpu.V[1][1]=17;
-        gpu.W[1][0]=0; gpu.W[1][1]=0;
-        gpu.V[2][0]=15; gpu.V[2][1]=1;
-        gpu.W[2][0]=3; gpu.W[2][1]=10;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 48779;
+        gpu.V[0][0]=0; gpu.V[0][1]=-13; gpu.W[0][0]=-3; gpu.W[0][1]=1;
+        gpu.V[1][0]=-18; gpu.V[1][1]=17; gpu.W[1][0]=0; gpu.W[1][1]=0;
+        gpu.V[2][0]=15; gpu.V[2][1]=1; gpu.W[2][0]=3; gpu.W[2][1]=10;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 547;
-        gpu.V[0][0]=-16; gpu.V[0][1]=15;
-        gpu.W[0][0]=7; gpu.W[0][1]=7;
-        gpu.V[1][0]=-5; gpu.V[1][1]=-1;
-        gpu.W[1][0]=-17; gpu.W[1][1]=-17;
-        gpu.V[2][0]=17; gpu.V[2][1]=0;
-        gpu.W[2][0]=-10; gpu.W[2][1]=20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 547;
+        gpu.V[0][0]=-16; gpu.V[0][1]=15; gpu.W[0][0]=7; gpu.W[0][1]=7;
+        gpu.V[1][0]=-5; gpu.V[1][1]=-1; gpu.W[1][0]=-17; gpu.W[1][1]=-17;
+        gpu.V[2][0]=17; gpu.V[2][1]=0; gpu.W[2][0]=-10; gpu.W[2][1]=20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 32951;
-        gpu.V[0][0]=15; gpu.V[0][1]=-20;
-        gpu.W[0][0]=3; gpu.W[0][1]=-4;
-        gpu.V[1][0]=-12; gpu.V[1][1]=-5;
-        gpu.W[1][0]=-2; gpu.W[1][1]=19;
-        gpu.V[2][0]=1; gpu.V[2][1]=6;
-        gpu.W[2][0]=-15; gpu.W[2][1]=20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 32951;
+        gpu.V[0][0]=15; gpu.V[0][1]=-20; gpu.W[0][0]=3; gpu.W[0][1]=-4;
+        gpu.V[1][0]=-12; gpu.V[1][1]=-5; gpu.W[1][0]=-2; gpu.W[1][1]=19;
+        gpu.V[2][0]=1; gpu.V[2][1]=6; gpu.W[2][0]=-15; gpu.W[2][1]=20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11193;
-        gpu.V[0][0]=11; gpu.V[0][1]=-3;
-        gpu.W[0][0]=1; gpu.W[0][1]=10;
-        gpu.V[1][0]=0; gpu.V[1][1]=9;
-        gpu.W[1][0]=0; gpu.W[1][1]=-10;
-        gpu.V[2][0]=-16; gpu.V[2][1]=-10;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11193;
+        gpu.V[0][0]=11; gpu.V[0][1]=-3; gpu.W[0][0]=1; gpu.W[0][1]=10;
+        gpu.V[1][0]=0; gpu.V[1][1]=9; gpu.W[1][0]=0; gpu.W[1][1]=-10;
+        gpu.V[2][0]=-16; gpu.V[2][1]=-10; gpu.W[2][0]=-7; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cv_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cv_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7277;
-        gpu.V[0][0]=12; gpu.V[0][1]=20;
-        gpu.W[0][0]=-11; gpu.W[0][1]=0;
-        gpu.V[1][0]=-18; gpu.V[1][1]=-18;
-        gpu.W[1][0]=13; gpu.W[1][1]=5;
-        gpu.V[2][0]=-20; gpu.V[2][1]=19;
-        gpu.W[2][0]=16; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7277;
+        gpu.V[0][0]=12; gpu.V[0][1]=20; gpu.W[0][0]=-11; gpu.W[0][1]=0;
+        gpu.V[1][0]=-18; gpu.V[1][1]=-18; gpu.W[1][0]=13; gpu.W[1][1]=5;
+        gpu.V[2][0]=-20; gpu.V[2][1]=19; gpu.W[2][0]=16; gpu.W[2][1]=-3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8785;
-        gpu.V[0][0]=11; gpu.V[0][1]=20;
-        gpu.W[0][0]=0; gpu.W[0][1]=0;
-        gpu.V[1][0]=16; gpu.V[1][1]=-7;
-        gpu.W[1][0]=18; gpu.W[1][1]=8;
-        gpu.V[2][0]=-19; gpu.V[2][1]=10;
-        gpu.W[2][0]=-14; gpu.W[2][1]=10;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8785;
+        gpu.V[0][0]=11; gpu.V[0][1]=20; gpu.W[0][0]=0; gpu.W[0][1]=0;
+        gpu.V[1][0]=16; gpu.V[1][1]=-7; gpu.W[1][0]=18; gpu.W[1][1]=8;
+        gpu.V[2][0]=-19; gpu.V[2][1]=10; gpu.W[2][0]=-14; gpu.W[2][1]=10;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 10947;
-        gpu.V[0][0]=-2; gpu.V[0][1]=1;
-        gpu.W[0][0]=1; gpu.W[0][1]=-8;
-        gpu.V[1][0]=18; gpu.V[1][1]=-13;
-        gpu.W[1][0]=8; gpu.W[1][1]=-4;
-        gpu.V[2][0]=7; gpu.V[2][1]=-9;
-        gpu.W[2][0]=-2; gpu.W[2][1]=16;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10947;
+        gpu.V[0][0]=-2; gpu.V[0][1]=1; gpu.W[0][0]=1; gpu.W[0][1]=-8;
+        gpu.V[1][0]=18; gpu.V[1][1]=-13; gpu.W[1][0]=8; gpu.W[1][1]=-4;
+        gpu.V[2][0]=7; gpu.V[2][1]=-9; gpu.W[2][0]=-2; gpu.W[2][1]=16;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 40554;
-        gpu.V[0][0]=-19; gpu.V[0][1]=-4;
-        gpu.W[0][0]=4; gpu.W[0][1]=4;
-        gpu.V[1][0]=-13; gpu.V[1][1]=-13;
-        gpu.W[1][0]=-14; gpu.W[1][1]=-14;
-        gpu.V[2][0]=14; gpu.V[2][1]=-9;
-        gpu.W[2][0]=-7; gpu.W[2][1]=11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 40554;
+        gpu.V[0][0]=-19; gpu.V[0][1]=-4; gpu.W[0][0]=4; gpu.W[0][1]=4;
+        gpu.V[1][0]=-13; gpu.V[1][1]=-13; gpu.W[1][0]=-14; gpu.W[1][1]=-14;
+        gpu.V[2][0]=14; gpu.V[2][1]=-9; gpu.W[2][0]=-7; gpu.W[2][1]=11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 4961;
-        gpu.V[0][0]=17; gpu.V[0][1]=0;
-        gpu.W[0][0]=19; gpu.W[0][1]=0;
-        gpu.V[1][0]=-12; gpu.V[1][1]=2;
-        gpu.W[1][0]=-8; gpu.W[1][1]=15;
-        gpu.V[2][0]=-13; gpu.V[2][1]=6;
-        gpu.W[2][0]=3; gpu.W[2][1]=-14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 4961;
+        gpu.V[0][0]=17; gpu.V[0][1]=0; gpu.W[0][0]=19; gpu.W[0][1]=0;
+        gpu.V[1][0]=-12; gpu.V[1][1]=2; gpu.W[1][0]=-8; gpu.W[1][1]=15;
+        gpu.V[2][0]=-13; gpu.V[2][1]=6; gpu.W[2][0]=3; gpu.W[2][1]=-14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 60547;
-        gpu.V[0][0]=5; gpu.V[0][1]=5;
-        gpu.W[0][0]=-17; gpu.W[0][1]=-18;
-        gpu.V[1][0]=6; gpu.V[1][1]=14;
-        gpu.W[1][0]=-16; gpu.W[1][1]=-12;
-        gpu.V[2][0]=-4; gpu.V[2][1]=-4;
-        gpu.W[2][0]=6; gpu.W[2][1]=5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 60547;
+        gpu.V[0][0]=5; gpu.V[0][1]=5; gpu.W[0][0]=-17; gpu.W[0][1]=-18;
+        gpu.V[1][0]=6; gpu.V[1][1]=14; gpu.W[1][0]=-16; gpu.W[1][1]=-12;
+        gpu.V[2][0]=-4; gpu.V[2][1]=-4; gpu.W[2][0]=6; gpu.W[2][1]=5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_SR_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_SR_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11413;
-        gpu.V[0][0]=4; gpu.V[0][1]=3;
-        gpu.W[0][0]=-6; gpu.W[0][1]=9;
-        gpu.V[1][0]=-7; gpu.V[1][1]=-17;
-        gpu.W[1][0]=-2; gpu.W[1][1]=-11;
-        gpu.V[2][0]=-1; gpu.V[2][1]=3;
-        gpu.W[2][0]=11; gpu.W[2][1]=9;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11413;
+        gpu.V[0][0]=4; gpu.V[0][1]=3; gpu.W[0][0]=-6; gpu.W[0][1]=9;
+        gpu.V[1][0]=-7; gpu.V[1][1]=-17; gpu.W[1][0]=-2; gpu.W[1][1]=-11;
+        gpu.V[2][0]=-1; gpu.V[2][1]=3; gpu.W[2][0]=11; gpu.W[2][1]=9;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_SR_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_SR_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 39988;
-        gpu.V[0][0]=-14; gpu.V[0][1]=1;
-        gpu.W[0][0]=6; gpu.W[0][1]=1;
-        gpu.V[1][0]=-17; gpu.V[1][1]=-14;
-        gpu.W[1][0]=6; gpu.W[1][1]=-5;
-        gpu.V[2][0]=-3; gpu.V[2][1]=1;
-        gpu.W[2][0]=-19; gpu.W[2][1]=1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 39988;
+        gpu.V[0][0]=-14; gpu.V[0][1]=1; gpu.W[0][0]=6; gpu.W[0][1]=1;
+        gpu.V[1][0]=-17; gpu.V[1][1]=-14; gpu.W[1][0]=6; gpu.W[1][1]=-5;
+        gpu.V[2][0]=-3; gpu.V[2][1]=1; gpu.W[2][0]=-19; gpu.W[2][1]=1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_SR_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_SR_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6945;
-        gpu.V[0][0]=-12; gpu.V[0][1]=-11;
-        gpu.W[0][0]=5; gpu.W[0][1]=4;
-        gpu.V[1][0]=-17; gpu.V[1][1]=-16;
-        gpu.W[1][0]=-12; gpu.W[1][1]=-10;
-        gpu.V[2][0]=-1; gpu.V[2][1]=0;
-        gpu.W[2][0]=-10; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6945;
+        gpu.V[0][0]=-12; gpu.V[0][1]=-11; gpu.W[0][0]=5; gpu.W[0][1]=4;
+        gpu.V[1][0]=-17; gpu.V[1][1]=-16; gpu.W[1][0]=-12; gpu.W[1][1]=-10;
+        gpu.V[2][0]=-1; gpu.V[2][1]=0; gpu.W[2][0]=-10; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,1,2)_Q2+_SR_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,1,2)_Q2+_SR_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 61833;
-        gpu.V[0][0]=16; gpu.V[0][1]=8;
-        gpu.W[0][0]=13; gpu.W[0][1]=-19;
-        gpu.V[1][0]=15; gpu.V[1][1]=13;
-        gpu.W[1][0]=18; gpu.W[1][1]=15;
-        gpu.V[2][0]=-10; gpu.V[2][1]=-5;
-        gpu.W[2][0]=-14; gpu.W[2][1]=18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 61833;
+        gpu.V[0][0]=16; gpu.V[0][1]=8; gpu.W[0][0]=13; gpu.W[0][1]=-19;
+        gpu.V[1][0]=15; gpu.V[1][1]=13; gpu.W[1][0]=18; gpu.W[1][1]=15;
+        gpu.V[2][0]=-10; gpu.V[2][1]=-5; gpu.W[2][0]=-14; gpu.W[2][1]=18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3696;
-        gpu.V[0][0]=4; gpu.V[0][1]=-12;
-        gpu.W[0][0]=17; gpu.W[0][1]=-17;
-        gpu.V[1][0]=6; gpu.V[1][1]=11;
-        gpu.W[1][0]=4; gpu.W[1][1]=8;
-        gpu.V[2][0]=-20; gpu.V[2][1]=-8;
-        gpu.W[2][0]=-9; gpu.W[2][1]=-11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3696;
+        gpu.V[0][0]=4; gpu.V[0][1]=-12; gpu.W[0][0]=17; gpu.W[0][1]=-17;
+        gpu.V[1][0]=6; gpu.V[1][1]=11; gpu.W[1][0]=4; gpu.W[1][1]=8;
+        gpu.V[2][0]=-20; gpu.V[2][1]=-8; gpu.W[2][0]=-9; gpu.W[2][1]=-11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 18513;
-        gpu.V[0][0]=17; gpu.V[0][1]=-7;
-        gpu.W[0][0]=10; gpu.W[0][1]=17;
-        gpu.V[1][0]=-7; gpu.V[1][1]=16;
-        gpu.W[1][0]=-10; gpu.W[1][1]=-17;
-        gpu.V[2][0]=-19; gpu.V[2][1]=3;
-        gpu.W[2][0]=20; gpu.W[2][1]=6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 18513;
+        gpu.V[0][0]=17; gpu.V[0][1]=-7; gpu.W[0][0]=10; gpu.W[0][1]=17;
+        gpu.V[1][0]=-7; gpu.V[1][1]=16; gpu.W[1][0]=-10; gpu.W[1][1]=-17;
+        gpu.V[2][0]=-19; gpu.V[2][1]=3; gpu.W[2][0]=20; gpu.W[2][1]=6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12807;
-        gpu.V[0][0]=-20; gpu.V[0][1]=-1;
-        gpu.W[0][0]=6; gpu.W[0][1]=-7;
-        gpu.V[1][0]=-18; gpu.V[1][1]=-4;
-        gpu.W[1][0]=0; gpu.W[1][1]=-13;
-        gpu.V[2][0]=14; gpu.V[2][1]=8;
-        gpu.W[2][0]=-3; gpu.W[2][1]=20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12807;
+        gpu.V[0][0]=-20; gpu.V[0][1]=-1; gpu.W[0][0]=6; gpu.W[0][1]=-7;
+        gpu.V[1][0]=-18; gpu.V[1][1]=-4; gpu.W[1][0]=0; gpu.W[1][1]=-13;
+        gpu.V[2][0]=14; gpu.V[2][1]=8; gpu.W[2][0]=-3; gpu.W[2][1]=20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 3363;
-        gpu.V[0][0]=8; gpu.V[0][1]=-7;
-        gpu.W[0][0]=6; gpu.W[0][1]=-12;
-        gpu.V[1][0]=0; gpu.V[1][1]=-7;
-        gpu.W[1][0]=-1; gpu.W[1][1]=1;
-        gpu.V[2][0]=9; gpu.V[2][1]=-14;
-        gpu.W[2][0]=11; gpu.W[2][1]=-11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 3363;
+        gpu.V[0][0]=8; gpu.V[0][1]=-7; gpu.W[0][0]=6; gpu.W[0][1]=-12;
+        gpu.V[1][0]=0; gpu.V[1][1]=-7; gpu.W[1][0]=-1; gpu.W[1][1]=1;
+        gpu.V[2][0]=9; gpu.V[2][1]=-14; gpu.W[2][0]=11; gpu.W[2][1]=-11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 14346;
-        gpu.V[0][0]=-12; gpu.V[0][1]=14;
-        gpu.W[0][0]=-10; gpu.W[0][1]=3;
-        gpu.V[1][0]=-16; gpu.V[1][1]=-2;
-        gpu.W[1][0]=19; gpu.W[1][1]=-7;
-        gpu.V[2][0]=-20; gpu.V[2][1]=12;
-        gpu.W[2][0]=-20; gpu.W[2][1]=12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 14346;
+        gpu.V[0][0]=-12; gpu.V[0][1]=14; gpu.W[0][0]=-10; gpu.W[0][1]=3;
+        gpu.V[1][0]=-16; gpu.V[1][1]=-2; gpu.W[1][0]=19; gpu.W[1][1]=-7;
+        gpu.V[2][0]=-20; gpu.V[2][1]=12; gpu.W[2][0]=-20; gpu.W[2][1]=12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 83146;
-        gpu.V[0][0]=-4; gpu.V[0][1]=-6;
-        gpu.W[0][0]=5; gpu.W[0][1]=9;
-        gpu.V[1][0]=12; gpu.V[1][1]=10;
-        gpu.W[1][0]=20; gpu.W[1][1]=3;
-        gpu.V[2][0]=-4; gpu.V[2][1]=-6;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 83146;
+        gpu.V[0][0]=-4; gpu.V[0][1]=-6; gpu.W[0][0]=5; gpu.W[0][1]=9;
+        gpu.V[1][0]=12; gpu.V[1][1]=10; gpu.W[1][0]=20; gpu.W[1][1]=3;
+        gpu.V[2][0]=-4; gpu.V[2][1]=-6; gpu.W[2][0]=-18; gpu.W[2][1]=-3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(1,3)_Q2+_SR_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(1,3)_Q2+_SR_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6283;
-        gpu.V[0][0]=11; gpu.V[0][1]=5;
-        gpu.W[0][0]=13; gpu.W[0][1]=-15;
-        gpu.V[1][0]=16; gpu.V[1][1]=5;
-        gpu.W[1][0]=-17; gpu.W[1][1]=20;
-        gpu.V[2][0]=-10; gpu.V[2][1]=-17;
-        gpu.W[2][0]=13; gpu.W[2][1]=-15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6283;
+        gpu.V[0][0]=11; gpu.V[0][1]=5; gpu.W[0][0]=13; gpu.W[0][1]=-15;
+        gpu.V[1][0]=16; gpu.V[1][1]=5; gpu.W[1][0]=-17; gpu.W[1][1]=20;
+        gpu.V[2][0]=-10; gpu.V[2][1]=-17; gpu.W[2][0]=13; gpu.W[2][1]=-15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7267;
-        gpu.V[0][0]=-4; gpu.V[0][1]=-7;
-        gpu.W[0][0]=-18; gpu.W[0][1]=-19;
-        gpu.V[1][0]=-7; gpu.V[1][1]=12;
-        gpu.W[1][0]=15; gpu.W[1][1]=14;
-        gpu.V[2][0]=14; gpu.V[2][1]=-8;
-        gpu.W[2][0]=2; gpu.W[2][1]=1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7267;
+        gpu.V[0][0]=-4; gpu.V[0][1]=-7; gpu.W[0][0]=-18; gpu.W[0][1]=-19;
+        gpu.V[1][0]=-7; gpu.V[1][1]=12; gpu.W[1][0]=15; gpu.W[1][1]=14;
+        gpu.V[2][0]=14; gpu.V[2][1]=-8; gpu.W[2][0]=2; gpu.W[2][1]=1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q1_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q1_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 99270;
-        gpu.V[0][0]=-5; gpu.V[0][1]=-5;
-        gpu.W[0][0]=-14; gpu.W[0][1]=-5;
-        gpu.V[1][0]=-9; gpu.V[1][1]=2;
-        gpu.W[1][0]=-8; gpu.W[1][1]=-2;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=8; gpu.W[2][1]=6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 99270;
+        gpu.V[0][0]=-5; gpu.V[0][1]=-5; gpu.W[0][0]=-14; gpu.W[0][1]=-5;
+        gpu.V[1][0]=-9; gpu.V[1][1]=2; gpu.W[1][0]=-8; gpu.W[1][1]=-2;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=8; gpu.W[2][1]=6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q1_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q1_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 15056;
-        gpu.V[0][0]=-15; gpu.V[0][1]=5;
-        gpu.W[0][0]=9; gpu.W[0][1]=-3;
-        gpu.V[1][0]=5; gpu.V[1][1]=-11;
-        gpu.W[1][0]=-5; gpu.W[1][1]=-3;
-        gpu.V[2][0]=17; gpu.V[2][1]=18;
-        gpu.W[2][0]=-20; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 15056;
+        gpu.V[0][0]=-15; gpu.V[0][1]=5; gpu.W[0][0]=9; gpu.W[0][1]=-3;
+        gpu.V[1][0]=5; gpu.V[1][1]=-11; gpu.W[1][0]=-5; gpu.W[1][1]=-3;
+        gpu.V[2][0]=17; gpu.V[2][1]=18; gpu.W[2][0]=-20; gpu.W[2][1]=-3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q1_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q1_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 95974;
-        gpu.V[0][0]=-4; gpu.V[0][1]=-8;
-        gpu.W[0][0]=-12; gpu.W[0][1]=-3;
-        gpu.V[1][0]=-5; gpu.V[1][1]=-8;
-        gpu.W[1][0]=10; gpu.W[1][1]=-3;
-        gpu.V[2][0]=0; gpu.V[2][1]=20;
-        gpu.W[2][0]=19; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 95974;
+        gpu.V[0][0]=-4; gpu.V[0][1]=-8; gpu.W[0][0]=-12; gpu.W[0][1]=-3;
+        gpu.V[1][0]=-5; gpu.V[1][1]=-8; gpu.W[1][0]=10; gpu.W[1][1]=-3;
+        gpu.V[2][0]=0; gpu.V[2][1]=20; gpu.W[2][0]=19; gpu.W[2][1]=-3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q1_SR");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q1_SR");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11886;
-        gpu.V[0][0]=2; gpu.V[0][1]=-9;
-        gpu.W[0][0]=-13; gpu.W[0][1]=-11;
-        gpu.V[1][0]=-17; gpu.V[1][1]=11;
-        gpu.W[1][0]=12; gpu.W[1][1]=12;
-        gpu.V[2][0]=-13; gpu.V[2][1]=15;
-        gpu.W[2][0]=-3; gpu.W[2][1]=11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8801;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-16; gpu.W[0][0]=-19; gpu.W[0][1]=-17;
+        gpu.V[1][0]=18; gpu.V[1][1]=-17; gpu.W[1][0]=-7; gpu.W[1][1]=-2;
+        gpu.V[2][0]=7; gpu.V[2][1]=3; gpu.W[2][0]=18; gpu.W[2][1]=1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7292;
-        gpu.V[0][0]=-5; gpu.V[0][1]=16;
-        gpu.W[0][0]=-4; gpu.W[0][1]=11;
-        gpu.V[1][0]=1; gpu.V[1][1]=-2;
-        gpu.W[1][0]=-13; gpu.W[1][1]=11;
-        gpu.V[2][0]=-9; gpu.V[2][1]=5;
-        gpu.W[2][0]=20; gpu.W[2][1]=-16;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7292;
+        gpu.V[0][0]=-5; gpu.V[0][1]=16; gpu.W[0][0]=-4; gpu.W[0][1]=11;
+        gpu.V[1][0]=1; gpu.V[1][1]=-2; gpu.W[1][0]=-13; gpu.W[1][1]=11;
+        gpu.V[2][0]=-9; gpu.V[2][1]=5; gpu.W[2][0]=20; gpu.W[2][1]=-16;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 10567;
-        gpu.V[0][0]=-4; gpu.V[0][1]=-9;
-        gpu.W[0][0]=7; gpu.W[0][1]=-14;
-        gpu.V[1][0]=7; gpu.V[1][1]=-4;
-        gpu.W[1][0]=5; gpu.W[1][1]=-8;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=0; gpu.W[2][1]=18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10567;
+        gpu.V[0][0]=-4; gpu.V[0][1]=-9; gpu.W[0][0]=7; gpu.W[0][1]=-14;
+        gpu.V[1][0]=7; gpu.V[1][1]=-4; gpu.W[1][0]=5; gpu.W[1][1]=-8;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=0; gpu.W[2][1]=18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12616;
-        gpu.V[0][0]=7; gpu.V[0][1]=8;
-        gpu.W[0][0]=-2; gpu.W[0][1]=14;
-        gpu.V[1][0]=17; gpu.V[1][1]=17;
-        gpu.W[1][0]=-6; gpu.W[1][1]=-11;
-        gpu.V[2][0]=-12; gpu.V[2][1]=-12;
-        gpu.W[2][0]=-3; gpu.W[2][1]=-19;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12616;
+        gpu.V[0][0]=7; gpu.V[0][1]=8; gpu.W[0][0]=-2; gpu.W[0][1]=14;
+        gpu.V[1][0]=17; gpu.V[1][1]=17; gpu.W[1][0]=-6; gpu.W[1][1]=-11;
+        gpu.V[2][0]=-12; gpu.V[2][1]=-12; gpu.W[2][0]=-3; gpu.W[2][1]=-19;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 23128;
-        gpu.V[0][0]=-19; gpu.V[0][1]=0;
-        gpu.W[0][0]=-12; gpu.W[0][1]=18;
-        gpu.V[1][0]=2; gpu.V[1][1]=0;
-        gpu.W[1][0]=-17; gpu.W[1][1]=0;
-        gpu.V[2][0]=9; gpu.V[2][1]=-2;
-        gpu.W[2][0]=6; gpu.W[2][1]=8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 18333;
+        gpu.V[0][0]=0; gpu.V[0][1]=2; gpu.W[0][0]=0; gpu.W[0][1]=3;
+        gpu.V[1][0]=5; gpu.V[1][1]=16; gpu.W[1][0]=6; gpu.W[1][1]=19;
+        gpu.V[2][0]=0; gpu.V[2][1]=-19; gpu.W[2][0]=2; gpu.W[2][1]=10;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 4181;
-        gpu.V[0][0]=13; gpu.V[0][1]=13;
-        gpu.W[0][0]=-20; gpu.W[0][1]=20;
-        gpu.V[1][0]=2; gpu.V[1][1]=16;
-        gpu.W[1][0]=20; gpu.W[1][1]=-11;
-        gpu.V[2][0]=-11; gpu.V[2][1]=-20;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 4181;
+        gpu.V[0][0]=13; gpu.V[0][1]=13; gpu.W[0][0]=-20; gpu.W[0][1]=20;
+        gpu.V[1][0]=2; gpu.V[1][1]=16; gpu.W[1][0]=20; gpu.W[1][1]=-11;
+        gpu.V[2][0]=-11; gpu.V[2][1]=-20; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 5231;
-        gpu.V[0][0]=1; gpu.V[0][1]=-3;
-        gpu.W[0][0]=0; gpu.W[0][1]=1;
-        gpu.V[1][0]=17; gpu.V[1][1]=14;
-        gpu.W[1][0]=0; gpu.W[1][1]=-9;
-        gpu.V[2][0]=-10; gpu.V[2][1]=-2;
-        gpu.W[2][0]=-11; gpu.W[2][1]=-14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5231;
+        gpu.V[0][0]=1; gpu.V[0][1]=-3; gpu.W[0][0]=0; gpu.W[0][1]=1;
+        gpu.V[1][0]=17; gpu.V[1][1]=14; gpu.W[1][0]=0; gpu.W[1][1]=-9;
+        gpu.V[2][0]=-10; gpu.V[2][1]=-2; gpu.W[2][0]=-11; gpu.W[2][1]=-14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 22117;
-        gpu.V[0][0]=13; gpu.V[0][1]=-6;
-        gpu.W[0][0]=-13; gpu.W[0][1]=6;
-        gpu.V[1][0]=-9; gpu.V[1][1]=-13;
-        gpu.W[1][0]=8; gpu.W[1][1]=-6;
-        gpu.V[2][0]=-4; gpu.V[2][1]=14;
-        gpu.W[2][0]=13; gpu.W[2][1]=-6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 22117;
+        gpu.V[0][0]=13; gpu.V[0][1]=-6; gpu.W[0][0]=-13; gpu.W[0][1]=6;
+        gpu.V[1][0]=-9; gpu.V[1][1]=-13; gpu.W[1][0]=8; gpu.W[1][1]=-6;
+        gpu.V[2][0]=-4; gpu.V[2][1]=14; gpu.W[2][0]=13; gpu.W[2][1]=-6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 763;
-        gpu.V[0][0]=6; gpu.V[0][1]=12;
-        gpu.W[0][0]=9; gpu.W[0][1]=18;
-        gpu.V[1][0]=14; gpu.V[1][1]=-17;
-        gpu.W[1][0]=3; gpu.W[1][1]=-18;
-        gpu.V[2][0]=-19; gpu.V[2][1]=9;
-        gpu.W[2][0]=10; gpu.W[2][1]=-18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 763;
+        gpu.V[0][0]=6; gpu.V[0][1]=12; gpu.W[0][0]=9; gpu.W[0][1]=18;
+        gpu.V[1][0]=14; gpu.V[1][1]=-17; gpu.W[1][0]=3; gpu.W[1][1]=-18;
+        gpu.V[2][0]=-19; gpu.V[2][1]=9; gpu.W[2][0]=10; gpu.W[2][1]=-18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13098;
-        gpu.V[0][0]=19; gpu.V[0][1]=-8;
-        gpu.W[0][0]=0; gpu.W[0][1]=0;
-        gpu.V[1][0]=-5; gpu.V[1][1]=6;
-        gpu.W[1][0]=-8; gpu.W[1][1]=14;
-        gpu.V[2][0]=-7; gpu.V[2][1]=15;
-        gpu.W[2][0]=-13; gpu.W[2][1]=-14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10354;
+        gpu.V[0][0]=-8; gpu.V[0][1]=4; gpu.W[0][0]=-7; gpu.W[0][1]=12;
+        gpu.V[1][0]=-9; gpu.V[1][1]=-6; gpu.W[1][0]=-11; gpu.W[1][1]=-10;
+        gpu.V[2][0]=9; gpu.V[2][1]=-8; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6485;
-        gpu.V[0][0]=13; gpu.V[0][1]=-17;
-        gpu.W[0][0]=18; gpu.W[0][1]=-18;
-        gpu.V[1][0]=18; gpu.V[1][1]=15;
-        gpu.W[1][0]=8; gpu.W[1][1]=1;
-        gpu.V[2][0]=13; gpu.V[2][1]=-20;
-        gpu.W[2][0]=-19; gpu.W[2][1]=19;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6485;
+        gpu.V[0][0]=13; gpu.V[0][1]=-17; gpu.W[0][0]=18; gpu.W[0][1]=-18;
+        gpu.V[1][0]=18; gpu.V[1][1]=15; gpu.W[1][0]=8; gpu.W[1][1]=1;
+        gpu.V[2][0]=13; gpu.V[2][1]=-20; gpu.W[2][0]=-19; gpu.W[2][1]=19;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8316;
-        gpu.V[0][0]=-19; gpu.V[0][1]=-19;
-        gpu.W[0][0]=4; gpu.W[0][1]=13;
-        gpu.V[1][0]=-15; gpu.V[1][1]=-15;
-        gpu.W[1][0]=13; gpu.W[1][1]=13;
-        gpu.V[2][0]=19; gpu.V[2][1]=12;
-        gpu.W[2][0]=14; gpu.W[2][1]=-7;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8316;
+        gpu.V[0][0]=-19; gpu.V[0][1]=-19; gpu.W[0][0]=4; gpu.W[0][1]=13;
+        gpu.V[1][0]=-15; gpu.V[1][1]=-15; gpu.W[1][0]=13; gpu.W[1][1]=13;
+        gpu.V[2][0]=19; gpu.V[2][1]=12; gpu.W[2][0]=14; gpu.W[2][1]=-7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8705;
-        gpu.V[0][0]=-20; gpu.V[0][1]=-5;
-        gpu.W[0][0]=9; gpu.W[0][1]=3;
-        gpu.V[1][0]=10; gpu.V[1][1]=10;
-        gpu.W[1][0]=-13; gpu.W[1][1]=-8;
-        gpu.V[2][0]=11; gpu.V[2][1]=4;
-        gpu.W[2][0]=15; gpu.W[2][1]=-15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8705;
+        gpu.V[0][0]=-20; gpu.V[0][1]=-5; gpu.W[0][0]=9; gpu.W[0][1]=3;
+        gpu.V[1][0]=10; gpu.V[1][1]=10; gpu.W[1][0]=-13; gpu.W[1][1]=-8;
+        gpu.V[2][0]=11; gpu.V[2][1]=4; gpu.W[2][0]=15; gpu.W[2][1]=-15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_SR");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_SR");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 1632;
-        gpu.V[0][0]=-2; gpu.V[0][1]=19;
-        gpu.W[0][0]=-5; gpu.W[0][1]=-14;
-        gpu.V[1][0]=9; gpu.V[1][1]=1;
-        gpu.W[1][0]=18; gpu.W[1][1]=13;
-        gpu.V[2][0]=-2; gpu.V[2][1]=-8;
-        gpu.W[2][0]=-4; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 1632;
+        gpu.V[0][0]=-2; gpu.V[0][1]=19; gpu.W[0][0]=-5; gpu.W[0][1]=-14;
+        gpu.V[1][0]=9; gpu.V[1][1]=1; gpu.W[1][0]=18; gpu.W[1][1]=13;
+        gpu.V[2][0]=-2; gpu.V[2][1]=-8; gpu.W[2][0]=-4; gpu.W[2][1]=-5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_(2,2)_Q2+_SR_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_(2,2)_Q2+_SR_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7134;
-        gpu.V[0][0]=11; gpu.V[0][1]=-15;
-        gpu.W[0][0]=19; gpu.W[0][1]=-20;
-        gpu.V[1][0]=-19; gpu.V[1][1]=3;
-        gpu.W[1][0]=18; gpu.W[1][1]=1;
-        gpu.V[2][0]=8; gpu.V[2][1]=-7;
-        gpu.W[2][0]=19; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7134;
+        gpu.V[0][0]=11; gpu.V[0][1]=-15; gpu.W[0][0]=19; gpu.W[0][1]=-20;
+        gpu.V[1][0]=-19; gpu.V[1][1]=3; gpu.W[1][0]=18; gpu.W[1][1]=1;
+        gpu.V[2][0]=8; gpu.V[2][1]=-7; gpu.W[2][0]=19; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 364;
-        gpu.V[0][0]=-20; gpu.V[0][1]=6;
-        gpu.W[0][0]=8; gpu.W[0][1]=-3;
-        gpu.V[1][0]=-8; gpu.V[1][1]=17;
-        gpu.W[1][0]=-15; gpu.W[1][1]=17;
-        gpu.V[2][0]=4; gpu.V[2][1]=-5;
-        gpu.W[2][0]=8; gpu.W[2][1]=-3;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 364;
+        gpu.V[0][0]=-20; gpu.V[0][1]=6; gpu.W[0][0]=8; gpu.W[0][1]=-3;
+        gpu.V[1][0]=-8; gpu.V[1][1]=17; gpu.W[1][0]=-15; gpu.W[1][1]=17;
+        gpu.V[2][0]=4; gpu.V[2][1]=-5; gpu.W[2][0]=8; gpu.W[2][1]=-3;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q1_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q1_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 57354;
-        gpu.V[0][0]=17; gpu.V[0][1]=-6;
-        gpu.W[0][0]=-20; gpu.W[0][1]=6;
-        gpu.V[1][0]=-10; gpu.V[1][1]=2;
-        gpu.W[1][0]=-7; gpu.W[1][1]=10;
-        gpu.V[2][0]=-17; gpu.V[2][1]=6;
-        gpu.W[2][0]=6; gpu.W[2][1]=14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 57354;
+        gpu.V[0][0]=17; gpu.V[0][1]=-6; gpu.W[0][0]=-20; gpu.W[0][1]=6;
+        gpu.V[1][0]=-10; gpu.V[1][1]=2; gpu.W[1][0]=-7; gpu.W[1][1]=10;
+        gpu.V[2][0]=-17; gpu.V[2][1]=6; gpu.W[2][0]=6; gpu.W[2][1]=14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q1_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q1_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 1606;
-        gpu.V[0][0]=-9; gpu.V[0][1]=-18;
-        gpu.W[0][0]=-15; gpu.W[0][1]=1;
-        gpu.V[1][0]=16; gpu.V[1][1]=10;
-        gpu.W[1][0]=-12; gpu.W[1][1]=9;
-        gpu.V[2][0]=-20; gpu.V[2][1]=-17;
-        gpu.W[2][0]=-8; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5172;
+        gpu.V[0][0]=-4; gpu.V[0][1]=14; gpu.W[0][0]=-1; gpu.W[0][1]=-7;
+        gpu.V[1][0]=-3; gpu.V[1][1]=15; gpu.W[1][0]=6; gpu.W[1][1]=8;
+        gpu.V[2][0]=-19; gpu.V[2][1]=4; gpu.W[2][0]=17; gpu.W[2][1]=-4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12801;
-        gpu.V[0][0]=0; gpu.V[0][1]=-19;
-        gpu.W[0][0]=13; gpu.W[0][1]=12;
-        gpu.V[1][0]=12; gpu.V[1][1]=7;
-        gpu.W[1][0]=2; gpu.W[1][1]=-18;
-        gpu.V[2][0]=-20; gpu.V[2][1]=-6;
-        gpu.W[2][0]=11; gpu.W[2][1]=16;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12801;
+        gpu.V[0][0]=0; gpu.V[0][1]=-19; gpu.W[0][0]=13; gpu.W[0][1]=12;
+        gpu.V[1][0]=12; gpu.V[1][1]=7; gpu.W[1][0]=2; gpu.W[1][1]=-18;
+        gpu.V[2][0]=-20; gpu.V[2][1]=-6; gpu.W[2][0]=11; gpu.W[2][1]=16;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 46380;
-        gpu.V[0][0]=-13; gpu.V[0][1]=-13;
-        gpu.W[0][0]=-12; gpu.W[0][1]=-3;
-        gpu.V[1][0]=8; gpu.V[1][1]=-3;
-        gpu.W[1][0]=15; gpu.W[1][1]=-12;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=19; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 46380;
+        gpu.V[0][0]=-13; gpu.V[0][1]=-13; gpu.W[0][0]=-12; gpu.W[0][1]=-3;
+        gpu.V[1][0]=8; gpu.V[1][1]=-3; gpu.W[1][0]=15; gpu.W[1][1]=-12;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=19; gpu.W[2][1]=-17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7897;
-        gpu.V[0][0]=12; gpu.V[0][1]=-10;
-        gpu.W[0][0]=3; gpu.W[0][1]=12;
-        gpu.V[1][0]=4; gpu.V[1][1]=3;
-        gpu.W[1][0]=18; gpu.W[1][1]=-11;
-        gpu.V[2][0]=-12; gpu.V[2][1]=10;
-        gpu.W[2][0]=4; gpu.W[2][1]=-17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 10306;
+        gpu.V[0][0]=-11; gpu.V[0][1]=-11; gpu.W[0][0]=5; gpu.W[0][1]=-19;
+        gpu.V[1][0]=-11; gpu.V[1][1]=-13; gpu.W[1][0]=-14; gpu.W[1][1]=-13;
+        gpu.V[2][0]=13; gpu.V[2][1]=13; gpu.W[2][0]=19; gpu.W[2][1]=-6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 19463;
-        gpu.V[0][0]=14; gpu.V[0][1]=2;
-        gpu.W[0][0]=12; gpu.W[0][1]=-6;
-        gpu.V[1][0]=17; gpu.V[1][1]=12;
-        gpu.W[1][0]=17; gpu.W[1][1]=-8;
-        gpu.V[2][0]=-15; gpu.V[2][1]=-9;
-        gpu.W[2][0]=-8; gpu.W[2][1]=4;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 19463;
+        gpu.V[0][0]=14; gpu.V[0][1]=2; gpu.W[0][0]=12; gpu.W[0][1]=-6;
+        gpu.V[1][0]=17; gpu.V[1][1]=12; gpu.W[1][0]=17; gpu.W[1][1]=-8;
+        gpu.V[2][0]=-15; gpu.V[2][1]=-9; gpu.W[2][0]=-8; gpu.W[2][1]=4;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 35739;
-        gpu.V[0][0]=0; gpu.V[0][1]=16;
-        gpu.W[0][0]=0; gpu.W[0][1]=-6;
-        gpu.V[1][0]=9; gpu.V[1][1]=-3;
-        gpu.W[1][0]=15; gpu.W[1][1]=15;
-        gpu.V[2][0]=-17; gpu.V[2][1]=4;
-        gpu.W[2][0]=-7; gpu.W[2][1]=-13;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 35739;
+        gpu.V[0][0]=0; gpu.V[0][1]=16; gpu.W[0][0]=0; gpu.W[0][1]=-6;
+        gpu.V[1][0]=9; gpu.V[1][1]=-3; gpu.W[1][0]=15; gpu.W[1][1]=15;
+        gpu.V[2][0]=-17; gpu.V[2][1]=4; gpu.W[2][0]=-7; gpu.W[2][1]=-13;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 5918;
-        gpu.V[0][0]=12; gpu.V[0][1]=18;
-        gpu.W[0][0]=-7; gpu.W[0][1]=-5;
-        gpu.V[1][0]=-11; gpu.V[1][1]=-14;
-        gpu.W[1][0]=6; gpu.W[1][1]=4;
-        gpu.V[2][0]=0; gpu.V[2][1]=13;
-        gpu.W[2][0]=7; gpu.W[2][1]=5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5918;
+        gpu.V[0][0]=12; gpu.V[0][1]=18; gpu.W[0][0]=-7; gpu.W[0][1]=-5;
+        gpu.V[1][0]=-11; gpu.V[1][1]=-14; gpu.W[1][0]=6; gpu.W[1][1]=4;
+        gpu.V[2][0]=0; gpu.V[2][1]=13; gpu.W[2][0]=7; gpu.W[2][1]=5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 51067;
-        gpu.V[0][0]=-13; gpu.V[0][1]=10;
-        gpu.W[0][0]=-16; gpu.W[0][1]=-2;
-        gpu.V[1][0]=4; gpu.V[1][1]=-17;
-        gpu.W[1][0]=2; gpu.W[1][1]=2;
-        gpu.V[2][0]=-16; gpu.V[2][1]=-16;
-        gpu.W[2][0]=-19; gpu.W[2][1]=-19;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 51067;
+        gpu.V[0][0]=-13; gpu.V[0][1]=10; gpu.W[0][0]=-16; gpu.W[0][1]=-2;
+        gpu.V[1][0]=4; gpu.V[1][1]=-17; gpu.W[1][0]=2; gpu.W[1][1]=2;
+        gpu.V[2][0]=-16; gpu.V[2][1]=-16; gpu.W[2][0]=-19; gpu.W[2][1]=-19;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9290;
-        gpu.V[0][0]=0; gpu.V[0][1]=18;
-        gpu.W[0][0]=0; gpu.W[0][1]=-13;
-        gpu.V[1][0]=10; gpu.V[1][1]=1;
-        gpu.W[1][0]=19; gpu.W[1][1]=3;
-        gpu.V[2][0]=-16; gpu.V[2][1]=8;
-        gpu.W[2][0]=-1; gpu.W[2][1]=-10;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9290;
+        gpu.V[0][0]=0; gpu.V[0][1]=18; gpu.W[0][0]=0; gpu.W[0][1]=-13;
+        gpu.V[1][0]=10; gpu.V[1][1]=1; gpu.W[1][0]=19; gpu.W[1][1]=3;
+        gpu.V[2][0]=-16; gpu.V[2][1]=8; gpu.W[2][0]=-1; gpu.W[2][1]=-10;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 43156;
-        gpu.V[0][0]=9; gpu.V[0][1]=1;
-        gpu.W[0][0]=-18; gpu.W[0][1]=-3;
-        gpu.V[1][0]=19; gpu.V[1][1]=7;
-        gpu.W[1][0]=12; gpu.W[1][1]=12;
-        gpu.V[2][0]=18; gpu.V[2][1]=10;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-12;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 43156;
+        gpu.V[0][0]=9; gpu.V[0][1]=1; gpu.W[0][0]=-18; gpu.W[0][1]=-3;
+        gpu.V[1][0]=19; gpu.V[1][1]=7; gpu.W[1][0]=12; gpu.W[1][1]=12;
+        gpu.V[2][0]=18; gpu.V[2][1]=10; gpu.W[2][0]=-18; gpu.W[2][1]=-12;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2+_TN");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2+_TN");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 6996;
-        gpu.V[0][0]=4; gpu.V[0][1]=-14;
-        gpu.W[0][0]=1; gpu.W[0][1]=-12;
-        gpu.V[1][0]=-17; gpu.V[1][1]=-5;
-        gpu.W[1][0]=-6; gpu.W[1][1]=-14;
-        gpu.V[2][0]=7; gpu.V[2][1]=0;
-        gpu.W[2][0]=-11; gpu.W[2][1]=6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 6996;
+        gpu.V[0][0]=4; gpu.V[0][1]=-14; gpu.W[0][0]=1; gpu.W[0][1]=-12;
+        gpu.V[1][0]=-17; gpu.V[1][1]=-5; gpu.W[1][0]=-6; gpu.W[1][1]=-14;
+        gpu.V[2][0]=7; gpu.V[2][1]=0; gpu.W[2][0]=-11; gpu.W[2][1]=6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8055;
-        gpu.V[0][0]=6; gpu.V[0][1]=3;
-        gpu.W[0][0]=-7; gpu.W[0][1]=16;
-        gpu.V[1][0]=-18; gpu.V[1][1]=-13;
-        gpu.W[1][0]=-5; gpu.W[1][1]=-10;
-        gpu.V[2][0]=-16; gpu.V[2][1]=-4;
-        gpu.W[2][0]=-18; gpu.W[2][1]=-1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8055;
+        gpu.V[0][0]=6; gpu.V[0][1]=3; gpu.W[0][0]=-7; gpu.W[0][1]=16;
+        gpu.V[1][0]=-18; gpu.V[1][1]=-13; gpu.W[1][0]=-5; gpu.W[1][1]=-10;
+        gpu.V[2][0]=-16; gpu.V[2][1]=-4; gpu.W[2][0]=-18; gpu.W[2][1]=-1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7208;
-        gpu.V[0][0]=0; gpu.V[0][1]=0;
-        gpu.W[0][0]=19; gpu.W[0][1]=7;
-        gpu.V[1][0]=10; gpu.V[1][1]=-4;
-        gpu.W[1][0]=-7; gpu.W[1][1]=18;
-        gpu.V[2][0]=-6; gpu.V[2][1]=12;
-        gpu.W[2][0]=3; gpu.W[2][1]=-8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7208;
+        gpu.V[0][0]=0; gpu.V[0][1]=0; gpu.W[0][0]=19; gpu.W[0][1]=7;
+        gpu.V[1][0]=10; gpu.V[1][1]=-4; gpu.W[1][0]=-7; gpu.W[1][1]=18;
+        gpu.V[2][0]=-6; gpu.V[2][1]=12; gpu.W[2][0]=3; gpu.W[2][1]=-8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv0_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv0_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 2851;
-        gpu.V[0][0]=-12; gpu.V[0][1]=-15;
-        gpu.W[0][0]=4; gpu.W[0][1]=14;
-        gpu.V[1][0]=7; gpu.V[1][1]=-2;
-        gpu.W[1][0]=12; gpu.W[1][1]=-5;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=12; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 2851;
+        gpu.V[0][0]=-12; gpu.V[0][1]=-15; gpu.W[0][0]=4; gpu.W[0][1]=14;
+        gpu.V[1][0]=7; gpu.V[1][1]=-2; gpu.W[1][0]=12; gpu.W[1][1]=-5;
+        gpu.V[2][0]=0; gpu.V[2][1]=0; gpu.W[2][0]=12; gpu.W[2][1]=-2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 848;
-        gpu.V[0][0]=-11; gpu.V[0][1]=0;
-        gpu.W[0][0]=11; gpu.W[0][1]=-1;
-        gpu.V[1][0]=1; gpu.V[1][1]=0;
-        gpu.W[1][0]=1; gpu.W[1][1]=14;
-        gpu.V[2][0]=18; gpu.V[2][1]=20;
-        gpu.W[2][0]=-20; gpu.W[2][1]=5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 848;
+        gpu.V[0][0]=-11; gpu.V[0][1]=0; gpu.W[0][0]=11; gpu.W[0][1]=-1;
+        gpu.V[1][0]=1; gpu.V[1][1]=0; gpu.W[1][0]=1; gpu.W[1][1]=14;
+        gpu.V[2][0]=18; gpu.V[2][1]=20; gpu.W[2][0]=-20; gpu.W[2][1]=5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12850;
-        gpu.V[0][0]=-10; gpu.V[0][1]=14;
-        gpu.W[0][0]=-7; gpu.W[0][1]=8;
-        gpu.V[1][0]=-17; gpu.V[1][1]=10;
-        gpu.W[1][0]=-2; gpu.W[1][1]=-12;
-        gpu.V[2][0]=5; gpu.V[2][1]=-7;
-        gpu.W[2][0]=15; gpu.W[2][1]=18;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12850;
+        gpu.V[0][0]=-10; gpu.V[0][1]=14; gpu.W[0][0]=-7; gpu.W[0][1]=8;
+        gpu.V[1][0]=-17; gpu.V[1][1]=10; gpu.W[1][0]=-2; gpu.W[1][1]=-12;
+        gpu.V[2][0]=5; gpu.V[2][1]=-7; gpu.W[2][0]=15; gpu.W[2][1]=18;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13570;
-        gpu.V[0][0]=-20; gpu.V[0][1]=13;
-        gpu.W[0][0]=8; gpu.W[0][1]=-19;
-        gpu.V[1][0]=-17; gpu.V[1][1]=18;
-        gpu.W[1][0]=-4; gpu.W[1][1]=2;
-        gpu.V[2][0]=4; gpu.V[2][1]=-3;
-        gpu.W[2][0]=14; gpu.W[2][1]=15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 1710;
+        gpu.V[0][0]=-9; gpu.V[0][1]=-11; gpu.W[0][0]=-11; gpu.W[0][1]=8;
+        gpu.V[1][0]=-16; gpu.V[1][1]=-10; gpu.W[1][0]=-14; gpu.W[1][1]=16;
+        gpu.V[2][0]=4; gpu.V[2][1]=4; gpu.W[2][0]=18; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 35120;
-        gpu.V[0][0]=9; gpu.V[0][1]=10;
-        gpu.W[0][0]=13; gpu.W[0][1]=-19;
-        gpu.V[1][0]=-6; gpu.V[1][1]=-4;
-        gpu.W[1][0]=-10; gpu.W[1][1]=19;
-        gpu.V[2][0]=6; gpu.V[2][1]=0;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 35120;
+        gpu.V[0][0]=9; gpu.V[0][1]=10; gpu.W[0][0]=13; gpu.W[0][1]=-19;
+        gpu.V[1][0]=-6; gpu.V[1][1]=-4; gpu.W[1][0]=-10; gpu.W[1][1]=19;
+        gpu.V[2][0]=6; gpu.V[2][1]=0; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11838;
-        gpu.V[0][0]=-1; gpu.V[0][1]=17;
-        gpu.W[0][0]=-1; gpu.W[0][1]=-1;
-        gpu.V[1][0]=18; gpu.V[1][1]=8;
-        gpu.W[1][0]=9; gpu.W[1][1]=9;
-        gpu.V[2][0]=-9; gpu.V[2][1]=-5;
-        gpu.W[2][0]=16; gpu.W[2][1]=1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 11838;
+        gpu.V[0][0]=-1; gpu.V[0][1]=17; gpu.W[0][0]=-1; gpu.W[0][1]=-1;
+        gpu.V[1][0]=18; gpu.V[1][1]=8; gpu.W[1][0]=9; gpu.W[1][1]=9;
+        gpu.V[2][0]=-9; gpu.V[2][1]=-5; gpu.W[2][0]=16; gpu.W[2][1]=1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8410;
-        gpu.V[0][0]=2; gpu.V[0][1]=2;
-        gpu.W[0][0]=1; gpu.W[0][1]=1;
-        gpu.V[1][0]=5; gpu.V[1][1]=-9;
-        gpu.W[1][0]=13; gpu.W[1][1]=-8;
-        gpu.V[2][0]=-5; gpu.V[2][1]=6;
-        gpu.W[2][0]=-19; gpu.W[2][1]=-7;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8410;
+        gpu.V[0][0]=2; gpu.V[0][1]=2; gpu.W[0][0]=1; gpu.W[0][1]=1;
+        gpu.V[1][0]=5; gpu.V[1][1]=-9; gpu.W[1][0]=13; gpu.W[1][1]=-8;
+        gpu.V[2][0]=-5; gpu.V[2][1]=6; gpu.W[2][0]=-19; gpu.W[2][1]=-7;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7576;
-        gpu.V[0][0]=-5; gpu.V[0][1]=0;
-        gpu.W[0][0]=14; gpu.W[0][1]=0;
-        gpu.V[1][0]=-4; gpu.V[1][1]=16;
-        gpu.W[1][0]=-16; gpu.W[1][1]=13;
-        gpu.V[2][0]=2; gpu.V[2][1]=-3;
-        gpu.W[2][0]=19; gpu.W[2][1]=11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7576;
+        gpu.V[0][0]=-5; gpu.V[0][1]=0; gpu.W[0][0]=14; gpu.W[0][1]=0;
+        gpu.V[1][0]=-4; gpu.V[1][1]=16; gpu.W[1][0]=-16; gpu.W[1][1]=13;
+        gpu.V[2][0]=2; gpu.V[2][1]=-3; gpu.W[2][0]=19; gpu.W[2][1]=11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cv_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 7004;
-        gpu.V[0][0]=-2; gpu.V[0][1]=4;
-        gpu.W[0][0]=-12; gpu.W[0][1]=15;
-        gpu.V[1][0]=-20; gpu.V[1][1]=2;
-        gpu.W[1][0]=-14; gpu.W[1][1]=-9;
-        gpu.V[2][0]=-6; gpu.V[2][1]=-15;
-        gpu.W[2][0]=12; gpu.W[2][1]=-10;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 7004;
+        gpu.V[0][0]=-2; gpu.V[0][1]=4; gpu.W[0][0]=-12; gpu.W[0][1]=15;
+        gpu.V[1][0]=-20; gpu.V[1][1]=2; gpu.W[1][0]=-14; gpu.W[1][1]=-9;
+        gpu.V[2][0]=-6; gpu.V[2][1]=-15; gpu.W[2][0]=12; gpu.W[2][1]=-10;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 29203;
-        gpu.V[0][0]=-7; gpu.V[0][1]=2;
-        gpu.W[0][0]=-12; gpu.W[0][1]=5;
-        gpu.V[1][0]=19; gpu.V[1][1]=4;
-        gpu.W[1][0]=-14; gpu.W[1][1]=-11;
-        gpu.V[2][0]=0; gpu.V[2][1]=7;
-        gpu.W[2][0]=0; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 29203;
+        gpu.V[0][0]=-7; gpu.V[0][1]=2; gpu.W[0][0]=-12; gpu.W[0][1]=5;
+        gpu.V[1][0]=19; gpu.V[1][1]=4; gpu.W[1][0]=-14; gpu.W[1][1]=-11;
+        gpu.V[2][0]=0; gpu.V[2][1]=7; gpu.W[2][0]=0; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cw0_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cw0_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12439;
-        gpu.V[0][0]=6; gpu.V[0][1]=-9;
-        gpu.W[0][0]=9; gpu.W[0][1]=-15;
-        gpu.V[1][0]=7; gpu.V[1][1]=-19;
-        gpu.W[1][0]=-19; gpu.W[1][1]=-14;
-        gpu.V[2][0]=-7; gpu.V[2][1]=-4;
-        gpu.W[2][0]=19; gpu.W[2][1]=14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 12439;
+        gpu.V[0][0]=6; gpu.V[0][1]=-9; gpu.W[0][0]=9; gpu.W[0][1]=-15;
+        gpu.V[1][0]=7; gpu.V[1][1]=-19; gpu.W[1][0]=-19; gpu.W[1][1]=-14;
+        gpu.V[2][0]=-7; gpu.V[2][1]=-4; gpu.W[2][0]=19; gpu.W[2][1]=14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 46794;
-        gpu.V[0][0]=-4; gpu.V[0][1]=-7;
-        gpu.W[0][0]=-8; gpu.W[0][1]=-12;
-        gpu.V[1][0]=8; gpu.V[1][1]=16;
-        gpu.W[1][0]=3; gpu.W[1][1]=0;
-        gpu.V[2][0]=-16; gpu.V[2][1]=0;
-        gpu.W[2][0]=-16; gpu.W[2][1]=0;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 46794;
+        gpu.V[0][0]=-4; gpu.V[0][1]=-7; gpu.W[0][0]=-8; gpu.W[0][1]=-12;
+        gpu.V[1][0]=8; gpu.V[1][1]=16; gpu.W[1][0]=3; gpu.W[1][1]=0;
+        gpu.V[2][0]=-16; gpu.V[2][1]=0; gpu.W[2][0]=-16; gpu.W[2][1]=0;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cw1_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cw1_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 9911;
-        gpu.V[0][0]=4; gpu.V[0][1]=-2;
-        gpu.W[0][0]=10; gpu.W[0][1]=-5;
-        gpu.V[1][0]=17; gpu.V[1][1]=-14;
-        gpu.W[1][0]=-4; gpu.W[1][1]=-2;
-        gpu.V[2][0]=-8; gpu.V[2][1]=-1;
-        gpu.W[2][0]=10; gpu.W[2][1]=8;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 9911;
+        gpu.V[0][0]=4; gpu.V[0][1]=-2; gpu.W[0][0]=10; gpu.W[0][1]=-5;
+        gpu.V[1][0]=17; gpu.V[1][1]=-14; gpu.W[1][0]=-4; gpu.W[1][1]=-2;
+        gpu.V[2][0]=-8; gpu.V[2][1]=-1; gpu.W[2][0]=10; gpu.W[2][1]=8;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_Cw_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_Cw_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 5966;
-        gpu.V[0][0]=15; gpu.V[0][1]=-8;
-        gpu.W[0][0]=18; gpu.W[0][1]=-15;
-        gpu.V[1][0]=-9; gpu.V[1][1]=-7;
-        gpu.W[1][0]=9; gpu.W[1][1]=7;
-        gpu.V[2][0]=0; gpu.V[2][1]=-12;
-        gpu.W[2][0]=-12; gpu.W[2][1]=11;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 5966;
+        gpu.V[0][0]=15; gpu.V[0][1]=-8; gpu.W[0][0]=18; gpu.W[0][1]=-15;
+        gpu.V[1][0]=-9; gpu.V[1][1]=-7; gpu.W[1][0]=9; gpu.W[1][1]=7;
+        gpu.V[2][0]=0; gpu.V[2][1]=-12; gpu.W[2][0]=-12; gpu.W[2][1]=11;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2-_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2-_D00");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 88475;
-        gpu.V[0][0]=-2; gpu.V[0][1]=10;
-        gpu.W[0][0]=-4; gpu.W[0][1]=14;
-        gpu.V[1][0]=-12; gpu.V[1][1]=-13;
-        gpu.W[1][0]=6; gpu.W[1][1]=7;
-        gpu.V[2][0]=-18; gpu.V[2][1]=-9;
-        gpu.W[2][0]=12; gpu.W[2][1]=-15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 88475;
+        gpu.V[0][0]=-2; gpu.V[0][1]=10; gpu.W[0][0]=-4; gpu.W[0][1]=14;
+        gpu.V[1][0]=-12; gpu.V[1][1]=-13; gpu.W[1][0]=6; gpu.W[1][1]=7;
+        gpu.V[2][0]=-18; gpu.V[2][1]=-9; gpu.W[2][0]=12; gpu.W[2][1]=-15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T4_Q2o");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T4_Q2o");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 73915;
-        gpu.V[0][0]=7; gpu.V[0][1]=6;
-        gpu.W[0][0]=-14; gpu.W[0][1]=-13;
-        gpu.V[1][0]=7; gpu.V[1][1]=10;
-        gpu.W[1][0]=5; gpu.W[1][1]=5;
-        gpu.V[2][0]=-8; gpu.V[2][1]=11;
-        gpu.W[2][0]=-8; gpu.W[2][1]=15;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 73915;
+        gpu.V[0][0]=7; gpu.V[0][1]=6; gpu.W[0][0]=-14; gpu.W[0][1]=-13;
+        gpu.V[1][0]=7; gpu.V[1][1]=10; gpu.W[1][0]=5; gpu.W[1][1]=5;
+        gpu.V[2][0]=-8; gpu.V[2][1]=11; gpu.W[2][0]=-8; gpu.W[2][1]=15;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_(2,4)_Q2+");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_(2,4)_Q2+");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 13061;
-        gpu.V[0][0]=15; gpu.V[0][1]=19;
-        gpu.W[0][0]=0; gpu.W[0][1]=4;
-        gpu.V[1][0]=10; gpu.V[1][1]=1;
-        gpu.W[1][0]=16; gpu.W[1][1]=3;
-        gpu.V[2][0]=-11; gpu.V[2][1]=15;
-        gpu.W[2][0]=1; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 13061;
+        gpu.V[0][0]=15; gpu.V[0][1]=19; gpu.W[0][0]=0; gpu.W[0][1]=4;
+        gpu.V[1][0]=10; gpu.V[1][1]=1; gpu.W[1][0]=16; gpu.W[1][1]=3;
+        gpu.V[2][0]=-11; gpu.V[2][1]=15; gpu.W[2][0]=1; gpu.W[2][1]=-5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 1297;
-        gpu.V[0][0]=-14; gpu.V[0][1]=-3;
-        gpu.W[0][0]=-19; gpu.W[0][1]=13;
-        gpu.V[1][0]=10; gpu.V[1][1]=13;
-        gpu.W[1][0]=15; gpu.W[1][1]=19;
-        gpu.V[2][0]=20; gpu.V[2][1]=4;
-        gpu.W[2][0]=-2; gpu.W[2][1]=-1;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 1297;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-3; gpu.W[0][0]=-19; gpu.W[0][1]=13;
+        gpu.V[1][0]=10; gpu.V[1][1]=13; gpu.W[1][0]=15; gpu.W[1][1]=19;
+        gpu.V[2][0]=20; gpu.V[2][1]=4; gpu.W[2][0]=-2; gpu.W[2][1]=-1;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cv");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cv");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 26102;
-        gpu.V[0][0]=19; gpu.V[0][1]=0;
-        gpu.W[0][0]=-13; gpu.W[0][1]=2;
-        gpu.V[1][0]=0; gpu.V[1][1]=-15;
-        gpu.W[1][0]=15; gpu.W[1][1]=-11;
-        gpu.V[2][0]=0; gpu.V[2][1]=5;
-        gpu.W[2][0]=-6; gpu.W[2][1]=-14;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 26102;
+        gpu.V[0][0]=19; gpu.V[0][1]=0; gpu.W[0][0]=-13; gpu.W[0][1]=2;
+        gpu.V[1][0]=0; gpu.V[1][1]=-15; gpu.W[1][0]=15; gpu.W[1][1]=-11;
+        gpu.V[2][0]=0; gpu.V[2][1]=5; gpu.W[2][0]=-6; gpu.W[2][1]=-14;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cv1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cv1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 39802;
-        gpu.V[0][0]=0; gpu.V[0][1]=-13;
-        gpu.W[0][0]=-14; gpu.W[0][1]=-17;
-        gpu.V[1][0]=-17; gpu.V[1][1]=3;
-        gpu.W[1][0]=-3; gpu.W[1][1]=4;
-        gpu.V[2][0]=0; gpu.V[2][1]=1;
-        gpu.W[2][0]=8; gpu.W[2][1]=-5;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 39802;
+        gpu.V[0][0]=0; gpu.V[0][1]=-13; gpu.W[0][0]=-14; gpu.W[0][1]=-17;
+        gpu.V[1][0]=-17; gpu.V[1][1]=3; gpu.W[1][0]=-3; gpu.W[1][1]=4;
+        gpu.V[2][0]=0; gpu.V[2][1]=1; gpu.W[2][0]=8; gpu.W[2][1]=-5;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cv1_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cv1_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 16434;
-        gpu.V[0][0]=-14; gpu.V[0][1]=-8;
-        gpu.W[0][0]=-1; gpu.W[0][1]=-2;
-        gpu.V[1][0]=-4; gpu.V[1][1]=16;
-        gpu.W[1][0]=-15; gpu.W[1][1]=9;
-        gpu.V[2][0]=2; gpu.V[2][1]=-7;
-        gpu.W[2][0]=12; gpu.W[2][1]=17;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 16434;
+        gpu.V[0][0]=-14; gpu.V[0][1]=-8; gpu.W[0][0]=-1; gpu.W[0][1]=-2;
+        gpu.V[1][0]=-4; gpu.V[1][1]=16; gpu.W[1][0]=-15; gpu.W[1][1]=9;
+        gpu.V[2][0]=2; gpu.V[2][1]=-7; gpu.W[2][0]=12; gpu.W[2][1]=17;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cv_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cv_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 87904;
-        gpu.V[0][0]=-7; gpu.V[0][1]=5;
-        gpu.W[0][0]=1; gpu.W[0][1]=0;
-        gpu.V[1][0]=-19; gpu.V[1][1]=-10;
-        gpu.W[1][0]=-1; gpu.W[1][1]=0;
-        gpu.V[2][0]=11; gpu.V[2][1]=-3;
-        gpu.W[2][0]=-4; gpu.W[2][1]=-6;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 87904;
+        gpu.V[0][0]=-7; gpu.V[0][1]=5; gpu.W[0][0]=1; gpu.W[0][1]=0;
+        gpu.V[1][0]=-19; gpu.V[1][1]=-10; gpu.W[1][0]=-1; gpu.W[1][1]=0;
+        gpu.V[2][0]=11; gpu.V[2][1]=-3; gpu.W[2][0]=-4; gpu.W[2][1]=-6;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cv_Cw1");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cv_Cw1");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 8564;
-        gpu.V[0][0]=1; gpu.V[0][1]=6;
-        gpu.W[0][0]=14; gpu.W[0][1]=12;
-        gpu.V[1][0]=1; gpu.V[1][1]=-2;
-        gpu.W[1][0]=-6; gpu.W[1][1]=11;
-        gpu.V[2][0]=18; gpu.V[2][1]=-17;
-        gpu.W[2][0]=9; gpu.W[2][1]=-20;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 8564;
+        gpu.V[0][0]=1; gpu.V[0][1]=6; gpu.W[0][0]=14; gpu.W[0][1]=12;
+        gpu.V[1][0]=1; gpu.V[1][1]=-2; gpu.W[1][0]=-6; gpu.W[1][1]=11;
+        gpu.V[2][0]=18; gpu.V[2][1]=-17; gpu.W[2][0]=9; gpu.W[2][1]=-20;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cw");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cw");
     }
     {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 2458;
-        gpu.V[0][0]=-16; gpu.V[0][1]=17;
-        gpu.W[0][0]=17; gpu.W[0][1]=17;
-        gpu.V[1][0]=1; gpu.V[1][1]=-1;
-        gpu.W[1][0]=-3; gpu.W[1][1]=-2;
-        gpu.V[2][0]=18; gpu.V[2][1]=17;
-        gpu.W[2][0]=-2; gpu.W[2][1]=-2;
+        ftk2::TriCaseV2GPU gpu; gpu.seed = 2458;
+        gpu.V[0][0]=-16; gpu.V[0][1]=17; gpu.W[0][0]=17; gpu.W[0][1]=17;
+        gpu.V[1][0]=1; gpu.V[1][1]=-1; gpu.W[1][0]=-3; gpu.W[1][1]=-2;
+        gpu.V[2][0]=18; gpu.V[2][1]=17; gpu.W[2][0]=-2; gpu.W[2][1]=-2;
         __int128 V128[3][2], W128[3][2];
         for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
+        __int128 Q[3], P[3][3]; ftk2::compute_tri_QP_2d(V128, W128, Q, P);
         gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
+        for(int k=0;k<3;k++){int dk=ftk2::effective_degree_i128(P[k],2);
             __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T6_Q2-_Cw1");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 11901;
-        gpu.V[0][0]=-10; gpu.V[0][1]=19;
-        gpu.W[0][0]=17; gpu.W[0][1]=7;
-        gpu.V[1][0]=20; gpu.V[1][1]=5;
-        gpu.W[1][0]=-10; gpu.W[1][1]=-9;
-        gpu.V[2][0]=-16; gpu.V[2][1]=-12;
-        gpu.W[2][0]=6; gpu.W[2][1]=6;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 283;
-        gpu.V[0][0]=-7; gpu.V[0][1]=-19;
-        gpu.W[0][0]=16; gpu.W[0][1]=-16;
-        gpu.V[1][0]=18; gpu.V[1][1]=0;
-        gpu.W[1][0]=-10; gpu.W[1][1]=-1;
-        gpu.V[2][0]=-8; gpu.V[2][1]=-5;
-        gpu.W[2][0]=0; gpu.W[2][1]=1;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_Cw");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 12450;
-        gpu.V[0][0]=-12; gpu.V[0][1]=0;
-        gpu.W[0][0]=-11; gpu.W[0][1]=-7;
-        gpu.V[1][0]=4; gpu.V[1][1]=19;
-        gpu.W[1][0]=-8; gpu.W[1][1]=11;
-        gpu.V[2][0]=18; gpu.V[2][1]=-9;
-        gpu.W[2][0]=14; gpu.W[2][1]=-7;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_Q2-_Cv_Cw_D00");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 21414;
-        gpu.V[0][0]=-15; gpu.V[0][1]=18;
-        gpu.W[0][0]=-14; gpu.W[0][1]=-19;
-        gpu.V[1][0]=-5; gpu.V[1][1]=6;
-        gpu.W[1][0]=-18; gpu.W[1][1]=18;
-        gpu.V[2][0]=15; gpu.V[2][1]=-18;
-        gpu.W[2][0]=-9; gpu.W[2][1]=-20;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 20439;
-        gpu.V[0][0]=-6; gpu.V[0][1]=-5;
-        gpu.W[0][0]=-15; gpu.W[0][1]=-18;
-        gpu.V[1][0]=0; gpu.V[1][1]=0;
-        gpu.W[1][0]=1; gpu.W[1][1]=-1;
-        gpu.V[2][0]=-2; gpu.V[2][1]=2;
-        gpu.W[2][0]=10; gpu.W[2][1]=-15;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q2+_Cv0_D00");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 19845;
-        gpu.V[0][0]=1; gpu.V[0][1]=-20;
-        gpu.W[0][0]=-15; gpu.W[0][1]=-8;
-        gpu.V[1][0]=12; gpu.V[1][1]=7;
-        gpu.W[1][0]=-15; gpu.W[1][1]=-18;
-        gpu.V[2][0]=12; gpu.V[2][1]=-17;
-        gpu.W[2][0]=-15; gpu.W[2][1]=14;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T0_Q1");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 62238;
-        gpu.V[0][0]=10; gpu.V[0][1]=-10;
-        gpu.W[0][0]=-5; gpu.W[0][1]=9;
-        gpu.V[1][0]=-19; gpu.V[1][1]=19;
-        gpu.W[1][0]=-12; gpu.W[1][1]=17;
-        gpu.V[2][0]=0; gpu.V[2][1]=0;
-        gpu.W[2][0]=-18; gpu.W[2][1]=2;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR_Cv_D00");
-    }
-    {
-        ftk2::TriCaseV2GPU gpu;
-        gpu.seed = 81148;
-        gpu.V[0][0]=-5; gpu.V[0][1]=-4;
-        gpu.W[0][0]=5; gpu.W[0][1]=-4;
-        gpu.V[1][0]=-1; gpu.V[1][1]=7;
-        gpu.W[1][0]=-12; gpu.W[1][1]=7;
-        gpu.V[2][0]=3; gpu.V[2][1]=-9;
-        gpu.W[2][0]=3; gpu.W[2][1]=-9;
-        __int128 V128[3][2], W128[3][2];
-        for(int i=0;i<3;i++) for(int j=0;j<2;j++){V128[i][j]=gpu.V[i][j]; W128[i][j]=gpu.W[i][j];}
-        __int128 Q[3], P[3][3];
-        ftk2::compute_tri_QP_2d(V128, W128, Q, P);
-        gpu.v2 = ftk2::solve_pv_tri_2d(Q, P);
-        for(int k=0;k<3;k++){
-            int dk=ftk2::effective_degree_i128(P[k],2);
-            __int128 disc=(dk==2)?P[k][1]*P[k][1]-(__int128)4*P[k][0]*P[k][2]:0;
-            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;
-        }
-        auto cc = ftk2::classify_case_v2_2d(gpu);
-        ASSERT_EQ_STR(cc.category, "T2_(1,1)_Q2+_SR_Cv_D00");
+            gpu.disc_sign[k]=(disc>0)?1:(disc<0)?-1:0;}
+        ASSERT_EQ_STR(ftk2::classify_case_v2_2d(gpu).category, "T6_Q2-_Cw1");
     }
 }

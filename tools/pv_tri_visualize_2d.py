@@ -1479,7 +1479,7 @@ def draw_lambda_ring(ax, case_data, segments):
 
         if seg.get('infinity_spanning', False):
             if (lam1 is None) != (lam2 is None):
-                # One endpoint at ∞: direction from C++ cw flag
+                # One endpoint at ∞: extend to opposite Q-root for Q2+
                 finite_lam = lam2 if lam1 is None else lam1
                 a_finite = lambda_to_angle(finite_lam, scale)
                 if seg.get('cw', False):

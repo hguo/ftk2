@@ -318,9 +318,9 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
             }
         }
     }
-    // Suppress SR if ALL shared roots have L'Hôpital bary outside triangle.
-    // For each face k with resultant(Q,P[k])=0, compute g=gcd(Q,P[k]).
-    // If g is linear, check bary at g's root. Pure integer.
+    // SR/ISR: check if shared roots are on the PV curve (inside triangle).
+    // SR (on curve) = L'Hôpital bary inside triangle.
+    // ISR (isolated) = L'Hôpital bary outside triangle.
     if (cc.has_shared_root) {
         int degQ_i = effective_degree_i128(cc.Q_i128, 2);
         bool any_inside = false;
@@ -329,13 +329,10 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
             if (degPk <= 0) continue;
             if (resultant_sign_i128(cc.Q_i128, degQ_i, cc.P_i128[k], degPk) != 0)
                 continue;
-            // Shared root on face k. Compute gcd(Q, P[k]).
             __int128 g[3] = {};
             int dg = poly_gcd_full_i128(cc.Q_i128, degQ_i, cc.P_i128[k], degPk, g);
             if (dg == 1) {
                 __int128 g0 = g[0], g1 = g[1];
-                // L'Hôpital at root -g0/g1:
-                // denom = g1·Q[1] - 2·Q[2]·g0
                 __int128 denom = g1 * cc.Q_i128[1] - (__int128)2 * cc.Q_i128[2] * g0;
                 if (denom != 0) {
                     bool inside = true;
@@ -347,10 +344,9 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
                     if (inside) any_inside = true;
                 }
             } else if (dg >= 2) {
-                any_inside = true; // conservatively keep SR for higher-degree GCD
+                any_inside = true;
             }
         }
-        // Also check h roots (gcd of all P's)
         if (v2.h_deg == 1) {
             __int128 h0 = v2.h[0], h1 = v2.h[1];
             __int128 denom = h1 * cc.Q_i128[1] - (__int128)2 * cc.Q_i128[2] * h0;
@@ -366,6 +362,7 @@ inline ClassifiedCase2D classify_case_v2_2d(const TriCaseV2GPU& gpu_v2) {
         } else if (v2.h_deg >= 2) {
             any_inside = true;
         }
+        // SR outside → suppress entirely (no tag)
         if (!any_inside) cc.has_shared_root = false;
     }
 
