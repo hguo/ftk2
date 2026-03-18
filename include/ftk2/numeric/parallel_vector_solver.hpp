@@ -1424,6 +1424,51 @@ FTK_HOST_DEVICE inline int sign_just_after_root_i128(const __int128* p, int deg,
     return (exp % 2 == 0) ? sign_lc : -sign_lc;
 }
 
+// --- 1.6c  RP1 Interval Arithmetic Primitives --------------------------------
+// Standalone primitives extracted from pair_punctures_rp1 for independent testing.
+// All pure __int128, zero float, FTK_HOST_DEVICE inline.
+
+// Sign of polynomial g at the interior of an RP1 arc whose left endpoint
+// is defined by (left_face, left_root_idx).
+//   left_root_idx < 0 (∞ endpoint): returns sign_at_inf_i128(g, deg_g)
+//   g_face == left_face (g defines the endpoint): sign_just_after_root_i128
+//   otherwise: returns precomputed_sign from sign table
+FTK_HOST_DEVICE inline int rp1_sign_on_arc(
+    const __int128* g, int deg_g, int n_distinct_g, int g_face,
+    int left_face, int left_root_idx,
+    int precomputed_sign)
+{
+    if (left_root_idx < 0)
+        return sign_at_inf_i128(g, deg_g);
+    if (g_face == left_face)
+        return sign_just_after_root_i128(g, deg_g, n_distinct_g, left_root_idx);
+    return precomputed_sign;
+}
+
+// Check if an RP1 arc is "inside" the simplex: all P_red[k]/Q_red ≥ 0.
+// sp[k] = sign of P_red[k] on the arc, sq = sign of Q_red on the arc.
+// Returns true iff sq != 0 and sp[k]*sq >= 0 for all k in [0, n_faces).
+FTK_HOST_DEVICE inline bool rp1_arc_is_inside(
+    int n_faces, const int* sp, int sq)
+{
+    if (sq == 0) return false;
+    for (int k = 0; k < n_faces; k++)
+        if (sp[k] * sq < 0) return false;
+    return true;
+}
+
+// Q-interval compatibility: are two punctures in the same Q-interval?
+// merge_infinity allows intervals 0 and n_qr_roots to merge through ±∞.
+FTK_HOST_DEVICE inline bool rp1_arcs_same_interval(
+    int qi_a, int qi_b, int n_qr_roots, bool merge_infinity)
+{
+    if (qi_a == qi_b) return true;
+    if (merge_infinity)
+        return (qi_a == 0 && qi_b == n_qr_roots) ||
+               (qi_a == n_qr_roots && qi_b == 0);
+    return false;
+}
+
 // --- 1.7  Signs at Roots of a Polynomial -----------------------------------
 // Determines sign(g(α_i)) for each distinct real root α_i of f.
 //
@@ -2212,6 +2257,77 @@ struct RP1PairResult {
     bool contains_infinity;  // arc wraps through λ = ±∞
 };
 
+// Pre-compute sign tables for RP1 interval arithmetic.
+// sign_pk[fi][ri][k] = sign(P_red[k]) at root ri of P_red[fi]
+// sign_qr[fi][ri]    = sign(Q_red)    at root ri of P_red[fi]
+FTK_HOST_DEVICE inline void rp1_build_sign_table(
+    int n_faces,
+    const __int128 P_red[][4], const int* degP_red, const int* n_distinct_red,
+    const __int128* Q_red, int degQ_red,
+    int sign_pk[][4][4], int sign_qr[][4])
+{
+    for (int fi = 0; fi < n_faces; fi++) {
+        if (n_distinct_red[fi] == 0) continue;
+        for (int k = 0; k < n_faces; k++) {
+            if (k == fi) continue;
+            int signs[4] = {};
+            int n = signs_at_roots_i128(P_red[fi], degP_red[fi],
+                                        P_red[k], degP_red[k], signs, 4);
+            for (int ri = 0; ri < n && ri < 4; ri++)
+                sign_pk[fi][ri][k] = signs[ri];
+        }
+        {
+            int signs[4] = {};
+            int n = signs_at_roots_i128(P_red[fi], degP_red[fi],
+                                        Q_red, degQ_red, signs, 4);
+            for (int ri = 0; ri < n && ri < 4; ri++)
+                sign_qr[fi][ri] = signs[ri];
+        }
+    }
+}
+
+// Group consecutive inside arcs into connected regions and pair consecutively.
+// arc_inside[ai]: whether arc ai is inside the simplex
+// n_sorted: number of punctures (= number of arcs on RP1 circle)
+// n_finite: how many punctures are finite (arcs with index >= n_finite-1 cross ∞)
+// sorted[]: puncture indices sorted on RP1
+// out_pairs[]: output pairs, max_pairs: capacity
+// Returns: number of pairs found.
+FTK_HOST_DEVICE inline int rp1_group_inside_arcs(
+    const bool* arc_inside, int n_sorted, int n_finite,
+    const int* sorted,
+    RP1PairResult* out_pairs, int max_pairs)
+{
+    int n_pairs = 0;
+    bool visited[12] = {};
+    for (int start = 0; start < n_sorted; start++) {
+        if (!arc_inside[start] || visited[start]) continue;
+
+        int group[12];
+        int ng = 0;
+        bool ci = false;
+        group[ng++] = sorted[start];
+
+        int ai = start;
+        while (arc_inside[ai] && !visited[ai]) {
+            visited[ai] = true;
+            if (ai >= n_finite - 1) ci = true;
+            int next = (ai + 1) % n_sorted;
+            group[ng++] = sorted[next];
+            ai = next;
+            if (ai == start) break;
+        }
+
+        for (int i = 0; i + 1 < ng && n_pairs < max_pairs; i += 2) {
+            out_pairs[n_pairs].a = group[i];
+            out_pairs[n_pairs].b = group[i + 1];
+            out_pairs[n_pairs].contains_infinity = ci;
+            n_pairs++;
+        }
+    }
+    return n_pairs;
+}
+
 // pair_punctures_rp1:
 //   n_faces:  3 (2D) or 4 (3D)
 //   sorted[]:  puncture indices sorted on RP1 (finite by λ, then ∞)
@@ -2240,83 +2356,39 @@ FTK_HOST_DEVICE inline int pair_punctures_rp1(
 {
     if (n_sorted < 2) return 0;
 
-    int n_pairs = 0;
+    // 1. Pre-compute sign tables
+    int sign_pk[4][4][4] = {};
+    int sign_qr[4][4] = {};
+    rp1_build_sign_table(n_faces, P_red, degP_red, n_distinct_red,
+                          Q_red, degQ_red, sign_pk, sign_qr);
 
-    // Pre-compute sign tables to avoid redundant signs_at_roots calls.
-    // sign_pk_at_fi_ri[fi][ri][k] = sign(P_red[k]) at root ri of P_red[fi]
-    // sign_qr_at_fi_ri[fi][ri]   = sign(Q_red)    at root ri of P_red[fi]
-    int sign_pk[4][4][4] = {};  // [fi][ri][k], max 4 faces × 4 roots × 4 faces
-    int sign_qr[4][4] = {};     // [fi][ri]
-    for (int fi = 0; fi < n_faces; fi++) {
-        if (n_distinct_red[fi] == 0) continue;
-        for (int k = 0; k < n_faces; k++) {
-            if (k == fi) continue;
-            int signs[4] = {};
-            int n = signs_at_roots_i128(P_red[fi], degP_red[fi],
-                                        P_red[k], degP_red[k], signs, 4);
-            for (int ri = 0; ri < n && ri < 4; ri++)
-                sign_pk[fi][ri][k] = signs[ri];
-        }
-        {
-            int signs[4] = {};
-            int n = signs_at_roots_i128(P_red[fi], degP_red[fi],
-                                        Q_red, degQ_red, signs, 4);
-            for (int ri = 0; ri < n && ri < 4; ri++)
-                sign_qr[fi][ri] = signs[ri];
-        }
-    }
-
-    // Walk arcs on RP1 circle, mark which are "inside"
-    bool arc_inside[12] = {};  // max 12 punctures → 12 arcs
+    // 2. Walk arcs on RP1 circle, mark which are "inside"
+    bool arc_inside[12] = {};
     for (int ai = 0; ai < n_sorted; ai++) {
-        int pi = sorted[ai];       // left endpoint of arc
-        int fi = p_face[pi];       // face of left endpoint
-        int ri = p_root_idx[pi];   // root index (-1 for ∞)
+        int pi = sorted[ai];
+        int fi = p_face[pi];
+        int ri = p_root_idx[pi];
         int next = (ai + 1) % n_sorted;
         int pj = sorted[next];
 
-        // Evaluate signs of P_red[k] and Q_red at test point just after left endpoint
-        int sp[4] = {};  // sign(P_red[k]) at test point
-        int sq = 0;      // sign(Q_red) at test point
+        // Evaluate signs on arc interior using rp1_sign_on_arc
+        int sp[4] = {};
+        for (int k = 0; k < n_faces; k++)
+            sp[k] = rp1_sign_on_arc(P_red[k], degP_red[k], n_distinct_red[k], k,
+                                     fi, ri, sign_pk[fi][ri][k]);
+        int sq = rp1_sign_on_arc(Q_red, degQ_red, 0, -1,
+                                  fi, ri, sign_qr[fi][ri]);
 
-        if (ri < 0) {
-            // Left endpoint at ∞: the arc goes from ∞ toward -∞ (first finite
-            // puncture), so the test point is in the λ→-∞ region.
-            for (int k = 0; k < n_faces; k++)
-                sp[k] = sign_at_inf_i128(P_red[k], degP_red[k]);
-            sq = sign_at_inf_i128(Q_red, degQ_red);
-        } else {
-            // Left endpoint is finite (face fi, root ri)
-            sp[fi] = sign_just_after_root_i128(P_red[fi], degP_red[fi],
-                                                n_distinct_red[fi], ri);
-            for (int k = 0; k < n_faces; k++) {
-                if (k == fi) continue;
-                sp[k] = sign_pk[fi][ri][k];
-            }
-            sq = sign_qr[fi][ri];
-        }
+        // Inside iff all P_red[k]/Q_red >= 0
+        bool inside = rp1_arc_is_inside(n_faces, sp, sq);
 
-        // Inside iff all sign(P_red[k]) * sign(Q_red) >= 0
-        bool inside = (sq != 0);  // Q_red = 0 → on boundary, not inside
-        for (int k = 0; k < n_faces && inside; k++) {
-            if (sp[k] * sq < 0) inside = false;
-        }
+        // Q-interval compatibility
+        if (inside)
+            inside = rp1_arcs_same_interval(p_q_interval[pi], p_q_interval[pj],
+                                             n_qr_roots, merge_infinity);
 
-        // Q-interval compatibility: arc must not cross Q_red roots.
-        if (inside) {
-            int qi_a = p_q_interval[pi], qi_b = p_q_interval[pj];
-            bool q_compat = (qi_a == qi_b);
-            if (!q_compat && merge_infinity) {
-                q_compat = (qi_a == 0 && qi_b == n_qr_roots) ||
-                           (qi_a == n_qr_roots && qi_b == 0);
-            }
-            if (!q_compat) inside = false;
-        }
-
-        // Wrap-around arcs (through ∞) require merge_infinity
+        // Wrap-around guard: arcs through ∞ require merge_infinity
         if (inside && (ai >= n_finite - 1) && !merge_infinity) {
-            // Arc goes through ∞ but asymptotic point is outside tet
-            // Exception: ∞ punctures split the wrap — check if any endpoint is ∞
             bool has_inf_endpoint = (p_root_idx[pi] < 0 || p_root_idx[pj] < 0);
             if (!has_inf_endpoint) inside = false;
         }
@@ -2324,40 +2396,9 @@ FTK_HOST_DEVICE inline int pair_punctures_rp1(
         arc_inside[ai] = inside;
     }
 
-    // Group consecutive inside arcs into connected regions.
-    // Within each region, pair consecutive punctures: (1st, 2nd), (3rd, 4th), etc.
-    // This handles TN (tangency) correctly: zero-length arcs between TN duplicates
-    // are inside, connecting them into a larger region with consecutive pairing.
-    bool visited[12] = {};
-    for (int start = 0; start < n_sorted; start++) {
-        if (!arc_inside[start] || visited[start]) continue;
-
-        // Find the connected run of inside arcs starting at 'start'
-        int group[12];
-        int ng = 0;
-        bool ci = false;  // does this region contain ∞?
-        group[ng++] = sorted[start];  // left endpoint of first arc
-
-        int ai = start;
-        while (arc_inside[ai] && !visited[ai]) {
-            visited[ai] = true;
-            if (ai >= n_finite - 1) ci = true;
-            int next = (ai + 1) % n_sorted;
-            group[ng++] = sorted[next];  // right endpoint of this arc
-            ai = next;
-            if (ai == start) break;  // wrapped all the way around
-        }
-
-        // Pair consecutive punctures within the region
-        for (int i = 0; i + 1 < ng && n_pairs < max_pairs; i += 2) {
-            out_pairs[n_pairs].a = group[i];
-            out_pairs[n_pairs].b = group[i + 1];
-            out_pairs[n_pairs].contains_infinity = ci;
-            n_pairs++;
-        }
-    }
-
-    return n_pairs;
+    // 3. Group consecutive inside arcs and pair
+    return rp1_group_inside_arcs(arc_inside, n_sorted, n_finite,
+                                  sorted, out_pairs, max_pairs);
 }
 
 // ============================================================================

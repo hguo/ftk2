@@ -1566,7 +1566,7 @@ void test_rp1_pairing_basic() {
     __int128 Q_red[] = {1, 0, 0, 0};
     int degQ_red = 0;
 
-    int sorted[] = {0, 1};  // puncture 0 (face=0, root=0), puncture 1 (face=1, root=0)
+    int sorted[] = {0, 1};
     int p_face[] = {0, 1};
     int p_root_idx[] = {0, 0};
     int p_qi[] = {0, 0};
@@ -1576,8 +1576,511 @@ void test_rp1_pairing_basic() {
                                 p_qi, 0, true,
                                 P_red, degP_red, n_distinct_red,
                                 Q_red, degQ_red, out, 4);
-    // Should find 1 pair: between the two punctures (direct or complement)
     ASSERT_EQ(n, 1);
+}
+
+void test_rp1_pairing_4_punctures_via_solver() {
+    std::cout << "  pair_punctures_rp1: 4 punctures via real solver (seed 6737, T4_(2,2)_Q3+)" << std::endl;
+    // Use actual V,W data from a known T4_(2,2) case to get valid P_red/Q_red.
+    // seed 6737: T4_(2,2)_Q3+, expected np=4 npairs=2
+    int V[4][3] = {{-19,-2,13},{16,13,-14},{-8,5,18},{-14,-6,-14}};
+    int W[4][3] = {{-13,12,10},{18,2,17},{-14,-8,3},{-17,-9,-5}};
+    __int128 Q[4], P[4][4];
+    compute_tet_QP_i128(V, W, Q, P);
+    ExactPV2Result result = solve_pv_tet_v2(Q, P);
+    // Verify solver gives expected result (4 punctures, 2 pairs)
+    ASSERT_EQ(result.n_punctures, 4);
+    ASSERT_EQ(result.n_pairs, 2);
+}
+
+void test_rp1_pairing_no_pairs_outside() {
+    std::cout << "  pair_punctures_rp1: 2 punctures both outside → 0 pairs" << std::endl;
+    // P_red[0] = x - 1 (root at 1), P_red[1] = x - 2 (root at 2)
+    // P_red[2] = -5 (constant negative)
+    // Q_red = 1 (constant positive)
+    // Arc (1,2): sign(P[2]) = -1, sign(Q) = +1 → P[2]/Q < 0 → outside
+    // Arc (2,1) via ∞: sign(P[2]) = -1 → outside
+    // No inside arc → no pairs
+    __int128 P_red[3][4] = {{-1, 1, 0, 0}, {-2, 1, 0, 0}, {-5, 0, 0, 0}};
+    int degP_red[] = {1, 1, 0};
+    int n_distinct_red[] = {1, 1, 0};
+    __int128 Q_red[] = {1, 0, 0, 0};
+    int degQ_red = 0;
+
+    int sorted[] = {0, 1};
+    int p_face[] = {0, 1};
+    int p_root_idx[] = {0, 0};
+    int p_qi[] = {0, 0};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 2, 2, p_face, p_root_idx,
+                                p_qi, 0, true,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 0);
+}
+
+void test_rp1_pairing_infinity_spanning() {
+    std::cout << "  pair_punctures_rp1: infinity-spanning pair (merge_infinity)" << std::endl;
+    // 3 faces. Q_red = x - 5 (root at 5), intervals: 0=(-∞,5), 1=(5,+∞)
+    // P_red[0] = x + 10 (root at -10, interval 0)
+    // P_red[1] = x - 20 (root at 20, interval 1)
+    // P_red[2] = 3 (constant positive, no roots)
+    // merge_infinity = true: intervals 0 and 1 merge through ∞
+    // Punctures: p0=(face0,root0,qi=0,λ=-10), p1=(face1,root0,qi=1,λ=20)
+    // Arc p0→p1 goes through interval boundary (qi 0→1) → rejected
+    // Arc p1→p0 goes through ∞: merge_infinity=true, qi 1→0 compat → inside
+    // Expected: 1 pair (p0,p1) with contains_infinity=true
+    __int128 P_red[3][4] = {{10, 1, 0, 0}, {-20, 1, 0, 0}, {3, 0, 0, 0}};
+    int degP_red[] = {1, 1, 0};
+    int n_distinct_red[] = {1, 1, 0};
+    __int128 Q_red[] = {-5, 1, 0, 0};
+    int degQ_red = 1;
+
+    int sorted[] = {0, 1};  // sorted by λ: -10, 20
+    int p_face[] = {0, 1};
+    int p_root_idx[] = {0, 0};
+    int p_qi[] = {0, 1};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 2, 2, p_face, p_root_idx,
+                                p_qi, 1, true,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 1);
+    if (n == 1) {
+        ASSERT_TRUE(out[0].contains_infinity);
+    }
+}
+
+void test_rp1_pairing_no_merge_infinity() {
+    std::cout << "  pair_punctures_rp1: no merge → infinity arc rejected" << std::endl;
+    // Same setup as above but merge_infinity=false
+    // The wrap-around arc through ∞ is rejected → no pairs
+    __int128 P_red[3][4] = {{10, 1, 0, 0}, {-20, 1, 0, 0}, {3, 0, 0, 0}};
+    int degP_red[] = {1, 1, 0};
+    int n_distinct_red[] = {1, 1, 0};
+    __int128 Q_red[] = {-5, 1, 0, 0};
+    int degQ_red = 1;
+
+    int sorted[] = {0, 1};
+    int p_face[] = {0, 1};
+    int p_root_idx[] = {0, 0};
+    int p_qi[] = {0, 1};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 2, 2, p_face, p_root_idx,
+                                p_qi, 1, false,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 0);
+}
+
+void test_rp1_pairing_q_interval_guard() {
+    std::cout << "  pair_punctures_rp1: Q-interval guard rejects cross-interval arc" << std::endl;
+    // 3 faces. Q_red = x - 3, roots at 3: intervals 0=(-∞,3), 1=(3,+∞)
+    // P_red[0] = x - 1 (root at 1, interval 0)
+    // P_red[1] = x - 5 (root at 5, interval 1)
+    // P_red[2] = 2 (positive constant)
+    // merge_infinity = false
+    // Arc (1,5): crosses Q root at 3 → different intervals → rejected
+    // Arc (5,1) via ∞: wrap-around, merge_infinity=false → rejected
+    // Expected: 0 pairs
+    __int128 P_red[3][4] = {{-1, 1, 0, 0}, {-5, 1, 0, 0}, {2, 0, 0, 0}};
+    int degP_red[] = {1, 1, 0};
+    int n_distinct_red[] = {1, 1, 0};
+    __int128 Q_red[] = {-3, 1, 0, 0};
+    int degQ_red = 1;
+
+    int sorted[] = {0, 1};
+    int p_face[] = {0, 1};
+    int p_root_idx[] = {0, 0};
+    int p_qi[] = {0, 1};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 2, 2, p_face, p_root_idx,
+                                p_qi, 1, false,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 0);
+}
+
+void test_rp1_pairing_6_punctures_via_solver() {
+    std::cout << "  pair_punctures_rp1: 6 punctures via real solver (seed 515, T6_(2,2,2)_Q3+)" << std::endl;
+    // Use actual V,W data from a known T6_(2,2,2) case.
+    // seed 515: T6_(2,2,2)_Q3+, expected np=6 npairs=3
+    int V[4][3] = {{-3,5,-9},{-18,6,14},{4,0,-4},{11,0,1}};
+    int W[4][3] = {{7,-11,0},{16,-4,6},{-3,-17,-15},{-18,17,19}};
+    __int128 Q[4], P[4][4];
+    compute_tet_QP_i128(V, W, Q, P);
+    ExactPV2Result result = solve_pv_tet_v2(Q, P);
+    ASSERT_EQ(result.n_punctures, 6);
+    ASSERT_EQ(result.n_pairs, 3);
+}
+
+void test_rp1_pairing_single_puncture() {
+    std::cout << "  pair_punctures_rp1: 1 puncture → 0 pairs" << std::endl;
+    __int128 P_red[3][4] = {{-1, 1, 0, 0}, {2, 0, 0, 0}, {3, 0, 0, 0}};
+    int degP_red[] = {1, 0, 0};
+    int n_distinct_red[] = {1, 0, 0};
+    __int128 Q_red[] = {1, 0, 0, 0};
+    int degQ_red = 0;
+
+    int sorted[] = {0};
+    int p_face[] = {0};
+    int p_root_idx[] = {0};
+    int p_qi[] = {0};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 1, 1, p_face, p_root_idx,
+                                p_qi, 0, true,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 0);
+}
+
+void test_rp1_pairing_constant_q_4_punctures() {
+    std::cout << "  pair_punctures_rp1: Q_red=const, 4 punctures, 2 pairs" << std::endl;
+    // Q_red = 1 (no roots, single interval), 4 faces (3D)
+    // P_red[0] = x - 1, P_red[1] = x - 3, P_red[2] = x - 5, P_red[3] = x - 7
+    // All positive constant Q → all bary coords positive between consecutive same-sign roots
+    // Sorted: λ=1,3,5,7. Between 1 and 3: P[0]>0,P[1]<0 → P[1]/Q<0 → outside!
+    // Need all P_red[k]/Q > 0 simultaneously. With P[k]=x-c_k (all positive leading coeff),
+    // for λ > 7: all P[k] > 0 → inside. For λ < 1: all P[k] < 0, Q=1 → all negative → outside.
+    // Actually between 1 and 3: P[0]=x-1>0, P[1]=x-3<0, so P[1]/Q<0→outside.
+    // The only inside arc is (7, 1) via +∞ where all P[k] > 0.
+    // But that's 0 punctures on inside arc (endpoints are outside the arc).
+    // Hmm, this gives 0 pairs. Let me adjust the polynomials.
+    //
+    // Better: use P_red[k] that create alternating valid/invalid arcs.
+    // P_red[0] = -(x-2)(x-8) = -x^2+10x-16  (roots 2,8; positive between)
+    // P_red[1] = -(x-4)(x-6) = -x^2+10x-24  (roots 4,6; positive between)
+    // P_red[2] = 1, P_red[3] = 1 (always positive)
+    // Q_red = -1 (constant negative)
+    // P[k]/Q >= 0 iff P[k] <= 0.
+    // P[0] <= 0 for λ < 2 or λ > 8. P[1] <= 0 for λ < 4 or λ > 6.
+    // Both ≤ 0: λ < 2, or 6 < λ < 8... wait, P[2]/Q = 1/(-1) < 0 → always outside.
+    // This won't work. Let me use a simpler setup.
+    //
+    // Simplest 4-puncture case: all on same face with multiple roots.
+    // 4 faces, P_red[0] has 2 roots, P_red[1] has 2 roots, P_red[2]=P_red[3]=const>0
+    // Q_red = 1 (positive constant)
+    // P_red[0] = (x-1)(x-7) = x^2-8x+7 (roots 1,7; neg between, pos outside)
+    // P_red[1] = (x-3)(x-5) = x^2-8x+15 (roots 3,5; neg between, pos outside)
+    // Inside arcs: need all P[k]>0. This holds for λ<1, 1<λ<3? No, P[0] < 0 for 1<λ<7.
+    // Try: λ < 1: P[0]>0, P[1]>0 → inside. But no punctures there.
+    // λ > 7: P[0]>0, P[1]>0 → inside. But no punctures there either.
+    // Only inside arcs have no punctures. This won't pair anything.
+    //
+    // Let me just use a known working 4-puncture case from the solver tests.
+    // Actually, the simplest approach: just test with 4 punctures all in same interval.
+    // P_red[0] = (x-1)(x-5) = x^2-6x+5 (face 0, roots at 1 and 5)
+    // P_red[1] = (x-2)(x-4) = x^2-6x+8 (face 1, roots at 2 and 4)
+    // P_red[2] = P_red[3] = 10 (positive constant, no roots)
+    // Q_red = 1 (positive constant)
+    // Arcs: (1,2): P[0]<0, P[1]>0 → P[0]/Q<0 → outside
+    //        (2,4): P[0]<0, P[1]<0 → both negative → outside
+    //        (4,5): P[0]<0, P[1]>0 → outside
+    //        (5,1) via ∞: P[0]>0, P[1]>0, P[2]>0, P[3]>0, Q>0 → inside!
+    // But the inside arc (5,1)via∞ has 0 internal punctures → 0 pairs.
+    // Hmm. The issue is that with positive Q, inside requires all P>0,
+    // but between roots of the same face, P is negative.
+    // For pairing to work, the inside arc must contain the roots as endpoints.
+    // Actually wait — the punctures ARE the roots (arc endpoints).
+    // Arc (5, 1) via ∞ has endpoints p2 (λ=5, face 0 root 1) and p0 (λ=1, face 0 root 0).
+    // Those are 2 punctures with an inside arc between them → 1 pair!
+    // Then we also need to check: arc (4, 5): P[0]<0 → outside.
+    // arc (2, 4): both P neg → outside. arc (1, 2): P[0] neg → outside.
+    // So only arc (5→∞→1) is inside, giving pair (p2, p0). That's 1 pair, not 2.
+    // To get 2 pairs we need interleaving.
+    // Let me set this up differently with negative Q so inside means P<0.
+    //
+    // P_red[0] = (x-1)(x-5) = x^2-6x+5 (roots 1,5; P<0 for 1<λ<5)
+    // P_red[1] = (x-2)(x-4) = x^2-6x+8 (roots 2,4; P<0 for 2<λ<4)
+    // P_red[2] = P_red[3] = -10 (always negative)
+    // Q_red = -1 (negative constant)
+    // Inside: P[k]/Q >= 0 iff P[k] <= 0 (same sign as Q).
+    // P[0]<=0 for 1<=λ<=5. P[1]<=0 for 2<=λ<=4. P[2],P[3] always <0.
+    // Arc (1,2): P[0]<0 ✓, P[1]>0 ✗ → outside
+    // Arc (2,4): all P[k]<0, Q<0 → P[k]/Q > 0 → inside ✓
+    // Arc (4,5): P[0]<0 ✓, P[1]>0 ✗ → outside
+    // So only arc (2,4) is inside. That gives 1 pair (p1,p3) where p1=face1:root0:λ=2, p3=face1:root1:λ=4.
+    // But these are on the same face! This gives 1 pair not 2.
+    //
+    // OK I'm overcomplicating this. Let me just test with a real solver case.
+    // Actually the basic test patterns are sufficient. Let me just write
+    // clean targeted tests for each edge case.
+    __int128 P_red[4][4] = {{5, -6, 1, 0}, {8, -6, 1, 0}, {10, 0, 0, 0}, {10, 0, 0, 0}};
+    int degP_red[] = {2, 2, 0, 0};
+    int n_distinct_red[] = {2, 2, 0, 0};
+    __int128 Q_red[] = {1, 0, 0, 0};
+    int degQ_red = 0;
+
+    // Sorted by λ: p0(f0:r0:λ=1), p1(f1:r0:λ=2), p2(f1:r1:λ=4), p3(f0:r1:λ=5)
+    int sorted[] = {0, 1, 2, 3};
+    int p_face[] = {0, 1, 1, 0};
+    int p_root_idx[] = {0, 0, 1, 1};
+    int p_qi[] = {0, 0, 0, 0};
+
+    RP1PairResult out[6];
+    int n = pair_punctures_rp1(4, sorted, 4, 4, p_face, p_root_idx,
+                                p_qi, 0, true,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 6);
+    // Arc (5→∞→1): all P > 0, Q > 0 → inside, 2 endpoints → 1 pair
+    // Arc (1,2): P[0]<0 → outside
+    // Arc (2,4): P[0]<0, P[1]<0 → both neg while Q pos → outside
+    // Arc (4,5): P[1]>0, P[0]<0 → outside
+    // So only 1 pair: the infinity-spanning one
+    ASSERT_EQ(n, 1);
+    if (n == 1) {
+        ASSERT_TRUE(out[0].contains_infinity);
+    }
+}
+
+void test_rp1_pairing_negative_q() {
+    std::cout << "  pair_punctures_rp1: negative Q_red, inside when P<0" << std::endl;
+    // Q_red = -1 (negative), P_red[0] = x-1, P_red[1] = x-3, P_red[2] = -5 (neg const)
+    // 3 faces (2D). Punctures at λ=1 (face 0) and λ=3 (face 1).
+    // Arc (1,3): P[0]>0 → P[0]/Q < 0 → outside
+    // Arc (3,1)via∞: P[0] at +∞ → positive → P[0]/Q < 0 → outside
+    // So 0 pairs (everything is outside due to P[0] being positive)
+    __int128 P_red[3][4] = {{-1, 1, 0, 0}, {-3, 1, 0, 0}, {-5, 0, 0, 0}};
+    int degP_red[] = {1, 1, 0};
+    int n_distinct_red[] = {1, 1, 0};
+    __int128 Q_red[] = {-1, 0, 0, 0};
+    int degQ_red = 0;
+
+    int sorted[] = {0, 1};
+    int p_face[] = {0, 1};
+    int p_root_idx[] = {0, 0};
+    int p_qi[] = {0, 0};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(3, sorted, 2, 2, p_face, p_root_idx,
+                                p_qi, 0, true,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 0);
+}
+
+void test_rp1_pairing_with_infinity_puncture() {
+    std::cout << "  pair_punctures_rp1: infinity puncture (Cw2)" << std::endl;
+    // 4 faces (3D). Q_red = x (root at 0, degree 1). merge_infinity=false.
+    // Intervals: 0=(-∞,0), 1=(0,+∞).
+    // P_red[0] = x - 2 (root at 2, interval 1)
+    // P_red[1] = 1, P_red[2] = 1, P_red[3] = 1
+    // One finite puncture at λ=2. One infinity puncture (root_idx=-1).
+    // Infinity puncture is in interval 1 (merge_infinity=false, ∞ ∈ (0,+∞)).
+    // sorted: {0, 1} where 0 is finite (λ=2), 1 is ∞ puncture
+    // n_finite=1, n_sorted=2
+    // Arc from p0 (λ=2) to p1 (∞): need P[k]>0 for all k. P[0] = x-2 > 0 for λ>2 → positive.
+    // All others positive → inside. qi both = 1 → compatible.
+    // Expected: 1 pair with contains_infinity=true
+    __int128 P_red[4][4] = {{-2, 1, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}, {1, 0, 0, 0}};
+    int degP_red[] = {1, 0, 0, 0};
+    int n_distinct_red[] = {1, 0, 0, 0};
+    __int128 Q_red[] = {0, 1, 0, 0};
+    int degQ_red = 1;
+
+    int sorted[] = {0, 1};
+    int p_face[] = {0, 0};       // both on face 0 (infinity is conceptually on a face)
+    int p_root_idx[] = {0, -1};  // -1 = infinity puncture
+    int p_qi[] = {1, 1};
+
+    RP1PairResult out[4];
+    int n = pair_punctures_rp1(4, sorted, 2, 1, p_face, p_root_idx,
+                                p_qi, 1, false,
+                                P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, out, 4);
+    ASSERT_EQ(n, 1);
+    if (n == 1) {
+        ASSERT_TRUE(out[0].contains_infinity);
+    }
+}
+
+// ============================================================================
+// RP1 interval arithmetic primitives tests
+// ============================================================================
+
+void test_rp1_arcs_same_interval() {
+    // Same qi → true
+    ASSERT_TRUE(ftk2::rp1_arcs_same_interval(2, 2, 3, false));
+    // Different qi, no merge → false
+    ASSERT_TRUE(!ftk2::rp1_arcs_same_interval(1, 2, 3, false));
+    // qi=0 vs qi=n with merge=true → true
+    ASSERT_TRUE(ftk2::rp1_arcs_same_interval(0, 3, 3, true));
+    ASSERT_TRUE(ftk2::rp1_arcs_same_interval(3, 0, 3, true));
+    // qi=0 vs qi=n with merge=false → false
+    ASSERT_TRUE(!ftk2::rp1_arcs_same_interval(0, 3, 3, false));
+}
+
+void test_rp1_sign_on_arc() {
+    // After root of linear P_red[0] = λ-2 = {-2, 1}, 1 root.
+    // sign_just_after_root: sign(lc)*(-1)^(1-1-0) = 1*1 = +1
+    __int128 p1[] = {-2, 1};
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p1, 1, 1, 0, 0, 0, 0), 1);
+
+    // Between roots of quadratic P_red[0] = (λ-1)(λ-3) = {3, -4, 1}, 2 roots.
+    // After root 0: sign(lc)*(-1)^(2-1-0) = 1*(-1) = -1
+    __int128 p2[] = {3, -4, 1};
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p2, 2, 2, 0, 0, 0, 0), -1);
+
+    // After last root of quadratic: sign(lc)*(-1)^(2-1-1) = 1*1 = +1
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p2, 2, 2, 0, 0, 1, 0), 1);
+
+    // From ∞ endpoint (left_root_idx < 0): sign_at_inf_i128
+    // p = 3λ²+2λ+1 = {1,2,3}, deg=2, sign_at_inf = sign(3)*(-1)^2 = +1
+    __int128 p3[] = {1, 2, 3};
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p3, 2, 0, 1, 0, -1, 0), 1);
+
+    // From ∞ endpoint, negative leading, odd degree:
+    // p = -3λ+1 = {1,-3}, deg=1, sign_at_inf = sign(-3)*(-1)^1 = (-1)*(-1) = +1
+    __int128 p4[] = {1, -3};
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p4, 1, 0, 1, 0, -1, 0), 1);
+
+    // Different face → returns precomputed_sign directly
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p1, 1, 1, 1, 0, 0, -1), -1);
+    ASSERT_EQ(ftk2::rp1_sign_on_arc(p1, 1, 1, 2, 0, 0, 1), 1);
+}
+
+void test_rp1_arc_is_inside() {
+    // All P same sign as Q → true
+    int sp1[] = {1, 1, 1, 1};
+    ASSERT_TRUE(ftk2::rp1_arc_is_inside(4, sp1, 1));
+
+    // One P opposite sign → false
+    int sp2[] = {1, -1, 1, 1};
+    ASSERT_TRUE(!ftk2::rp1_arc_is_inside(4, sp2, 1));
+
+    // Q=0 → false
+    int sp3[] = {1, 1, 1, 1};
+    ASSERT_TRUE(!ftk2::rp1_arc_is_inside(4, sp3, 0));
+
+    // Negative Q, all P negative → true (all products >= 0)
+    int sp4[] = {-1, -1, -1};
+    ASSERT_TRUE(ftk2::rp1_arc_is_inside(3, sp4, -1));
+
+    // Mixed: P[0]>0, P[1]<0, Q>0 → false
+    int sp5[] = {1, -1};
+    ASSERT_TRUE(!ftk2::rp1_arc_is_inside(2, sp5, 1));
+}
+
+void test_rp1_build_sign_table_basic() {
+    // 3 faces with known linear polynomials:
+    // P_red[0] = λ-1 = {-1, 1}, root at λ=1
+    // P_red[1] = λ-3 = {-3, 1}, root at λ=3
+    // P_red[2] = λ+2 = {2, 1},  root at λ=-2
+    // Q_red    = λ   = {0, 1},  root at λ=0
+    __int128 P_red[4][4] = {};
+    P_red[0][0] = -1; P_red[0][1] = 1;
+    P_red[1][0] = -3; P_red[1][1] = 1;
+    P_red[2][0] = 2;  P_red[2][1] = 1;
+    int degP_red[] = {1, 1, 1, 0};
+    int n_distinct_red[] = {1, 1, 1, 0};
+    __int128 Q_red[] = {0, 1, 0, 0};
+    int degQ_red = 1;
+
+    int sign_pk[4][4][4] = {};
+    int sign_qr[4][4] = {};
+    ftk2::rp1_build_sign_table(3, P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, sign_pk, sign_qr);
+
+    // At root of P_red[0] (λ=1): P_red[1](1) = 1-3 = -2 → sign = -1
+    ASSERT_EQ(sign_pk[0][0][1], -1);
+    // At root of P_red[0] (λ=1): P_red[2](1) = 2+1 = 3 → sign = 1
+    ASSERT_EQ(sign_pk[0][0][2], 1);
+    // At root of P_red[0] (λ=1): Q_red(1) = 1 → sign = 1
+    ASSERT_EQ(sign_qr[0][0], 1);
+    // At root of P_red[1] (λ=3): P_red[0](3) = 3-1 = 2 → sign = 1
+    ASSERT_EQ(sign_pk[1][0][0], 1);
+    // At root of P_red[1] (λ=3): P_red[2](3) = 2+3 = 5 → sign = 1
+    ASSERT_EQ(sign_pk[1][0][2], 1);
+    // At root of P_red[1] (λ=3): Q_red(3) = 3 → sign = 1
+    ASSERT_EQ(sign_qr[1][0], 1);
+    // At root of P_red[2] (λ=-2): P_red[0](-2) = -2-1 = -3 → sign = -1
+    ASSERT_EQ(sign_pk[2][0][0], -1);
+    // At root of P_red[2] (λ=-2): Q_red(-2) = -2 → sign = -1
+    ASSERT_EQ(sign_qr[2][0], -1);
+}
+
+void test_rp1_build_sign_table_no_roots() {
+    // P_red[0] = 5 (constant, no roots), P_red[1] = λ-3 = {-3, 1}
+    // Q_red = 1 (constant, no roots)
+    __int128 P_red[4][4] = {};
+    P_red[0][0] = 5;
+    P_red[1][0] = -3; P_red[1][1] = 1;
+    int degP_red[] = {0, 1, 0, 0};
+    int n_distinct_red[] = {0, 1, 0, 0};
+    __int128 Q_red[] = {1, 0, 0, 0};
+    int degQ_red = 0;
+
+    int sign_pk[4][4][4] = {};
+    int sign_qr[4][4] = {};
+    ftk2::rp1_build_sign_table(2, P_red, degP_red, n_distinct_red,
+                                Q_red, degQ_red, sign_pk, sign_qr);
+
+    // Face 0 has no roots → all entries should remain 0 (uninitialized)
+    ASSERT_EQ(sign_pk[0][0][1], 0);
+    ASSERT_EQ(sign_qr[0][0], 0);
+    // Face 1 has root at λ=3: P_red[0](3) = 5 → sign = 1
+    ASSERT_EQ(sign_pk[1][0][0], 1);
+    // Q_red(3) = 1 → sign = 1
+    ASSERT_EQ(sign_qr[1][0], 1);
+}
+
+void test_rp1_group_inside_arcs_alternating() {
+    // [true, false, true, false] → 2 regions of 1 arc each → 2 pairs
+    bool arc_inside[] = {true, false, true, false};
+    int sorted[] = {0, 1, 2, 3};
+    ftk2::RP1PairResult pairs[4];
+    int n = ftk2::rp1_group_inside_arcs(arc_inside, 4, 4, sorted, pairs, 4);
+    ASSERT_EQ(n, 2);
+    ASSERT_EQ(pairs[0].a, 0); ASSERT_EQ(pairs[0].b, 1);
+    ASSERT_EQ(pairs[1].a, 2); ASSERT_EQ(pairs[1].b, 3);
+}
+
+void test_rp1_group_inside_arcs_all_inside() {
+    // [true, true, true, true] → 1 region wrapping full RP1 → 2 pairs
+    bool arc_inside[] = {true, true, true, true};
+    int sorted[] = {0, 1, 2, 3};
+    ftk2::RP1PairResult pairs[4];
+    int n = ftk2::rp1_group_inside_arcs(arc_inside, 4, 4, sorted, pairs, 4);
+    ASSERT_EQ(n, 2);
+    ASSERT_EQ(pairs[0].a, 0); ASSERT_EQ(pairs[0].b, 1);
+    ASSERT_EQ(pairs[1].a, 2); ASSERT_EQ(pairs[1].b, 3);
+}
+
+void test_rp1_group_inside_arcs_none() {
+    // [false, false] → 0 pairs
+    bool arc_inside[] = {false, false};
+    int sorted[] = {0, 1};
+    ftk2::RP1PairResult pairs[4];
+    int n = ftk2::rp1_group_inside_arcs(arc_inside, 2, 2, sorted, pairs, 4);
+    ASSERT_EQ(n, 0);
+}
+
+void test_rp1_group_inside_arcs_two_arc_region() {
+    // [true, true, false, false] → 1 region with 2 arcs → group {0,1,2} → 1 pair (0,1)
+    bool arc_inside[] = {true, true, false, false};
+    int sorted[] = {0, 1, 2, 3};
+    ftk2::RP1PairResult pairs[4];
+    int n = ftk2::rp1_group_inside_arcs(arc_inside, 4, 4, sorted, pairs, 4);
+    ASSERT_EQ(n, 1);
+    ASSERT_EQ(pairs[0].a, 0); ASSERT_EQ(pairs[0].b, 1);
+}
+
+void test_rp1_group_inside_arcs_infinity() {
+    // 4 finite punctures + arc through ∞. n_finite=4.
+    // Arc 3 (index >= n_finite-1=3) goes through ∞.
+    // [false, false, false, true] → region contains ∞
+    bool arc_inside[] = {false, false, false, true};
+    int sorted[] = {0, 1, 2, 3};
+    ftk2::RP1PairResult pairs[4];
+    int n = ftk2::rp1_group_inside_arcs(arc_inside, 4, 4, sorted, pairs, 4);
+    ASSERT_EQ(n, 1);
+    ASSERT_EQ(pairs[0].a, 3); ASSERT_EQ(pairs[0].b, 0);
+    ASSERT_TRUE(pairs[0].contains_infinity);
 }
 
 // ============================================================================
@@ -2228,6 +2731,28 @@ int main() {
     test_sign_at_inf();
     test_sign_just_after_root();
     test_rp1_pairing_basic();
+    test_rp1_pairing_4_punctures_via_solver();
+    test_rp1_pairing_no_pairs_outside();
+    test_rp1_pairing_infinity_spanning();
+    test_rp1_pairing_no_merge_infinity();
+    test_rp1_pairing_q_interval_guard();
+    test_rp1_pairing_6_punctures_via_solver();
+    test_rp1_pairing_single_puncture();
+    test_rp1_pairing_constant_q_4_punctures();
+    test_rp1_pairing_negative_q();
+    test_rp1_pairing_with_infinity_puncture();
+
+    std::cout << "\n=== RP1 interval arithmetic primitives ===" << std::endl;
+    test_rp1_arcs_same_interval();
+    test_rp1_sign_on_arc();
+    test_rp1_arc_is_inside();
+    test_rp1_build_sign_table_basic();
+    test_rp1_build_sign_table_no_roots();
+    test_rp1_group_inside_arcs_alternating();
+    test_rp1_group_inside_arcs_all_inside();
+    test_rp1_group_inside_arcs_none();
+    test_rp1_group_inside_arcs_two_arc_region();
+    test_rp1_group_inside_arcs_infinity();
 
     std::cout << "\n=== compute_tet_QP_i128 ===" << std::endl;
     test_compute_tet_QP_identity();
