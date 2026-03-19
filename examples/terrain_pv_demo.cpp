@@ -42,6 +42,8 @@ struct Puncture2DInfo {
     double x, y;
     double vx, vy;
     double wx, wy;
+    double lap;  // interpolated Laplacian (Hxx + Hyy) at puncture
+    int type;    // 0=ridge, 1=valley, 2=pseudo-ridge, 3=pseudo-valley, -1=degenerate
 };
 
 struct Connection2D {
@@ -183,6 +185,14 @@ static void write_punctures_vtp(const std::string& filename,
     for (int i = 0; i < np; i++)
         f << "          " << punctures[i].wx << " " << punctures[i].wy << " 0\n";
     f << "        </DataArray>\n";
+    f << "        <DataArray type=\"Float64\" Name=\"laplacian\" format=\"ascii\">\n";
+    for (int i = 0; i < np; i++)
+        f << "          " << punctures[i].lap << "\n";
+    f << "        </DataArray>\n";
+    f << "        <DataArray type=\"Int32\" Name=\"type\" format=\"ascii\">\n";
+    for (int i = 0; i < np; i++)
+        f << "          " << punctures[i].type << "\n";
+    f << "        </DataArray>\n";
     f << "      </PointData>\n";
 
     f << "    </Piece>\n";
@@ -276,6 +286,14 @@ static void write_curves_vtp(const std::string& filename,
     }
     f << "\n";
     f << "        </DataArray>\n";
+    f << "        <DataArray type=\"Float64\" Name=\"laplacian\" format=\"ascii\">\n";
+    for (int i = 0; i < total_pts; i++)
+        f << "          " << punctures[pt_indices[i]].lap << "\n";
+    f << "        </DataArray>\n";
+    f << "        <DataArray type=\"Int32\" Name=\"type\" format=\"ascii\">\n";
+    for (int i = 0; i < total_pts; i++)
+        f << "          " << punctures[pt_indices[i]].type << "\n";
+    f << "        </DataArray>\n";
     f << "      </PointData>\n";
 
     f << "    </Piece>\n";
@@ -345,6 +363,7 @@ int main(int argc, char** argv)
     int My = ny - 2;
     std::vector<std::array<double,2>> V_field(My * M);
     std::vector<std::array<double,2>> W_field(My * M);
+    std::vector<double> laplacian(My * M);  // Hxx + Hyy (raw, pre-normalization)
 
     for (int j = 0; j < My; j++) {
         for (int i = 0; i < M; i++) {
@@ -369,19 +388,11 @@ int main(int argc, char** argv)
 
             V_field[j * M + i] = {Vx, Vy};
             W_field[j * M + i] = {Wx, Wy};
+            laplacian[j * M + i] = Hxx + Hyy;
         }
     }
 
-    double max_v = 0, max_w = 0;
-    for (int k = 0; k < My * M; k++) {
-        max_v = std::max(max_v, std::max(std::abs(V_field[k][0]), std::abs(V_field[k][1])));
-        max_w = std::max(max_w, std::max(std::abs(W_field[k][0]), std::abs(W_field[k][1])));
-    }
-    if (max_v > 0) for (auto& v : V_field) { v[0] /= max_v; v[1] /= max_v; }
-    if (max_w > 0) for (auto& w : W_field) { w[0] /= max_w; w[1] /= max_w; }
-
-    std::cout << "V,W on " << M << "x" << My << " interior grid"
-              << " (max_v=" << max_v << ", max_w=" << max_w << ")\n";
+    std::cout << "V,W on " << M << "x" << My << " interior grid\n";
 
     // ─── Step 3: Triangle-only PV extraction ────────────────────────────
     auto mesh = std::make_shared<RegularSimplicialMesh>(
@@ -446,6 +457,7 @@ int main(int argc, char** argv)
             pinfo.edge_v0 = std::get<0>(key);
             pinfo.edge_v1 = std::get<1>(key);
             pinfo.root_idx = root_idx;
+            pinfo.type = -2;  // unclassified
 
             if (std::get<0>(key) == std::get<1>(key)) {
                 uint64_t vid = std::get<0>(key);
@@ -455,6 +467,7 @@ int main(int argc, char** argv)
                 pinfo.lambda = 0;
                 pinfo.vx = field[vid][0]; pinfo.vy = field[vid][1];
                 pinfo.wx = field[vid][2]; pinfo.wy = field[vid][3];
+                pinfo.lap = laplacian[vid];
             } else {
                 int j = face_v[face][0], l = face_v[face][1];
                 double Pk[3];
@@ -491,6 +504,7 @@ int main(int argc, char** argv)
                 pinfo.vy = (1-t)*Vd[j][1] + t*Vd[l][1];
                 pinfo.wx = (1-t)*Wd[j][0] + t*Wd[l][0];
                 pinfo.wy = (1-t)*Wd[j][1] + t*Wd[l][1];
+                pinfo.lap = (1-t)*laplacian[v[j]] + t*laplacian[v[l]];
             }
             int gidx = (int)all_punctures.size();
             punc_registry[key] = gidx;
@@ -518,6 +532,105 @@ int main(int argc, char** argv)
             int a = v2.pairs[pi].a, b = v2.pairs[pi].b;
             connections.push_back({local_to_global[a], local_to_global[b], tri_id});
         }
+
+        // ── Ridge/valley classification (pure integer) ──────────
+        // κ∥ = -1/λ, κ⊥ = L(t) + 1/λ where L is interpolated Laplacian.
+        // L(t)·λ+1 = N(λ)/D(λ) with integer coefficients.
+        // sign(κ⊥) from sign(N)·sign(D)·sign(λ);
+        // |κ⊥|≥|κ∥| from sign(λ)·sign(βλ+α)·sign(N+D) ≥ 0.
+        for (int pi = 0; pi < v2.n_punctures; pi++) {
+            int gidx = local_to_global[pi];
+            if (all_punctures[gidx].type != -2) continue;
+            auto& punct = v2.punctures[pi];
+            int face = punct.face;
+            int ri = punct.root_idx;
+            int j = face_v[face][0], l = face_v[face][1];
+            int64_t Lqj = quant(laplacian[v[j]]);
+            int64_t Lql = quant(laplacian[v[l]]);
+
+            if (ri == -1) {
+                // Cw: λ→∞, κ∥→0, |κ⊥|≥|κ∥| always → ridge or valley
+                // L_∞ sign = sign(Wq[j][c]·Lql - Wq[l][c]·Lqj) · sign(Wq[j][c]-Wq[l][c])
+                int sign_L = 0;
+                for (int c = 0; c < 2; c++) {
+                    __int128 wj = quant(Wd[j][c]), wl = quant(Wd[l][c]);
+                    __int128 den = wj - wl;
+                    if (den == 0) continue;
+                    __int128 num = wj * (__int128)Lql - wl * (__int128)Lqj;
+                    sign_L = (num > 0 ? 1 : num < 0 ? -1 : 0)
+                           * (den > 0 ? 1 : -1);
+                    break;
+                }
+                all_punctures[gidx].type = (sign_L < 0) ? 0 : (sign_L > 0) ? 1 : -1;
+                continue;
+            }
+
+            // Recompute face polynomial from quantized values (consistent basis)
+            int64_t Vqj2[2], Wqj2[2], Vql2[2], Wql2[2];
+            for (int c = 0; c < 2; c++) {
+                Vqj2[c] = quant(Vd[j][c]); Wqj2[c] = quant(Wd[j][c]);
+                Vql2[c] = quant(Vd[l][c]); Wql2[c] = quant(Wd[l][c]);
+            }
+            __int128 Pf[3];
+            Pf[0] = (__int128)Vqj2[0]*Vql2[1] - (__int128)Vqj2[1]*Vql2[0];
+            Pf[2] = (__int128)Wqj2[0]*Wql2[1] - (__int128)Wqj2[1]*Wql2[0];
+            Pf[1] = (__int128)Vqj2[0]*Wql2[1] + (__int128)Wqj2[0]*Vql2[1]
+                   - (__int128)Vqj2[1]*Wql2[0] - (__int128)Wqj2[1]*Vql2[0];
+            int degP = 2;
+            while (degP > 0 && Pf[degP] == 0) degP--;
+            if (degP <= 0) { all_punctures[gidx].type = -1; continue; }
+
+            int type = -1;
+            for (int c = 0; c < 2 && type == -1; c++) {
+                __int128 a = Vqj2[c], b = Wqj2[c];
+                __int128 cv = Vql2[c], d = Wql2[c];
+                __int128 gamma = a - cv, delta = b - d;
+                __int128 alpha = a * (__int128)Lql - cv * (__int128)Lqj;
+                __int128 beta  = b * (__int128)Lql - d  * (__int128)Lqj;
+
+                // D(λ) = γ + δλ — must be non-zero at root
+                __int128 Dp[2] = {gamma, delta};
+                int dD = (delta != 0) ? 1 : (gamma != 0) ? 0 : -1;
+                if (dD < 0) continue;
+                int sD[2] = {};
+                signs_at_roots_i128(Pf, degP, Dp, dD, sD, 2);
+                if (sD[ri] == 0) continue;
+
+                // sign(λ*)
+                __int128 lp[2] = {0, 1};
+                int sL[2] = {};
+                signs_at_roots_i128(Pf, degP, lp, 1, sL, 2);
+                if (sL[ri] == 0) { type = -1; break; }  // Cv
+
+                // N(λ) = βλ² + (α+S·δ)λ + S·γ  where S = QUANT_SCALE
+                // (the "+1" in L·λ+1 must be scaled to match quantized L·λ)
+                __int128 S = QUANT_SCALE;
+                __int128 Np[3] = {S*gamma, alpha + S*delta, beta};
+                int dN = 2; while (dN > 0 && Np[dN] == 0) dN--;
+                int sN[2] = {};
+                if (dN >= 0) signs_at_roots_i128(Pf, degP, Np, dN, sN, 2);
+                int s_kperp = sN[ri] * sD[ri] * sL[ri];
+
+                // βλ + α
+                __int128 bp[2] = {alpha, beta};
+                int db = (beta != 0) ? 1 : (alpha != 0) ? 0 : -1;
+                int sb[2] = {};
+                if (db >= 0) signs_at_roots_i128(Pf, degP, bp, db, sb, 2);
+
+                // N(λ)+D(λ) = βλ² + (α+2S·δ)λ + 2S·γ
+                __int128 NDp[3] = {2*S*gamma, alpha + 2*S*delta, beta};
+                int dND = 2; while (dND > 0 && NDp[dND] == 0) dND--;
+                int sND[2] = {};
+                if (dND >= 0) signs_at_roots_i128(Pf, degP, NDp, dND, sND, 2);
+
+                int dom_prod = sL[ri] * sb[ri] * sND[ri];
+                bool dom = (dom_prod >= 0);
+                if (s_kperp < 0) type = dom ? 0 : 2;
+                else if (s_kperp > 0) type = dom ? 1 : 3;
+            }
+            all_punctures[gidx].type = type;
+        }
+
     });
 
     std::cout << all_punctures.size() << " punctures (from triangle solver)\n";
@@ -763,6 +876,72 @@ int main(int argc, char** argv)
     write_vti("terrain.vti", elevation, nx, ny, ox, oy, dx, dy);
     write_curves_vtp("terrain_ridges.vtp", curves, curve_closed, all_punctures,
                      elevation, nx, ny, ox, oy, dx, dy);
+
+    // ─── Write Cv/Cw critical points (from solver punctures only) ─────
+    // Cw: solver punctures with root_idx == -1 (λ→∞, on PV curves)
+    // Cv: solver punctures at λ=0 (on PV curves) — rare on typical meshes
+    {
+        std::vector<int> crit_idx;  // indices into all_punctures
+        std::vector<int> crit_type; // 0=Cw, 1=Cv
+        for (int i = 0; i < (int)all_punctures.size(); i++) {
+            auto& p = all_punctures[i];
+            if (p.root_idx == -1)
+                { crit_idx.push_back(i); crit_type.push_back(0); }
+            else if (p.edge_v0 == p.edge_v1)
+                { crit_idx.push_back(i); crit_type.push_back(1); } // D01 at vertex, potential Cv
+        }
+        int n_cw = 0, n_cv = 0;
+        for (int t : crit_type) { if (t==0) n_cw++; else n_cv++; }
+        std::cout << crit_idx.size() << " critical points on PV curves: "
+                  << n_cw << " Cw, " << n_cv << " Cv\n";
+
+        int np = (int)crit_idx.size();
+        std::ofstream f("terrain_critical_points.vtp");
+        f << std::setprecision(15);
+        f << "<?xml version=\"1.0\"?>\n";
+        f << "<VTKFile type=\"PolyData\" version=\"0.1\" byte_order=\"LittleEndian\">\n";
+        f << "  <PolyData>\n";
+        f << "    <Piece NumberOfPoints=\"" << np
+          << "\" NumberOfVerts=\"1\" NumberOfLines=\"0\">\n";
+        f << "      <Points>\n";
+        f << "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n";
+        for (int i : crit_idx) {
+            auto& p = all_punctures[i];
+            f << "          " << p.x << " " << p.y << " "
+              << interp_elevation(p.x, p.y, elevation, nx, ny, ox, oy, dx, dy) << "\n";
+        }
+        f << "        </DataArray>\n";
+        f << "      </Points>\n";
+        f << "      <Verts>\n";
+        f << "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n";
+        f << "         ";
+        for (int i = 0; i < np; i++) f << " " << i;
+        f << "\n";
+        f << "        </DataArray>\n";
+        f << "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n";
+        f << "          " << np << "\n";
+        f << "        </DataArray>\n";
+        f << "      </Verts>\n";
+        f << "      <PointData Scalars=\"type\">\n";
+        f << "        <DataArray type=\"Int32\" Name=\"type\" format=\"ascii\">\n";
+        for (int i = 0; i < np; i++)
+            f << "          " << crit_type[i] << "\n";
+        f << "        </DataArray>\n";
+        f << "        <DataArray type=\"Float64\" Name=\"elevation\" format=\"ascii\">\n";
+        for (int i : crit_idx) {
+            auto& p = all_punctures[i];
+            f << "          "
+              << interp_elevation(p.x, p.y, elevation, nx, ny, ox, oy, dx, dy) << "\n";
+        }
+        f << "        </DataArray>\n";
+        f << "      </PointData>\n";
+        f << "    </Piece>\n";
+        f << "  </PolyData>\n";
+        f << "</VTKFile>\n";
+        f.close();
+        std::cout << "Wrote terrain_critical_points.vtp (" << np
+                  << " points; 0=Cw, 1=Cv)\n";
+    }
 
     return 0;
 }
