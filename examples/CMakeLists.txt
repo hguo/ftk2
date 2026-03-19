@@ -119,3 +119,6 @@ target_link_libraries(ftk2_exact_pv_stitching ftk2)
 
 add_executable(ftk2_exact_pv_stitching_2d exact_pv_stitching_2d.cpp)
 target_link_libraries(ftk2_exact_pv_stitching_2d ftk2)
+
+add_executable(ftk2_terrain_pv_demo terrain_pv_demo.cpp)
+target_link_libraries(ftk2_terrain_pv_demo ftk2)
